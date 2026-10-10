@@ -28,7 +28,7 @@ Run `pnpm install`, `pnpm test`, and `pnpm typecheck` from this directory. `pnpm
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 
-The contracts package owns canonical opaque user IDs and private instance addresses. The provisioner package defines the fixed Unix-socket operations used by the later Linux runtime. The macOS and Windows development runtime starts one loopback Web process per fixed test user and uses a Web token bundle to publish startup credentials through private IPC. The quota package records personal and site token reservations in SQLite.
+The contracts package owns canonical opaque user IDs and private instance addresses. The provisioner package defines the fixed Unix-socket operations used by the later Linux runtime. The macOS and Windows development runtime starts one loopback Web process per fixed test user and uses a Web token bundle to publish startup credentials through private IPC. The quota package records personal and site token reservations in SQLite, while its Web provider reads a rotated private credential for each model operation.
 
 <a id="further-exploration"></a>
 ## Further Exploration

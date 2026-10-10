@@ -28,7 +28,7 @@ kind: "package-library"
 <a id="understand-the-implementation"></a>
 ## 了解实现
 
-contracts 包负责规范化的不透明用户 ID 和私有实例地址。provisioner 包定义后续 Linux 运行环境所用的固定 Unix socket 操作。macOS 和 Windows 开发运行环境为每位固定测试用户启动一个本机 Web 进程，并通过 Web token bundle 的私有 IPC 发布启动凭据。quota 包将个人和全站 token 预留记录保存在 SQLite 中。
+contracts 包负责规范化的不透明用户 ID 和私有实例地址。provisioner 包定义后续 Linux 运行环境所用的固定 Unix socket 操作。macOS 和 Windows 开发运行环境为每位固定测试用户启动一个本机 Web 进程，并通过 Web token bundle 的私有 IPC 发布启动凭据。quota 包将个人和全站 token 预留记录保存在 SQLite 中；其 Web provider 在每次模型操作时读取轮换后的私有凭据。
 
 <a id="further-exploration"></a>
 ## 延伸阅读

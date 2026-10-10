@@ -1,0 +1,3 @@
+- insert:
+    - id: public-harness-quota-provider
+      name: '@public-harness/quota-provider'

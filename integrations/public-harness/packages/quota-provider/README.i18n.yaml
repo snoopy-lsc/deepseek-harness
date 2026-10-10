@@ -1,0 +1,28 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write integrations/public-harness/packages/quota-provider/README.md
+/:
+  en: 159ea3a90c6f62bf
+  zh: a9a7f865b10b5a7e
+/public-harness-quota-provider:
+  en: 77a4e2ca8afd7b43
+  zh: ee6d9c01da3d779f
+/public-harness-quota-provider/summary:
+  en: e70cf3d62e15f438
+  zh: 305afcba38e5149d
+/public-harness-quota-provider/table-of-contents:
+  en: 62b67bfc6b71bd7d
+  zh: b682d72b87ba60b7
+/public-harness-quota-provider/use-this-bundle:
+  en: 545fd34ab59b4529
+  zh: f2b2c1a54b6a2370
+/public-harness-quota-provider/understand-credential-rotation:
+  en: e314603def556975
+  zh: b3ba874e593f30d0
+/public-harness-quota-provider/further-exploration:
+  en: a35284843856ed11
+  zh: 05061cd7fd980c74
+/public-harness-quota-provider/dev-note:
+  en: 40e1a6ac8f1fae00
+  zh: dbd2379ca8e4f68f

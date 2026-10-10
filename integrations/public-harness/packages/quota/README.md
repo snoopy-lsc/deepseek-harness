@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This package stores model token reservations in SQLite. It checks each user's daily allowance, the site's daily allowance, and both in-flight request limits in one transaction before a model call can start.
+This package stores model token reservations in SQLite and checks signed, instance-bound requests before admission. It checks each user's daily allowance, the site's daily allowance, and both in-flight request limits in one transaction before a model call can start.
 
 ## Table of Contents
 
@@ -28,7 +28,7 @@ Pass `createQuotaLedger` an absolute database path inside a private directory an
 <a id="understand-accounting"></a>
 ## Understand accounting
 
-Pending reservations count at their full maximum against the day on which they started. Settlement is idempotent and can release unused capacity when usage is known. Startup charges unresolved reservations at their full maximum and frees their concurrency slots. A pending call from an earlier day still occupies a concurrency slot but does not consume the new day's token allowance.
+Pending reservations count at their full maximum against the day on which they started. Settlement is idempotent and can release unused capacity when usage is known. Startup charges unresolved reservations at their full maximum and frees their concurrency slots. A pending call from an earlier day still occupies a concurrency slot but does not consume the new day's token allowance. The admission service accepts only bounded JSON Messages requests for configured models; the token issuer limits credentials to fifteen minutes and binds them to one instance.
 
 <a id="further-exploration"></a>
 ## Further Exploration
