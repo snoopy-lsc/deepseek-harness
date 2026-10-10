@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This project contains independently versioned Cordis packages for the public Harness deployment. It is a separate pnpm workspace so its plugins can be installed alongside a compatible Harness release. It includes shared instance contracts, a private Linux provisioner protocol, and a local development runtime; it does not start a public multiuser server yet.
+This project contains independently versioned Cordis packages for the public Harness deployment. It is a separate pnpm workspace so its plugins can be installed alongside a compatible Harness release. It includes shared instance contracts, a private Linux provisioner protocol, a local development runtime, and a model quota ledger; it does not start a public multiuser server yet.
 
 ## Table of Contents
 
@@ -28,7 +28,7 @@ Run `pnpm install`, `pnpm test`, and `pnpm typecheck` from this directory. `pnpm
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 
-The contracts package owns canonical opaque user IDs and private instance addresses. The provisioner package defines the fixed Unix-socket operations used by the later Linux runtime. The macOS and Windows development runtime starts one loopback Web process per fixed test user and uses a Web token bundle to publish startup credentials through private IPC.
+The contracts package owns canonical opaque user IDs and private instance addresses. The provisioner package defines the fixed Unix-socket operations used by the later Linux runtime. The macOS and Windows development runtime starts one loopback Web process per fixed test user and uses a Web token bundle to publish startup credentials through private IPC. The quota package records personal and site token reservations in SQLite.
 
 <a id="further-exploration"></a>
 ## Further Exploration

@@ -9,7 +9,7 @@ kind: "package-library"
 
 ## Summary
 
-本项目包含面向公开 Harness 部署、独立版本管理的 Cordis 包。它使用单独的 pnpm 工作区，以便与兼容版本的 Harness 一起安装插件。它包含共享实例接口、私有 Linux 配置服务协议和本机开发运行环境；尚未启动公开的多用户服务器。
+本项目包含面向公开 Harness 部署、独立版本管理的 Cordis 包。它使用单独的 pnpm 工作区，以便与兼容版本的 Harness 一起安装插件。它包含共享实例接口、私有 Linux 配置服务协议、本机开发运行环境和模型额度账本；尚未启动公开的多用户服务器。
 
 ## Table of Contents
 
@@ -28,7 +28,7 @@ kind: "package-library"
 <a id="understand-the-implementation"></a>
 ## 了解实现
 
-contracts 包负责规范化的不透明用户 ID 和私有实例地址。provisioner 包定义后续 Linux 运行环境所用的固定 Unix socket 操作。macOS 和 Windows 开发运行环境为每位固定测试用户启动一个本机 Web 进程，并通过 Web token bundle 的私有 IPC 发布启动凭据。
+contracts 包负责规范化的不透明用户 ID 和私有实例地址。provisioner 包定义后续 Linux 运行环境所用的固定 Unix socket 操作。macOS 和 Windows 开发运行环境为每位固定测试用户启动一个本机 Web 进程，并通过 Web token bundle 的私有 IPC 发布启动凭据。quota 包将个人和全站 token 预留记录保存在 SQLite 中。
 
 <a id="further-exploration"></a>
 ## 延伸阅读

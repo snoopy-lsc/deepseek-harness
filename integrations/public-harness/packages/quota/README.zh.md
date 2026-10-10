@@ -1,0 +1,41 @@
+---
+description: "持久化的个人及全站模型 token 预留账本。"
+kind: "package-library"
+---
+
+# @public-harness/quota
+
+[English](README.md) | 中文
+
+## Summary
+
+此包将模型 token 预留记录保存在 SQLite 中。在开始模型调用前，它通过同一事务检查每位用户的每日额度、全站每日额度，以及两级并发请求上限。
+
+## Table of Contents
+
+- [使用此包](#use-this-package)
+- [了解计费方式](#understand-accounting)
+- [延伸阅读](#further-exploration)
+- [开发说明](#dev-note)
+
+-----
+
+<a id="use-this-package"></a>
+## 使用此包
+
+向 `createQuotaLedger` 传入位于私有目录内的绝对数据库路径，以及正数的个人和全站限额。转发模型请求前调用 `reserve(userId, maximumTokens)`。收到最终用量时调用 `settle(id, actualTokens)`；请求中断或缺少用量时省略 `actualTokens`。服务关闭时关闭账本。
+
+<a id="understand-accounting"></a>
+## 了解计费方式
+
+未结算的预留按完整上限占用开始当天的额度。结算可重复调用；拿到实际用量后可释放未使用的额度。服务启动时按完整上限计入上一个进程遗留的请求，并释放其并发名额。前一天尚未结算的请求仍占用并发名额，但不消耗新一天的 token 额度。
+
+<a id="further-exploration"></a>
+## 延伸阅读
+
+参阅[共享用户 ID](../contracts/README.zh.md) 和[额度实现计划](../../../../docs/superpowers/plans/2026-10-10-public-harness-quota.zh.md)。
+
+<a id="dev-note"></a>
+## 开发说明
+
+账本仅负责准入。额度代理仍须验证请求上限、只转发支持的操作，并结算每个已接受的请求。每个数据库只运行一个额度服务；启动时会清理上一服务进程未完成的调用。
