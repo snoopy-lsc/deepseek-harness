@@ -6,18 +6,19 @@
 
 **目标：** 为每位公开用户提供受限的平台模型 API 额度，且不把平台密钥放进 Harness 容器。
 
-**架构：** 独立额度服务验证每用户凭据，在单机持久账本中预留个人与全站 token 容量，并且只向固定上游转发允许的 DeepSeek Messages 操作。Web profile 的 Cordis provider 在每次模型调用时从私有文件读取已轮换的用户凭据。配置服务交付该文件，但不接触平台密钥。
+**架构：** 额度 Cordis 服务验证每用户凭据，在持久账本中预留个人与全站 token 容量，并且只向固定上游转发允许的 DeepSeek Messages 操作。正式环境将其放在独立 profile 中，平台密钥只保留在那里；仅本机可用的开发 profile 使用同一账本，连接 mock 上游或单独的开发密钥。Web profile 的 provider 每次调用时从私有文件读取已轮换的用户凭据。
 
 **技术栈：** TypeScript、Node 22.19+ 或 24+、SQLite 事务、DeepSeek Messages API、Cordis LLM 注册、Vitest。
 
 **规格：** [公开多用户 Harness 设计](../specs/2026-10-10-public-team-harness-design.zh.md)。
 
-**前置工作：** 运行环境计划的任务 1–2 提供共享用户 ID 类型和配置服务控制 socket。[运行环境计划](2026-10-10-public-harness-runtime.zh.md)。
+**前置工作：** 运行环境计划的任务 1–2 提供共享用户 ID 类型和开发实例管理器；正式环境还需完成其中的 Linux 任务。[运行环境计划](2026-10-10-public-harness-runtime.zh.md)。
 
 ## 全局约束
 
-- 代码放在 `integrations/public-harness/`；额度服务使用独立的 `dsh` profile，用户侧 provider 是可安装的 Cordis bundle。
-- 只有额度服务可以读取平台密钥。容器取得绑定用户和实例、有效期最长 15 分钟的凭据；私有挂载文件在到期前轮换。
+- 代码放在 `integrations/public-harness/`；正式额度服务使用独立的 `dsh` profile，开发额度服务运行于 `team-dev`，用户侧 provider 是可安装的 Cordis bundle。
+- 只有正式额度服务可以读取平台密钥。每个用户运行环境取得绑定用户和实例、有效期最长 15 分钟的凭据；私有文件在到期前轮换。
+- 开发环境连接 mock 上游或使用开发者单独提供的密钥；`team-dev` profile 拒绝生产凭据。
 - 必须配置正数的个人与全站每日 token 额度及并发上限。账本故障、未知请求操作和缺少安全预留上界时拒绝请求。
 - 成功和中断的流都只结算一次；缺失最终用量时扣除预留额。没有持久预留的请求不能转发。
 - 服务只接受配置的上游源及明确支持的 Messages 和 Files 路径；拒绝重定向。
@@ -48,7 +49,7 @@
 
 **文件：** 创建 `packages/quota/src/tokens.ts`、`admission.ts`、`tests/admission.spec.ts`，以及 `packages/quota-provider/src/index.ts`、其 Web profile bundle 和测试。
 
-**接口：** 额度服务控制 socket 只向配置服务提供 `issue(userId, instanceId): Promise<{ token: string; expiresAt: number }>`。用户侧 provider 通过公开的 `registerDeepSeekProvider` 注册 DeepSeek，每次调用时从私有轮换文件解析认证。`admit(request): Promise<{ userId; reservation }>` 验证令牌、操作、模型和请求大小，预留配置的模型上下文窗口上限加请求的 `max_tokens`；没有配置上下文窗口的模型拒绝使用。
+**接口：** 正式额度服务控制 socket 只向配置服务提供 `issue(userId, instanceId): Promise<{ token: string; expiresAt: number }>`；`team-dev` 通过进程内服务签发相同凭据。用户侧 provider 通过公开的 `registerDeepSeekProvider` 注册 DeepSeek，每次调用时从私有轮换文件解析认证。`admit(request): Promise<{ userId; reservation }>` 验证令牌、操作、模型和请求大小，预留配置的模型上下文窗口上限加请求的 `max_tokens`；没有配置上下文窗口的模型拒绝使用。
 
 - [ ] **步骤 1：编写失败测试**，覆盖过期令牌、跨实例令牌、错误签发方或签名、请求体和图像上限、缺失 `max_tokens`、不支持的模型或端点、凭据文件变化，以及没有安全上界的请求。
 - [ ] **步骤 2：运行** `pnpm --dir integrations/public-harness test -- admission.spec.ts`；确认失败。
@@ -72,7 +73,7 @@
 
 **接口：** 私有健康与状态端点报告账本可用性、总体容量和拒绝原因类别，不暴露用户 ID、提示词、令牌或凭据。公开模型错误仅说明额度耗尽或服务不可用类别。
 
-- [ ] **步骤 1：编写失败测试**，覆盖额度耗尽、账本故障、上游不可用、秘密信息脱敏和部署时正数限制必填。
+- [ ] **步骤 1：编写失败测试**，覆盖额度耗尽、账本故障、上游不可用、秘密信息脱敏、部署时正数限制必填、mock 开发上游，以及在 `team-dev` 中拒绝生产凭据。
 - [ ] **步骤 2：运行** `pnpm --dir integrations/public-harness test -- health.spec.ts`；确认失败。
 - [ ] **步骤 3：实现** 状态报告、脱敏诊断和启动配置检查。
 - [ ] **步骤 4：运行** 聚焦测试和构建后的 profile smoke；确认通过，然后提交。

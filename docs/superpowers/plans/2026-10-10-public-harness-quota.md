@@ -6,18 +6,19 @@ English | [中文](2026-10-10-public-harness-quota.zh.md)
 
 **Goal:** Give each public user a bounded share of the platform's model API without placing the platform key in a Harness container.
 
-**Architecture:** A separate quota service terminates per-user credentials, reserves personal and site token capacity in a durable single-server ledger, and forwards only approved DeepSeek Messages operations to a pinned upstream. A Web-profile Cordis provider reads a rotated per-user credential from a private file on each model call. The provisioner delivers that file and never sees the platform key.
+**Architecture:** The quota Cordis service terminates per-user credentials, reserves personal and site token capacity in a durable ledger, and forwards only approved DeepSeek Messages operations to a pinned upstream. Production runs it in a separate profile and keeps the platform key there; the local-only development profile uses the same ledger with a mock upstream or a separate developer key. A Web-profile provider reads a rotated per-user credential from a private file on each call.
 
 **Tech Stack:** TypeScript, Node 22.19+ or 24+, SQLite transactions, DeepSeek Messages API, Cordis LLM registration, Vitest.
 
 **Spec:** [Public multi-user Harness design](../specs/2026-10-10-public-team-harness-design.md).
 
-**Prerequisite:** Runtime plan Tasks 1–2 provide the shared user-ID type and the provisioner control socket. [Runtime plan](2026-10-10-public-harness-runtime.md).
+**Prerequisite:** Runtime plan Tasks 1–2 provide the shared user-ID type and development instance manager; its Linux tasks are required before production. [Runtime plan](2026-10-10-public-harness-runtime.md).
 
 ## Global Constraints
 
-- Code lives in `integrations/public-harness/`; the quota service runs from its own `dsh` profile and the user-side provider is an installable Cordis bundle.
-- The platform key is available only to the quota service. A container gets a user- and instance-bound credential valid for at most 15 minutes; a private mounted file is rotated before expiry.
+- Code lives in `integrations/public-harness/`; production quota runs from its own `dsh` profile, development quota runs inside `team-dev`, and the user-side provider is an installable Cordis bundle.
+- The platform key is available only to the production quota service. Each user runtime gets a user- and instance-bound credential valid for at most 15 minutes; a private file is rotated before expiry.
+- Development uses a mock upstream or a separate developer-supplied key; production credentials are rejected by the `team-dev` profile.
 - Positive configurable personal and site daily token budgets and concurrency limits are required. Ledger failure, unknown request operations, and missing safe reservation bounds fail closed.
 - Both successful and interrupted streams settle once; missing final usage consumes the reservation. No request forwards without durable reservation.
 - The service accepts only the configured upstream origin and explicitly supported Messages and Files paths; redirects are rejected.
@@ -48,7 +49,7 @@ English | [中文](2026-10-10-public-harness-quota.zh.md)
 
 **Files:** Create `packages/quota/src/tokens.ts`, `admission.ts`, `tests/admission.spec.ts`, and `packages/quota-provider/src/index.ts` with its Web-profile bundle and tests.
 
-**Interfaces:** The quota control socket exposes `issue(userId, instanceId): Promise<{ token: string; expiresAt: number }>` only to the provisioner. The user-side provider registers DeepSeek through the public `registerDeepSeekProvider` and resolves authentication from the private rotating file on each call. `admit(request): Promise<{ userId; reservation }>` validates token, operation, model, body limit, and reserves the configured model context-window maximum plus the requested `max_tokens`; models without a configured context window are rejected.
+**Interfaces:** The production quota control socket exposes `issue(userId, instanceId): Promise<{ token: string; expiresAt: number }>` only to the provisioner; `team-dev` issues the same credential through an in-process service. The user-side provider registers DeepSeek through the public `registerDeepSeekProvider` and resolves authentication from the private rotating file on each call. `admit(request): Promise<{ userId; reservation }>` validates token, operation, model, body limit, and reserves the configured model context-window maximum plus the requested `max_tokens`; models without a configured context window are rejected.
 
 - [ ] **Step 1: Write failing tests** for expired/cross-instance tokens, wrong issuer or signature, body and image limits, missing `max_tokens`, unsupported model or endpoint, changed credential file, and a request without a safe bound.
 - [ ] **Step 2: Run** `pnpm --dir integrations/public-harness test -- admission.spec.ts`; expect failure.
@@ -72,7 +73,7 @@ English | [中文](2026-10-10-public-harness-quota.zh.md)
 
 **Interfaces:** A private health/status endpoint reports ledger availability, aggregate capacity, and rejection category without user IDs, prompts, tokens, or credentials. Public model errors reveal only quota or service-unavailable categories.
 
-- [ ] **Step 1: Write failing tests** for exhausted quota, failed ledger, unavailable upstream, secret redaction, and positive required deployment limits.
+- [ ] **Step 1: Write failing tests** for exhausted quota, failed ledger, unavailable upstream, secret redaction, positive required deployment limits, a mock development upstream, and rejection of production credentials in `team-dev`.
 - [ ] **Step 2: Run** `pnpm --dir integrations/public-harness test -- health.spec.ts`; expect failure.
 - [ ] **Step 3: Implement** status reporting, sanitized diagnostics, and startup configuration checks.
 - [ ] **Step 4: Run** the focused test plus a built-profile smoke; expect pass, then commit.

@@ -4,21 +4,22 @@ English | [中文](2026-10-10-public-harness-ui-release.zh.md)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Deliver one branded browser experience and release the public service only after real Linux registration, isolation, quota, and recovery checks pass.
+**Goal:** Deliver one branded browser experience on macOS/Windows development servers and Linux production, then release public registration only after real Linux checks pass.
 
-**Architecture:** An installable browser Cordis bundle fills the published brand and navigation slots in each user's Web profile. authentik uses matching logo, colors, and copy for registration and login. A deployment manifest pins all bundle versions and keeps public enrollment disabled until an automated release check and a recorded Linux rehearsal pass.
+**Architecture:** An installable browser Cordis bundle fills the published brand and navigation slots in each user's Web profile. The `team-dev` profile combines loopback router, local identity, local runtime, and quota service on macOS and Windows; production uses authentik with matching branding. A deployment manifest pins bundle versions and keeps public enrollment disabled until a recorded Linux rehearsal passes.
 
 **Tech Stack:** TypeScript, React, Cordis client slots, CSS tokens, authentik, Caddy, Playwright, Git, systemd.
 
 **Spec:** [Public multi-user Harness design](../specs/2026-10-10-public-team-harness-design.md).
 
-**Prerequisite:** Complete the [runtime](2026-10-10-public-harness-runtime.md), [quota](2026-10-10-public-harness-quota.md), and [router](2026-10-10-public-harness-router.md) plans before the final release check; UI unit work may start earlier.
+**Prerequisite:** The [runtime](2026-10-10-public-harness-runtime.md), [quota](2026-10-10-public-harness-quota.md), and [router](2026-10-10-public-harness-router.md) plans provide the shared local development path; all Linux tasks must pass before the final release check.
 
 ## Global Constraints
 
 - UI code lives in `integrations/public-harness/packages/ui/` and installs through each user's Web profile; no Harness source patch is required for upstream upgrades.
+- The macOS/Windows `team-dev` profile is loopback-only, uses fixed test identities and a mock model or developer key, and never exposes public registration.
 - Product copy belongs to typed English and Chinese locale dictionaries. Reuse existing UI primitives, slots, and style tokens; verify light and dark themes.
-- The login and registration pages are authentik-owned. The plugin supplies Harness branding and public navigation; hiding specific official controls remains a later UI change.
+- Production login and registration pages are authentik-owned; development uses a local test-user selector. The plugin supplies Harness branding and common navigation; hiding specific official controls remains a later UI change.
 - Every user instance gets the same tested bundle versions. Session data and Git workspaces persist through upgrades.
 - Public self-registration stays disabled until real Linux checks for full tool execution, isolation, quota, account lifecycle, TLS, mail/CAPTCHA, backup, and capacity all pass.
 - Paths in task file lists are relative to `integrations/public-harness/` unless they include that prefix.
@@ -30,6 +31,7 @@ English | [中文](2026-10-10-public-harness-ui-release.zh.md)
 - Browser refresh and WebSocket reconnect must retain the correct user path and branding; Task 2 pins them.
 - Upgrading Harness with an incompatible plugin interface must stop before changing user instances; Task 3 pins preflight.
 - A failed registration, email verification, or backup restore must keep public enrollment closed; Task 4 pins the release condition.
+- A development profile must remain available on macOS and Windows without Caddy, authentik, Linux accounts, or gVisor; Task 2 pins that path.
 
 ---
 
@@ -44,16 +46,16 @@ English | [中文](2026-10-10-public-harness-ui-release.zh.md)
 - [ ] **Step 3: Implement** the slot occupants, shared status components, locale dictionaries, and CSS using existing UI primitives and tokens.
 - [ ] **Step 4: Run** the focused tests; expect pass. Capture a browser GIF from the real server/model flow for the visible UI PR, then commit the UI and README pair.
 
-### Task 2: Profile and Login Composition
+### Task 2: Development and Production Profile Composition
 
-**Files:** Create `deploy/profiles/web/cordis.patch.yml`, `deploy/authentik/brand.yml`, and `tests/profile.e2e.ts`; update the deployment README pair.
+**Files:** Create `deploy/profiles/web/cordis.patch.yml`, `deploy/profiles/team-dev/cordis.patch.yml`, `deploy/authentik/brand.yml`, `tests/profile.e2e.ts`, and `tests/team-dev.e2e.ts`; update the deployment README pair.
 
-**Interfaces:** The Web profile installs the same pinned UI, quota-provider, and token-publisher bundles for each user. authentik enrollment requires email verification and CAPTCHA before an account may reach the router.
+**Interfaces:** The Web profile installs the same pinned UI, quota-provider, and token-publisher bundles for each user. `team-dev` starts local router, signed test identity, local runtime, and quota service on loopback with no public enrollment. Production authentik requires email verification and CAPTCHA before an account may reach the router.
 
-- [ ] **Step 1: Write failing e2e tests** for first login, refresh, clean URL, instance wait, WebSocket reconnect, account switch, and consistent login/application branding.
-- [ ] **Step 2: Run** `pnpm --dir integrations/public-harness test:e2e -- profile.e2e.ts`; expect failure.
-- [ ] **Step 3: Implement** the profile overlay, bundle installation, authentik brand and enrollment configuration, and browser navigation.
-- [ ] **Step 4: Run** the e2e test with two real Harness Web processes; expect pass, then commit.
+- [ ] **Step 1: Write failing e2e tests** for macOS/Windows local startup, two test identities, first login, refresh, clean URL, instance wait, WebSocket reconnect, account switch, non-loopback refusal, and consistent production login/application branding.
+- [ ] **Step 2: Run** `pnpm --dir integrations/public-harness test:e2e -- team-dev.e2e.ts`; expect failure.
+- [ ] **Step 3: Implement** the local profile and test-user selector, shared bundle installation, production authentik brand and enrollment configuration, and browser navigation.
+- [ ] **Step 4: Run** `team-dev.e2e.ts` with two real Harness Web processes on macOS and Windows, then run `profile.e2e.ts` with real authentik/Caddy on Linux; record results and commit.
 
 ### Task 3: Versioned Upgrade and Rollback
 

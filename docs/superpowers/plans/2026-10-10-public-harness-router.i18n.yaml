@@ -3,23 +3,23 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/superpowers/plans/2026-10-10-public-harness-router.md
 /public-harness-router-implementation-plan:
-  en: 667245fc5afeb712
-  zh: 2b22d96a1ffcb5bb
+  en: dce68c9e336e1dbd
+  zh: 7723a5290652abf9
 /public-harness-router-implementation-plan/global-constraints:
-  en: 6509668a01511f66
-  zh: cd7cf27915f2bf8c
+  en: f8da5bc5dcb0950e
+  zh: 6590b9c0054aef84
 /public-harness-router-implementation-plan/review-focus:
-  en: 74361554f3d7d16b
-  zh: d2204f5c56023bc7
+  en: 746464396fab41cb
+  zh: e3b4c092e3a030f1
 /public-harness-router-implementation-plan/review-focus/task-1-authenticated-identity:
-  en: 5fd28c586a834bb5
-  zh: 24b98f9ecdceabd8
+  en: d0658ad0dbdf715e
+  zh: deb6831c6db0386b
 /public-harness-router-implementation-plan/review-focus/task-2-owner-routing-and-capacity:
-  en: efc74da1409112f7
-  zh: 0ec399b6421cc611
+  en: a1e05844d2166018
+  zh: ba88e64412fbfe5c
 /public-harness-router-implementation-plan/review-focus/task-3-server-side-harness-cookie-exchange:
-  en: 34dbca09f48bd250
-  zh: 60a98bb08ef79e6e
+  en: 99ece29a9892709d
+  zh: 36a3a89df3809d55
 /public-harness-router-implementation-plan/review-focus/task-4-http-and-websocket-forwarding:
-  en: cf87fcba589d82f5
-  zh: 192755e43ed0fddb
+  en: 7e51d5cb2681b343
+  zh: f8b082d9385d367a

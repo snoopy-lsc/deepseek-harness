@@ -3,11 +3,11 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/superpowers/plans/2026-10-10-public-harness-quota.md
 /public-harness-model-quota-implementation-plan:
-  en: 72da76b6a149ca0a
-  zh: a1fa8c2d9a5d0daa
+  en: a902e64874c6bcfb
+  zh: 10c114f9fc8e9a17
 /public-harness-model-quota-implementation-plan/global-constraints:
-  en: 97e15a61899854ae
-  zh: d9248bec9175f0cc
+  en: 137c07482dc75edc
+  zh: d0df653032924734
 /public-harness-model-quota-implementation-plan/review-focus:
   en: c53605e2a794d114
   zh: 3df9c87148ca73b5
@@ -15,11 +15,11 @@
   en: 1f3441318c29deaf
   zh: e04cc67e5d4f7905
 /public-harness-model-quota-implementation-plan/review-focus/task-2-private-credential-and-request-admission:
-  en: 031e3ea02d9605e2
-  zh: f9e535ddbc8fb348
+  en: ea5162c11da86536
+  zh: 0b807519782560ce
 /public-harness-model-quota-implementation-plan/review-focus/task-3-metered-messages-and-file-operations:
   en: a17a02bd368c4a77
   zh: d2b7618bea57d79c
 /public-harness-model-quota-implementation-plan/review-focus/task-4-limits-and-failure-visibility:
-  en: fdd42febbe9d0a47
-  zh: 25df74214eb71efb
+  en: 720aa98bb90d59d9
+  zh: ba5897aed14b34f2

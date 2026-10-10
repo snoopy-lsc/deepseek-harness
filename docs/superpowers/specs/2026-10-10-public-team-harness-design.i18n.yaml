@@ -6,20 +6,23 @@
   en: 937baabc6aa1c0cd
   zh: 3df3a10c2d244292
 /public-multi-user-harness-design/purpose-and-scope:
-  en: c38b8a55414121ef
-  zh: 8f005af3283d04c5
+  en: 2afd37cd41adaf68
+  zh: 0e915939d2485c8d
 /public-multi-user-harness-design/deployment-and-ownership:
-  en: caa9f8cddded16d2
-  zh: aab883db896dd225
+  en: 44fa133253913b57
+  zh: 3f34ee98bd5b5175
+/public-multi-user-harness-design/development-hosts:
+  en: 47b4fb218660e93a
+  zh: e7523ee2309fb23f
 /public-multi-user-harness-design/request-and-lifecycle-rules:
-  en: c45278bfed3e8a39
-  zh: db012a79ce2243af
+  en: 4ff244816a4e7737
+  zh: e799417ebf98516f
 /public-multi-user-harness-design/packaging-and-upgrade-behavior:
-  en: d732625b94f8565f
-  zh: 7dc24d14da8a2566
+  en: b539597a7d7857ad
+  zh: ea265f2b7d6059eb
 /public-multi-user-harness-design/verification-and-release-criteria:
-  en: 02dbc13742f15926
-  zh: bbbb3b3849cdac66
+  en: c229380a16adae19
+  zh: efbb1f359ebfbd8a
 /public-multi-user-harness-design/alternatives-and-limits:
   en: 81882e66f5a9d6ba
   zh: be89efc634ac56be

@@ -3,23 +3,26 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/superpowers/plans/2026-10-10-public-harness-runtime.md
 /public-harness-runtime-implementation-plan:
-  en: 9f076a03d3da7859
-  zh: 12e0790f9e4b51c9
+  en: 9004762242bb20ee
+  zh: fa0b988a18ce600e
 /public-harness-runtime-implementation-plan/global-constraints:
-  en: 3c709081a82b3ef3
-  zh: 37e164ddd4381902
+  en: af51be74fa106f30
+  zh: 2badd0a0c40e6d04
 /public-harness-runtime-implementation-plan/review-focus:
-  en: d447d5ef3f82b5ed
-  zh: 11ef4897f3e75a0b
-/public-harness-runtime-implementation-plan/review-focus/task-1-fixed-provisioner-protocol:
-  en: 3288b53b82bc986a
-  zh: 2495a1358d4098f2
-/public-harness-runtime-implementation-plan/review-focus/task-2-idempotent-user-provisioning:
-  en: 0e974bf9c16d958b
-  zh: f74b2a3d96cc55fe
-/public-harness-runtime-implementation-plan/review-focus/task-3-confined-container-and-web-endpoint:
-  en: cb38c4b3f9581828
-  zh: 30b98ac4d130a3ee
-/public-harness-runtime-implementation-plan/review-focus/task-4-suspend-restart-and-recovery:
-  en: 0f53d3a61d2d6d19
-  zh: 82f34f02743566ba
+  en: 2cb0ba61329d74e9
+  zh: 5975324bc8b7bcf4
+/public-harness-runtime-implementation-plan/review-focus/task-1-instance-manager-and-fixed-provisioner-protocol:
+  en: 1d13fa9c91f44dfb
+  zh: 3c8551a10b7a1aa1
+/public-harness-runtime-implementation-plan/review-focus/task-2-macos-and-windows-development-runtime:
+  en: ab195abf230d590a
+  zh: b64d088835402596
+/public-harness-runtime-implementation-plan/review-focus/task-3-idempotent-linux-user-provisioning:
+  en: 448165fadbc4bf10
+  zh: 7084d47fe9692215
+/public-harness-runtime-implementation-plan/review-focus/task-4-confined-container-and-web-endpoint:
+  en: 6f8b2d008f224b9e
+  zh: ed2c297a8eb35aea
+/public-harness-runtime-implementation-plan/review-focus/task-5-suspend-restart-and-recovery:
+  en: 40dbdceae535f11a
+  zh: d54517174cc776b4

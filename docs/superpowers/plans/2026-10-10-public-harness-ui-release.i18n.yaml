@@ -3,20 +3,20 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/superpowers/plans/2026-10-10-public-harness-ui-release.md
 /public-harness-ui-and-release-implementation-plan:
-  en: 4492e8f15c845e7c
-  zh: 59fa14c0748cf550
+  en: 3144e83c3565085e
+  zh: b6c423d9b28f7870
 /public-harness-ui-and-release-implementation-plan/global-constraints:
-  en: 075c61ffdfe710ae
-  zh: 7b633ed951e4fe45
+  en: 1f6ce2ece2e3575f
+  zh: 8652452149497d87
 /public-harness-ui-and-release-implementation-plan/review-focus:
-  en: 65c450e611e90bf7
-  zh: 6f8952b418a61120
+  en: 4707b10d1a642cdd
+  zh: 235ff23a572b5fe7
 /public-harness-ui-and-release-implementation-plan/review-focus/task-1-shared-brand-and-status-ui:
   en: aa1a680fcac13926
   zh: b95d33aae1c6939a
-/public-harness-ui-and-release-implementation-plan/review-focus/task-2-profile-and-login-composition:
-  en: 56cb86e2dfe482ad
-  zh: c30dad4e2a40b824
+/public-harness-ui-and-release-implementation-plan/review-focus/task-2-development-and-production-profile-composition:
+  en: aa185862c4a374d5
+  zh: ee11db0308810313
 /public-harness-ui-and-release-implementation-plan/review-focus/task-3-versioned-upgrade-and-rollback:
   en: 6fca8c3037a0afb6
   zh: e5db0c0261b16400
