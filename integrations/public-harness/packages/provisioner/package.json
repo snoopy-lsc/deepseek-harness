@@ -1,0 +1,1 @@
+{"name":"@public-harness/provisioner","version":"0.1.0","type":"module","exports":{".":"./src/protocol.ts"},"dependencies":{"@public-harness/contracts":"workspace:*"}}

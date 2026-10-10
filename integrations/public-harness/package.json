@@ -1,0 +1,1 @@
+{"name":"@public-harness/workspace","private":true,"type":"module","packageManager":"pnpm@11.7.0","scripts":{"test":"vitest run --config vitest.config.ts","typecheck":"tsc --noEmit"},"devDependencies":{"@types/node":"^22.20.0","typescript":"^6.0.3","vitest":"^4.1.8"}}
