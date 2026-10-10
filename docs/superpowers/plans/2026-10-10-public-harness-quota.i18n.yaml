@@ -1,0 +1,25 @@
+# Bilingual-pair consistency record for 2026-10-10-public-harness-quota.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/superpowers/plans/2026-10-10-public-harness-quota.md
+/public-harness-model-quota-implementation-plan:
+  en: 72da76b6a149ca0a
+  zh: a1fa8c2d9a5d0daa
+/public-harness-model-quota-implementation-plan/global-constraints:
+  en: 97e15a61899854ae
+  zh: d9248bec9175f0cc
+/public-harness-model-quota-implementation-plan/review-focus:
+  en: c53605e2a794d114
+  zh: 3df9c87148ca73b5
+/public-harness-model-quota-implementation-plan/review-focus/task-1-durable-quota-ledger:
+  en: 1f3441318c29deaf
+  zh: e04cc67e5d4f7905
+/public-harness-model-quota-implementation-plan/review-focus/task-2-private-credential-and-request-admission:
+  en: 031e3ea02d9605e2
+  zh: f9e535ddbc8fb348
+/public-harness-model-quota-implementation-plan/review-focus/task-3-metered-messages-and-file-operations:
+  en: a17a02bd368c4a77
+  zh: d2b7618bea57d79c
+/public-harness-model-quota-implementation-plan/review-focus/task-4-limits-and-failure-visibility:
+  en: fdd42febbe9d0a47
+  zh: 25df74214eb71efb

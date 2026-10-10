@@ -1,0 +1,25 @@
+# Bilingual-pair consistency record for 2026-10-10-public-harness-router.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/superpowers/plans/2026-10-10-public-harness-router.md
+/public-harness-router-implementation-plan:
+  en: 667245fc5afeb712
+  zh: 2b22d96a1ffcb5bb
+/public-harness-router-implementation-plan/global-constraints:
+  en: 6509668a01511f66
+  zh: cd7cf27915f2bf8c
+/public-harness-router-implementation-plan/review-focus:
+  en: 74361554f3d7d16b
+  zh: d2204f5c56023bc7
+/public-harness-router-implementation-plan/review-focus/task-1-authenticated-identity:
+  en: 5fd28c586a834bb5
+  zh: 24b98f9ecdceabd8
+/public-harness-router-implementation-plan/review-focus/task-2-owner-routing-and-capacity:
+  en: efc74da1409112f7
+  zh: 0ec399b6421cc611
+/public-harness-router-implementation-plan/review-focus/task-3-server-side-harness-cookie-exchange:
+  en: 34dbca09f48bd250
+  zh: 60a98bb08ef79e6e
+/public-harness-router-implementation-plan/review-focus/task-4-http-and-websocket-forwarding:
+  en: cf87fcba589d82f5
+  zh: 192755e43ed0fddb
