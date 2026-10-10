@@ -1,0 +1,10 @@
+- id: web-runtime
+  config:
+    openBrowser: false
+    printUrl: false
+    publicUrl: !!js ctx.webStartup.publicUrl
+    surfaceContext: true
+    trustedHosts: !!js ctx.webStartup.trustedHosts
+- insert:
+    - id: public-harness-web-token
+      name: '@public-harness/web-token'

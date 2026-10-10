@@ -9,7 +9,7 @@ kind: "package-library"
 
 ## Summary
 
-本项目包含面向公开 Harness 部署、独立版本管理的 Cordis 包。它使用单独的 pnpm 工作区，以便与兼容版本的 Harness 一起安装插件。当前包定义用户 ID、实例地址和私有 Linux 配置服务协议；尚未启动多用户服务器。
+本项目包含面向公开 Harness 部署、独立版本管理的 Cordis 包。它使用单独的 pnpm 工作区，以便与兼容版本的 Harness 一起安装插件。它包含共享实例接口、私有 Linux 配置服务协议和本机开发运行环境；尚未启动公开的多用户服务器。
 
 ## Table of Contents
 
@@ -23,12 +23,12 @@ kind: "package-library"
 <a id="use-this-project"></a>
 ## 使用本项目
 
-在此目录运行 `pnpm install`、`pnpm test` 和 `pnpm typecheck`。集成仍在开发中，尚无公开入口。
+在此目录运行 `pnpm install`、`pnpm test` 和 `pnpm typecheck`。`pnpm run build` 生成普通 JavaScript 包。本机运行环境要求先构建 Harness CLI 和 Web 前端；集成尚无公开入口。
 
 <a id="understand-the-implementation"></a>
 ## 了解实现
 
-contracts 包负责规范化的不透明用户 ID 和私有实例地址。provisioner 包定义后续 Linux 运行环境所用的固定 Unix socket 操作。macOS 和 Windows 开发运行环境将使用相同的实例管理接口，不使用此 socket。
+contracts 包负责规范化的不透明用户 ID 和私有实例地址。provisioner 包定义后续 Linux 运行环境所用的固定 Unix socket 操作。macOS 和 Windows 开发运行环境为每位固定测试用户启动一个本机 Web 进程，并通过 Web token bundle 的私有 IPC 发布启动凭据。
 
 <a id="further-exploration"></a>
 ## 延伸阅读

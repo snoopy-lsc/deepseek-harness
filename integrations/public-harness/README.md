@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This project contains independently versioned Cordis packages for the public Harness deployment. It is a separate pnpm workspace so its plugins can be installed alongside a compatible Harness release. The current packages define user IDs, instance endpoints, and a private Linux provisioner protocol; they do not start a multiuser server yet.
+This project contains independently versioned Cordis packages for the public Harness deployment. It is a separate pnpm workspace so its plugins can be installed alongside a compatible Harness release. It includes shared instance contracts, a private Linux provisioner protocol, and a local development runtime; it does not start a public multiuser server yet.
 
 ## Table of Contents
 
@@ -23,12 +23,12 @@ This project contains independently versioned Cordis packages for the public Har
 <a id="use-this-project"></a>
 ## Use this project
 
-Run `pnpm install`, `pnpm test`, and `pnpm typecheck` from this directory. The integration is under development and has no public entry point.
+Run `pnpm install`, `pnpm test`, and `pnpm typecheck` from this directory. `pnpm run build` produces plain JavaScript packages. The local runtime requires a built Harness CLI and Web frontend; the integration has no public entry point yet.
 
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 
-The contracts package owns canonical opaque user IDs and private instance addresses. The provisioner package defines the fixed Unix-socket operations used by the later Linux runtime. The macOS and Windows development runtime will use the same instance-manager interface without this socket.
+The contracts package owns canonical opaque user IDs and private instance addresses. The provisioner package defines the fixed Unix-socket operations used by the later Linux runtime. The macOS and Windows development runtime starts one loopback Web process per fixed test user and uses a Web token bundle to publish startup credentials through private IPC.
 
 <a id="further-exploration"></a>
 ## Further Exploration

@@ -2,8 +2,8 @@
 import { chmod, lstat, stat, unlink } from 'node:fs/promises'
 import { createConnection, createServer, type Server, type Socket } from 'node:net'
 import { dirname } from 'node:path'
-import type { InstanceEndpoint, UserId } from '../../contracts/src/index.ts'
-import { parseInstanceEndpoint, parseUserId } from '../../contracts/src/index.ts'
+import type { InstanceEndpoint, UserId } from '@public-harness/contracts'
+import { parseInstanceEndpoint, parseUserId } from '@public-harness/contracts'
 
 const MAX_MESSAGE_BYTES = 65_536
 const REQUEST_TIMEOUT_MS = 10_000
