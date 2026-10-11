@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { checkPublicEnrollment, collectConfigFacts, REQUIRED_EVIDENCE, type ConfigFacts, type ReleaseContext, type ReleaseEvidence } from '../deploy/release-check.ts'
 
 const now = new Date('2026-10-20T00:00:00Z')
-const goodConfig: ConfigFacts = { caddyForwardAuth: true, caddyStripsIdentityHeaders: true, caddyUnixUpstream: true, routerSecureUnixIngress: true,
+const goodConfig: ConfigFacts = { caddyForwardAuth: true, caddyStripsIdentityHeaders: true, caddyUnixUpstream: true, caddyAdminPrivate: true, caddyKeepsHostPort: true, routerSecureUnixIngress: true,
   limitsConfigured: true, quotaPositiveLimits: true, enrollmentRequiresVerification: true, enrollmentClosedInManifest: true }
 const context = (overrides: Partial<ReleaseContext> = {}): ReleaseContext => ({ expectedHost: 'harness-prod-1', release: '2026.10.0', now,
   maxAgeMs: 7 * 86_400_000, config: goodConfig, ...overrides })
@@ -49,7 +49,7 @@ describe('public enrollment release check', () => {
 })
 
 describe('machine-checked configuration facts', () => {
-  const caddyfile = `x {\n route {\n request_header -X-Authentik-Uid\n request_header -X-Authentik-Jwt\n request_header -X-Forwarded-User\n request_header -X-Real-Ip\n request_header -Forwarded\n forward_auth {$DSH_OUTPOST_ADDR} {\n uri /outpost.goauthentik.io/auth/caddy\n copy_headers X-Authentik-Uid X-Authentik-Jwt\n }\n reverse_proxy unix/{$DSH_ROUTER_SOCKET}\n }\n}`
+  const caddyfile = `{\n admin off\n }\n x {\n route {\n request_header -X-Authentik-Uid\n request_header -X-Authentik-Jwt\n request_header -X-Forwarded-User\n request_header -X-Real-Ip\n request_header -Forwarded\n forward_auth {$DSH_OUTPOST_ADDR} {\n uri /outpost.goauthentik.io/auth/caddy\n copy_headers X-Authentik-Uid X-Authentik-Jwt\n }\n reverse_proxy unix/{$DSH_ROUTER_SOCKET} {\n header_up Host {hostport}\n }\n }\n}`
   const files = { caddyfile, router: { routerSocket: '/run/r.sock', publicAuthority: 'h.example.com' },
     provisioner: { provisioner: { limits: { cpus: 1, memoryBytes: 1, pids: 1, openFiles: 1, diskBytes: 1 } } },
     quota: { service: { personalDailyTokens: 1, siteDailyTokens: 1, personalConcurrency: 1, siteConcurrency: 1 } },
@@ -63,6 +63,9 @@ describe('machine-checked configuration facts', () => {
     const late = caddyfile.replace(/ request_header -X-Real-Ip\n request_header -Forwarded\n/, '') + '\n# request_header -X-Real-Ip'
     expect(collectConfigFacts({ ...files, caddyfile: late }).caddyStripsIdentityHeaders).toBe(false)
     expect(collectConfigFacts({ ...files, caddyfile: caddyfile.replace('unix/{$DSH_ROUTER_SOCKET}', '127.0.0.1:8080') }).caddyUnixUpstream).toBe(false)
+    expect(collectConfigFacts({ ...files, caddyfile: caddyfile.replace('admin off', 'admin 0.0.0.0:2019') }).caddyAdminPrivate).toBe(false)
+    expect(collectConfigFacts({ ...files, caddyfile: caddyfile.replace('admin off', '') }).caddyAdminPrivate).toBe(false)
+    expect(collectConfigFacts({ ...files, caddyfile: caddyfile.replace('{hostport}', '{host}') }).caddyKeepsHostPort).toBe(false)
     expect(collectConfigFacts({ ...files, quota: { service: { personalDailyTokens: 0 } } }).quotaPositiveLimits).toBe(false)
     expect(collectConfigFacts({ ...files, provisioner: { provisioner: {} } }).limitsConfigured).toBe(false)
     expect(collectConfigFacts({ ...files, blueprint: 'captchastage' }).enrollmentRequiresVerification).toBe(false)

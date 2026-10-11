@@ -43,6 +43,8 @@ export function parseTeamRouterConfig(value: unknown): TeamRouterConfig {
   if (typeof record.publicAuthority !== 'string' || !/^[A-Za-z0-9.-]+(:[0-9]{1,5})?$/.test(record.publicAuthority)) {
     throw new Error('publicAuthority must be host or host:port')
   }
+  // Browsers omit the default port, so a Host carrying :80 or :443 never arrives and every request would get 421.
+  if (/:(?:80|443)$/.test(record.publicAuthority)) throw new Error('publicAuthority must omit the default port')
   if (typeof identity.issuer !== 'string' || new URL(identity.issuer).protocol !== 'https:') throw new Error('identity issuer must be an HTTPS URL')
   if (typeof identity.audience !== 'string' || !identity.audience) throw new Error('identity audience is required')
   const gid = record.routerSocketGid

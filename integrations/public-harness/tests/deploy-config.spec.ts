@@ -56,8 +56,18 @@ describe('Caddy edge', () => {
     const facts = collectConfigFacts({ caddyfile: await text('deploy/production/Caddyfile'), router: await json('deploy/production/config/router.example.json'),
       provisioner: await json('deploy/production/config/provisioner.example.json'), quota: await json('deploy/production/config/quota.example.json'),
       blueprint: await text('deploy/authentik/public-harness.yaml'), manifestEnrollment: 'closed' })
-    expect(facts).toEqual({ caddyForwardAuth: true, caddyStripsIdentityHeaders: true, caddyUnixUpstream: true, routerSecureUnixIngress: true,
+    expect(facts).toEqual({ caddyForwardAuth: true, caddyStripsIdentityHeaders: true, caddyUnixUpstream: true, caddyAdminPrivate: true, caddyKeepsHostPort: true, routerSecureUnixIngress: true,
       limitsConfigured: true, quotaPositiveLimits: true, enrollmentRequiresVerification: true, enrollmentClosedInManifest: true })
+  })
+
+  it('never exposes the admin API over TCP and keeps the Host port', async () => {
+    const caddyfile = await text('deploy/production/Caddyfile')
+    const admin = caddyfile.split('\n').filter(line => /^\s*admin\s/.test(line))
+    expect(admin).toHaveLength(1)
+    expect(admin[0]).toMatch(/^\s*admin (?:off|unix\/\/[^\s|]+(?:\|0[0-7]{3})?)\s*$/)
+    expect(caddyfile).toMatch(/header_up Host \{hostport\}/)
+    expect(caddyfile).not.toMatch(/2019/)
+    expect(await text('deploy/production/caddy-dropin/dsh-public.conf')).toMatch(/^RuntimeDirectory=caddy$/m)
   })
 
   const caddy = process.env.CADDY_BIN
@@ -78,6 +88,9 @@ describe('Caddy edge', () => {
     walk(server.routes)
     const strip = handlers.findIndex(item => item.startsWith('headers:["X-Authentik-Uid"]'))
     const router = handlers.findIndex(item => item.includes('unix//run/dsh-public/router/router.sock'))
+    // The admin API is Unix-only and Host keeps its port.
+    expect(JSON.parse(adapted.stdout).admin.listen).toMatch(/^unix\//)
+    expect(adapted.stdout).toContain('{http.request.hostport}')
     expect(strip).toBeGreaterThanOrEqual(0)
     expect(router).toBeGreaterThan(strip)
   })

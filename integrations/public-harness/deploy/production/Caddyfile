@@ -1,3 +1,5 @@
+# Requires Caddy 2.7 or newer (`servers { trusted_proxies }` is rejected by older packages such as Debian's 2.6.2);
+# the configuration is verified with Caddy 2.11.7.
 # Public Harness edge. Caddy terminates TLS, authenticates EVERY request and WebSocket handshake with the
 # authentik proxy outpost, replaces all client-supplied identity headers, and forwards only to the team
 # router's permission-restricted Unix socket. Environment values are set in the systemd unit, never here.
@@ -7,6 +9,10 @@
 #   DSH_ROUTER_SOCKET    e.g. /run/dsh-public/router/router.sock
 {
 	email {$DSH_ACME_EMAIL}
+	# The admin API must never be reachable over TCP: any local process, including a user instance that reaches
+	# host loopback, could read or rewrite this configuration. It listens on a Unix socket owned by `caddy` (0600);
+	# reload with `caddy reload --address unix//run/caddy/admin.sock`.
+	admin unix//run/caddy/admin.sock|0600
 	# Caddy must not trust forwarded headers from any client: it is the first hop.
 	servers {
 		trusted_proxies static
@@ -56,7 +62,9 @@
 			# A WebSocket upgrade passes through this same chain, so it is authenticated at the handshake;
 			# the router closes the connection after at most 60 seconds, forcing re-authentication.
 			reverse_proxy unix/{$DSH_ROUTER_SOCKET} {
-				header_up Host {host}
+				# Forward the Host exactly as the browser sent it (port included), because the router compares
+				# it with `publicAuthority`.
+				header_up Host {hostport}
 				flush_interval -1
 				transport http {
 					response_header_timeout 120s

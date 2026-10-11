@@ -30,6 +30,8 @@ export interface ConfigFacts {
   readonly caddyForwardAuth: boolean
   readonly caddyStripsIdentityHeaders: boolean
   readonly caddyUnixUpstream: boolean
+  readonly caddyAdminPrivate: boolean
+  readonly caddyKeepsHostPort: boolean
   readonly routerSecureUnixIngress: boolean
   readonly limitsConfigured: boolean
   readonly quotaPositiveLimits: boolean
@@ -58,6 +60,8 @@ const CONFIG_FAILURES: Readonly<Record<keyof ConfigFacts, string>> = {
   caddyForwardAuth: 'config: Caddy does not authenticate every request with forward_auth',
   caddyStripsIdentityHeaders: 'config: Caddy does not strip client identity headers before authentication',
   caddyUnixUpstream: 'config: Caddy upstream is not the router Unix socket',
+  caddyAdminPrivate: 'config: Caddy admin API is reachable over TCP',
+  caddyKeepsHostPort: 'config: Caddy does not forward the Host header with its port',
   routerSecureUnixIngress: 'config: router ingress is not a Unix socket with Secure cookies and a public authority',
   limitsConfigured: 'config: instance resource limits are missing',
   quotaPositiveLimits: 'config: quota limits are missing or non-positive',
@@ -108,6 +112,8 @@ export function collectConfigFacts(files: { readonly caddyfile: string; readonly
     caddyStripsIdentityHeaders: authAt >= 0 && strip.every(header => { const at = caddy.indexOf(`request_header -${header}`); return at >= 0 && at < authAt }),
     caddyUnixUpstream: /reverse_proxy unix\//.test(caddy) && !/reverse_proxy\s+(?!unix\/)(?!\{\$dsh_outpost_addr\})\S+/.test(caddy),
     routerSecureUnixIngress: isAbsolute(String(files.router.routerSocket)) && typeof files.router.publicAuthority === 'string' && files.router.publicAuthority.length > 0,
+    caddyAdminPrivate: /^\s*admin (?:off|unix\/)/m.test(caddy),
+    caddyKeepsHostPort: /header_up host \{hostport\}/.test(caddy),
     limitsConfigured: limits !== undefined && ['cpus', 'memoryBytes', 'pids', 'openFiles', 'diskBytes'].every(key => positive(limits[key])),
     quotaPositiveLimits: service !== undefined && ['personalDailyTokens', 'siteDailyTokens', 'personalConcurrency', 'siteConcurrency'].every(key => positive(service[key])),
     enrollmentRequiresVerification: blueprint.includes('captchastage') && blueprint.includes('emailstage') && blueprint.includes('create_users_as_inactive: true'),

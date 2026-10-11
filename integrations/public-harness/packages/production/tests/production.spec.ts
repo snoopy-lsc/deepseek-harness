@@ -116,6 +116,8 @@ describe('strict production configuration files', () => {
     expect(() => parseTeamRouterConfig({ ...router, identity: { ...router.identity, issuer: 'http://login.example.test/' } })).toThrow(/HTTPS/)
     expect(() => parseTeamRouterConfig({ ...router, identity: { ...router.identity, publicKeyFiles: {} } })).toThrow()
     expect(() => parseTeamRouterConfig({ ...router, publicAuthority: 'a b' })).toThrow(/publicAuthority/)
+    expect(() => parseTeamRouterConfig({ ...router, publicAuthority: 'harness.example.com:443' })).toThrow(/default port/)
+    expect(parseTeamRouterConfig({ ...router, publicAuthority: 'staging.example.com:8443' }).publicAuthority).toBe('staging.example.com:8443')
   })
 
   it('rejects incomplete quota and provisioner profiles before anything starts', () => {
