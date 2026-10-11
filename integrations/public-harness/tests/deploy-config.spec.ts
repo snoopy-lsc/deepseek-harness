@@ -227,6 +227,53 @@ describe('host artifacts', () => {
     expect(checked.status, checked.stderr).toBe(0)
   })
 
+  it('mounts /proc with hidepid, exempting only the dsh-procview group and logind', async () => {
+    const sysusers = await text('deploy/production/systemd/sysusers.conf')
+    expect(sysusers).toMatch(/^g dsh-procview -$/m)
+    expect(sysusers).not.toMatch(/^m \S+ dsh-procview/m)
+    expect(await text('deploy/production/logind-dropin/dsh-public.conf')).toMatch(/^SupplementaryGroups=dsh-procview$/m)
+    const enable = await text('deploy/production/scripts/enable-hidepid.sh')
+    expect(enable).toContain('group=dsh-procview')
+    expect(enable).toContain('options="nosuid,nodev,noexec,hidepid=2,gid=$gid"')
+    expect(enable).toMatch(/proc \/proc proc \$options 0 0/)
+    expect(enable).toMatch(/mount -o "remount,\$options" \/proc/)
+    expect(enable).toContain('verify-hidepid.sh')
+  })
+
+  describe('verify-hidepid.sh', () => {
+    const run = async (env: Record<string, string>, ...accounts: string[]): Promise<{ status: number | null; stderr: string; stdout: string }> => {
+      const bin = await mkdtemp(join(tmpdir(), 'dsh-stubs-'))
+      const stub = async (name: string, body: string): Promise<void> => { await writeFile(join(bin, name), `#!/bin/bash\n${body}\n`, { mode: 0o755 }) }
+      await stub('findmnt', 'echo "$FAKE_OPTIONS"')
+      await stub('getent', 'echo "dsh-procview:x:991:"')
+      await stub('id', 'if [ "$1" = -u ]; then echo 2001; else echo "$FAKE_GROUPS"; fi')
+      await stub('runuser', 'shift 3; exec "$@"')
+      await stub('ps', 'printf "%s" "$FAKE_PS"')
+      const result = spawnSync('bash', [join(root, 'deploy/production/scripts/verify-hidepid.sh'), ...accounts],
+        { encoding: 'utf8', env: { PATH: `${bin}:/usr/bin:/bin`, FAKE_GROUPS: 'dsh-instances', FAKE_PS: '2001 sleep 1\n', ...env } })
+      return { status: result.status, stderr: result.stderr, stdout: result.stdout }
+    }
+    const hidden = 'rw,nosuid,nodev,noexec,relatime,hidepid=invisible,gid=991'
+
+    it('passes when /proc hides other users and the account sees only itself', async () => {
+      expect((await run({ FAKE_OPTIONS: hidden }, 'dsh-abc')).status).toBe(0)
+      expect((await run({ FAKE_OPTIONS: 'rw,nosuid,hidepid=2,gid=991' })).status).toBe(0)
+    })
+
+    it.each([
+      ['no hidepid', { FAKE_OPTIONS: 'rw,nosuid,nodev,noexec,relatime' }],
+      ['hidepid=1 only', { FAKE_OPTIONS: 'rw,hidepid=1,gid=991' }],
+      ['wrong exempt group', { FAKE_OPTIONS: 'rw,hidepid=2,gid=5' }],
+      ['no exempt group', { FAKE_OPTIONS: 'rw,hidepid=2' }],
+      ['another user visible', { FAKE_OPTIONS: hidden, FAKE_PS: '2001 sleep 1\n2002 podman run --name x\n' }],
+      ['account in the exempt group', { FAKE_OPTIONS: hidden, FAKE_GROUPS: 'dsh-instances dsh-procview' }],
+    ])('fails closed: %s', async (_name, env) => {
+      const result = await run(env, 'dsh-abc')
+      expect(result.status).toBe(1)
+      expect(result.stderr).toMatch(/^FAIL/)
+    })
+  })
+
   it('ships syntactically valid operator scripts that fail closed', async () => {
     for (const script of await files('deploy/production/scripts')) {
       const body = await text(script)

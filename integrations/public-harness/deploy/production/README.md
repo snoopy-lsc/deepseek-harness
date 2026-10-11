@@ -16,6 +16,7 @@ This directory holds the Linux deployment for Team Harness: a Caddy edge with au
 - [Install on a Linux host](#install-on-a-linux-host)
 - [Network boundaries](#network-boundaries)
 - [Resource limits](#resource-limits)
+- [Process visibility](#process-visibility)
 - [Upgrade and roll back](#upgrade-and-roll-back)
 - [Back up and restore](#back-up-and-restore)
 - [Release check](#release-check)
@@ -57,6 +58,11 @@ Set the router's `publicAuthority` to the host exactly as browsers send it. Cadd
 
 Under gVisor, hitting the memory or pids limit kills the whole sandbox, not one process, and the pids limit counts the sandbox's host threads (about 45 idle and two to three per guest process), not guest processes; a lab run with a limit of 128 allowed about 35 guest processes. The provisioner therefore rejects fewer than 256 pids and less than 512 MiB, and the example uses 2048 pids and 4 GiB. A killed instance is reported as `stopped` by `status` (checked at most every five seconds per user) and by `reconcile`, its socket and quota listener are released, and the next request starts it again; unsaved in-memory work is lost, while the home and workspace files stay. Stopping has a deadline: `podman rm` within `stopTimeoutMs`, then SIGKILL and a forced remove, and a stop that still leaves the container fails so `reconcile` retries it.
 
+<a id="process-visibility"></a>
+## Process visibility
+
+Without `hidepid`, any account can read other accounts' process command lines with `ps`, which exposes container IDs and storage paths of other users' Podman and gVisor processes. `scripts/enable-hidepid.sh` (root, after `systemd-sysusers`) mounts `/proc` with `hidepid=2,gid=<dsh-procview>` through `/etc/fstab` and a live remount, so an account sees only its own processes. The `dsh-procview` group, created by `sysusers.conf`, is the only exemption besides root: `logind-dropin/dsh-public.conf` adds it to `systemd-logind` so sessions keep working, and you may add monitoring accounts to it. Never add an instance account, the router, or the quota service. The script keeps `/etc/fstab.dsh-backup`. `scripts/verify-hidepid.sh [account ...]` checks the mount options and, for each instance account, that `ps` run as that account shows no other user's process and that the account is not in the exempt group; it fails closed with a `FAIL` line and exit status 1, and its result is the `process-visibility` release evidence. This only hides command lines and `/proc` entries; it does not stop an account from guessing a path or port.
+
 <a id="upgrade-and-roll-back"></a>
 ## Upgrade and roll back
 
@@ -70,7 +76,7 @@ Run `scripts/backup.sh` as root. It takes an online SQLite backup of the quota l
 <a id="release-check"></a>
 ## Release check
 
-`checkPublicEnrollment` returns `allow` only when the machine-checked configuration facts hold and a recorded, current result exists for every rehearsal: Caddy TLS and header stripping, authentik security version, email and CAPTCHA, full tool execution under gVisor, two-user isolation, loopback isolation, recovery after a killed sandbox, quota fail-closed behavior, account lifecycle, restart recovery, backup restore, and capacity. Each result carries the host, the release, and a time; results from another host, another release, or older than seven days are rejected, as is any detail that looks like a secret or user data. Run it with `dshctl release-check evidence.json /etc/dsh-public` and open registration only after it prints `allow`.
+`checkPublicEnrollment` returns `allow` only when the machine-checked configuration facts hold and a recorded, current result exists for every rehearsal: Caddy TLS and header stripping, authentik security version, email and CAPTCHA, full tool execution under gVisor, two-user isolation, process visibility, loopback isolation, recovery after a killed sandbox, quota fail-closed behavior, account lifecycle, restart recovery, backup restore, and capacity. Each result carries the host, the release, and a time; results from another host, another release, or older than seven days are rejected, as is any detail that looks like a secret or user data. Run it with `dshctl release-check evidence.json /etc/dsh-public` and open registration only after it prints `allow`.
 
 <a id="further-exploration"></a>
 ## Further Exploration
@@ -80,4 +86,4 @@ See the [design](../../../../docs/superpowers/specs/2026-10-10-public-team-harne
 <a id="dev-note"></a>
 ## Dev Note
 
-The tests check these files statically and with mocks; Caddy and `nft -c` can also parse the Caddyfile and firewall when `CADDY_BIN` and `NFT_BIN` are set. A lab pass on a host without systemd (real Podman, gVisor, nftables, and Caddy 2.11.7, with a stub identity provider) found the problems this guide now addresses; the port ranges, firewall order, pasta option, controller list, image loading, and kill recovery have run only against mocks since. The units, the real firewall, container image, authentik blueprints, backup, restore, and every rehearsal item above still have to run on a real host.
+The tests check these files statically and with mocks; Caddy and `nft -c` can also parse the Caddyfile and firewall when `CADDY_BIN` and `NFT_BIN` are set. A lab pass on a host without systemd (real Podman, gVisor, nftables, and Caddy 2.11.7, with a stub identity provider) found the problems this guide now addresses; the port ranges, firewall order, pasta option, controller list, image loading, and kill recovery have run only against mocks since. `hidepid`, the units, the real firewall, container image, authentik blueprints, backup, restore, and every rehearsal item above still have to run on a real host.
