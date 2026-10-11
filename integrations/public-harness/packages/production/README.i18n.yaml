@@ -1,0 +1,28 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write integrations/public-harness/packages/production/README.md
+/:
+  en: 00e5b96e8e07727a
+  zh: 5b122257a15542a3
+/public-harness-production:
+  en: 719624f2c28553d9
+  zh: 34a2c78162f03cb7
+/public-harness-production/summary:
+  en: 60e5c111c4bfeb0e
+  zh: e83e7734c5ffd5e8
+/public-harness-production/table-of-contents:
+  en: c992e0cd2e7042d6
+  zh: 9321a4964bb40212
+/public-harness-production/use-this-package:
+  en: 8b551822027750d5
+  zh: b93292aac08309ce
+/public-harness-production/understand-the-implementation:
+  en: 77c032da4a29e5d2
+  zh: ddefc4fadbf6607d
+/public-harness-production/further-exploration:
+  en: 90e9ae62841966cf
+  zh: 9daa7a45f5f69126
+/public-harness-production/dev-note:
+  en: 4cf3c28764d8a686
+  zh: 1ed9ef368d242e35

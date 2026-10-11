@@ -38,4 +38,4 @@ kind: "package-library"
 <a id="dev-note"></a>
 ## 开发说明
 
-本机 `startRouterServer` 对 HTTP 请求和 WebSocket 升级执行身份与归属检查，将请求以流方式转发到对应实例，并在配置的时限内关闭已升级的连接。设置正值的 `retryAfterSeconds`，即可配置品牌等待页的刷新间隔和 HTTP `Retry-After` 标头。交换时保留浏览器请求的 Host，因为 Harness 会将 Cookie 签名绑定到该地址。正式环境的 authentik 和 Caddy 配置需要在 Linux 上验证后才能开放公众访问。
+本机 `startRouterServer` 对 HTTP 请求和 WebSocket 升级执行身份与归属检查，将请求以流方式转发到对应实例，并在配置的时限内关闭已升级的连接。设置正值的 `retryAfterSeconds`，即可配置品牌等待页的刷新间隔和 HTTP `Retry-After` 标头。交换时保留浏览器请求的 Host，因为 Harness 会将 Cookie 签名绑定到该地址。正式环境入口改为监听权限受限的 Unix socket（`listen`），要求 `secureCookies` 和唯一确定的 `publicAuthority`，拒绝其他 Host 值，且不能与开发选择器同时运行。超过 `maxRequestBodyBytes`（默认 32 MiB）的请求在到达实例前收到 HTTP 413；路由器在转发前移除客户端提供的转发和身份标头以及自己的 cookie。`createAdmission` 预先检查全站活动实例上限，`startRouterHealthServer` 在私有 socket 上报告不含身份的汇总健康状态。[production 包](../production/README.zh.md)将这些接入 `team-router` 配置。`deploy/` 下的 authentik 和 Caddy 配置需要在 Linux 上验证后才能开放公众访问。

@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This project contains independently versioned Cordis packages for the public Harness deployment. It is a separate pnpm workspace so its plugins can be installed alongside a compatible Harness release. The `team-dev` profile runs a local-only two-user Web service. Public registration and Linux isolation require a separate production deployment.
+This project contains independently versioned Cordis packages for the public Harness deployment. It is a separate pnpm workspace so its plugins can be installed alongside a compatible Harness release. The `team-dev` profile runs a local-only two-user Web service. Public registration and Linux isolation run from the production deployment under [deploy/production](deploy/production/README.md), which stays closed to public enrollment until its release check allows it.
 
 ## Table of Contents
 
@@ -28,7 +28,7 @@ Build the repository's Harness CLI and Web frontend, then run `pnpm install` and
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 
-The contracts package owns canonical opaque user IDs and private instance addresses. The provisioner package defines the fixed Unix-socket operations used by the Linux runtime. The macOS and Windows development runtime starts one loopback Web process per fixed test user and uses a Web token bundle to publish startup credentials through private IPC. The router verifies the signed test-user cookie on each request and forwards only to that user's process. The quota package records personal and site token reservations in SQLite. The Web provider reads a rotated private credential for each model operation; the development service returns deterministic mock responses.
+The contracts package owns canonical opaque user IDs and private instance addresses. The provisioner package runs the Linux runtime: per-user accounts, private storage and Git workspaces, gVisor containers with mandatory limits, and the lifecycle operations. The production package composes it with the router and quota service as three profiles. The macOS and Windows development runtime starts one loopback Web process per fixed test user and uses a Web token bundle to publish startup credentials through private IPC. The router verifies the signed test-user cookie on each request and forwards only to that user's process. The quota package records personal and site token reservations in SQLite. The Web provider reads a rotated private credential for each model operation; the development service returns deterministic mock responses.
 
 <a id="further-exploration"></a>
 ## Further Exploration

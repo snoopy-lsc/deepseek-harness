@@ -3,26 +3,26 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write integrations/public-harness/packages/provisioner/README.md
 /:
-  en: 32ab5c7a1099bb38
-  zh: 475257240ac4512d
+  en: 845ff80970953fd4
+  zh: be478421588c934a
 /public-harness-provisioner:
   en: 7a2f3a3e70c79797
   zh: 5cf3ffce31bb4161
 /public-harness-provisioner/summary:
-  en: 341244f12ef010a9
-  zh: e9831d206fdd0b00
+  en: 38b760607df7846e
+  zh: 3756158b1c8b4ba9
 /public-harness-provisioner/table-of-contents:
   en: c992e0cd2e7042d6
   zh: 9321a4964bb40212
 /public-harness-provisioner/use-this-package:
-  en: 37fa57dc4252cfa9
-  zh: 8971ca75b9d06226
+  en: 9888124c8bbdc34b
+  zh: 9883a3b0a7247ac0
 /public-harness-provisioner/understand-the-implementation:
-  en: 0ef72d09d22a1264
-  zh: 5ef5665cd237d39e
+  en: 6f08b5df99a5a704
+  zh: 2cf865c97def2618
 /public-harness-provisioner/further-exploration:
-  en: 749fe88f2bae2299
-  zh: 686d80407fce3e5a
+  en: 8e4905670605b6cc
+  zh: 7e9878332613ab81
 /public-harness-provisioner/dev-note:
-  en: 6e83c88241c51a41
-  zh: 118f581840a0e552
+  en: 2550633350ec9472
+  zh: b27936c374d8efb5

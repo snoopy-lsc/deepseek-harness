@@ -9,7 +9,7 @@ kind: "package-library"
 
 ## Summary
 
-本项目包含面向公开 Harness 部署、独立版本管理的 Cordis 包。它使用单独的 pnpm 工作区，以便与兼容版本的 Harness 一起安装插件。`team-dev` 配置可在本机运行双用户 Web 服务。公开注册和 Linux 隔离需要另行部署生产环境。
+本项目包含面向公开 Harness 部署、独立版本管理的 Cordis 包。它使用单独的 pnpm 工作区，以便与兼容版本的 Harness 一起安装插件。`team-dev` 配置可在本机运行双用户 Web 服务。公开注册和 Linux 隔离由 [deploy/production](deploy/production/README.zh.md) 下的生产部署提供，在其发布检查允许之前不开放公开注册。
 
 ## Table of Contents
 
@@ -28,7 +28,7 @@ kind: "package-library"
 <a id="understand-the-implementation"></a>
 ## 了解实现
 
-contracts 包负责规范化的不透明用户 ID 和私有实例地址。provisioner 包定义 Linux 运行环境所用的固定 Unix socket 操作。macOS 和 Windows 开发运行环境为每位固定测试用户启动一个本机 Web 进程，并通过 Web token bundle 的私有 IPC 发布启动凭据。router 在每次请求时验证签名测试用户 cookie，只转发到该用户的进程。quota 包将个人和全站 token 预留记录保存在 SQLite 中。Web provider 在每次模型操作时读取轮换后的私有凭据；开发服务返回确定性的模拟响应。
+contracts 包负责规范化的不透明用户 ID 和私有实例地址。provisioner 包运行 Linux 运行环境：每用户账号、私有存储和 Git 工作区、带强制限制的 gVisor 容器以及生命周期操作。production 包把它与路由器和额度服务组合成三个配置。macOS 和 Windows 开发运行环境为每位固定测试用户启动一个本机 Web 进程，并通过 Web token bundle 的私有 IPC 发布启动凭据。router 在每次请求时验证签名测试用户 cookie，只转发到该用户的进程。quota 包将个人和全站 token 预留记录保存在 SQLite 中。Web provider 在每次模型操作时读取轮换后的私有凭据；开发服务返回确定性的模拟响应。
 
 <a id="further-exploration"></a>
 ## 延伸阅读

@@ -1,0 +1,41 @@
+---
+description: "团队路由器、配置服务和额度服务的生产 Cordis 配置。"
+kind: "package-library"
+---
+
+# @public-harness/production
+
+[English](README.md) | 中文
+
+## Summary
+
+此包提供运行 Linux 部署的三个 Cordis 插件：`team-router`（无特权，签名身份入口）、`provisioner`（root，主机账号和容器）和 `quota`（持有平台密钥）。每个插件接收一个指向 root 所有的 JSON 文件的路径，遇到任何未知、缺失或不安全的设置都会拒绝启动。
+
+## Table of Contents
+
+- [使用此包](#use-this-package)
+- [了解实现](#understand-the-implementation)
+- [延伸阅读](#further-exploration)
+- [开发说明](#dev-note)
+
+-----
+
+<a id="use-this-package"></a>
+## 使用此包
+
+用 `deploy/production-profile.ts` 中的 `writeProductionProfile` 为每个服务生成 dsh 配置，再由其 systemd 单元启动 `dsh --profile team-router`、`--profile provisioner` 或 `--profile quota`。`deploy/production/config/` 下的示例文件列出了每个字段。配置文件必须是普通文件，且组和其他用户不可写；密钥只以文件路径引用。
+
+<a id="understand-the-implementation"></a>
+## 了解实现
+
+路由器配置从文件读取每个 authentik 公钥，构建签名身份验证器，连接配置服务客户端，并在 Unix socket 上启动路由器，启用 Secure cookie 和唯一的公开地址。它从不加载开发身份或选择器，也从不绑定 TCP。其私有健康 socket 只报告配置服务是否应答。配置服务配置在启动时执行 reconcile，提供路由器 socket 和管理 socket，并按固定间隔执行空闲停止和 reconcile。额度配置打开生产额度服务及其私有控制 socket。
+
+<a id="further-exploration"></a>
+## 延伸阅读
+
+参阅[路由器](../router/README.zh.md)、[配置服务](../provisioner/README.zh.md)和[额度](../quota/README.zh.md)包，以及[部署指南](../../deploy/production/README.zh.md)。
+
+<a id="dev-note"></a>
+## 开发说明
+
+测试使用本地生成的签名密钥和伪造的配置服务，在真实 Unix socket 上驱动路由器组合。使用真实 authentik、Caddy 和 Linux 服务的部署需要执行部署指南中的演练。

@@ -23,12 +23,12 @@ kind: "package-library"
 <a id="use-this-package"></a>
 ## 使用此包
 
-向 `createDevInstanceManager` 传入绝对存储根目录、已校验的固定测试用户 ID、已构建的 `dsh` 命令及参数、Web token overlay 路径，以及正数的启动和停止超时。ID 忽略大小写后必须唯一，且不能使用 Windows 保留设备名。管理器在启动子进程前拒绝除 `127.0.0.1` 外的绑定地址，也拒绝除 `development` 外的模式。调用 `close()` 等待子进程关闭。
+向 `createDevInstanceManager` 传入绝对存储根目录、已校验的固定测试用户 ID、已构建的 `dsh` 命令及参数、Web token overlay 路径，以及正数的启动和停止超时。ID 忽略大小写后必须唯一，且不能使用 Windows 保留设备名。管理器在启动子进程前拒绝除 `127.0.0.1` 外的绑定地址，也拒绝除 `development` 外的模式。设置 `maxActive` 可限制同时运行的子进程数（默认等于用户数）；超出上限的启动以 `CapacityError` 失败，`suspend` 会停止用户并在 `reactivate` 之前以 `AccountSuspendedError` 拒绝再次启动。`stopIdle(idleMs)` 停止在该时长内没有路由请求的子进程。调用 `close()` 等待子进程关闭。
 
 <a id="understand-the-implementation"></a>
 ## 了解实现
 
-每个子进程将 `users/<id>/home` 作为 `DSH_HOME`、`HOME` 和 `USERPROFILE`，将 `users/<id>/workspace` 作为工作目录，将 `users/<id>/agents` 作为 `DSH_AGENTS_HOME`。管理器通过 IPC 接收绑定端口和启动凭据，返回的实例地址不包含凭据。停止进程时保留目录；下次 ensure 会用原数据启动新进程。
+每个子进程将 `users/<id>/home` 作为 `DSH_HOME`、`HOME` 和 `USERPROFILE`，将 `users/<id>/workspace` 作为工作目录，将 `users/<id>/agents` 作为 `DSH_AGENTS_HOME`。管理器通过 IPC 接收绑定端口和启动凭据，返回的实例地址不包含凭据。每次启动前，工作区会成为带有固定本地身份的一次初始提交的私有 Git 仓库，且不会重复初始化。停止进程时保留目录；下次 ensure 会用原数据启动新进程。
 
 <a id="further-exploration"></a>
 ## 延伸阅读
