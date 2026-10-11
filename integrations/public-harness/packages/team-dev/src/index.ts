@@ -9,6 +9,7 @@ import { createDevelopmentIdentity } from '@public-harness/router/dev-identity'
 import { createOwnerRouter } from '@public-harness/router/routes'
 import { createBrowserLaunch } from '@public-harness/router/launch'
 import { startRouterServer } from '@public-harness/router/server'
+import { startTeamDevQuota, type TeamDevQuotaConfig } from './quota.ts'
 
 /** Paths and limits for a development server with fixed local test users. */
 export interface TeamDevConfig {
@@ -21,9 +22,11 @@ export interface TeamDevConfig {
   readonly startupTimeoutMs: number
   readonly stopTimeoutMs: number
   readonly routeWaitMs: number
+  readonly retryAfterSeconds: number
   readonly launchExchangeMs: number
   readonly socketLifetimeMs: number
   readonly cookieLifetimeMs: number
+  readonly quota: TeamDevQuotaConfig
 }
 
 /** Parse required profile settings before any listener or child starts. */
@@ -32,10 +35,27 @@ export const Config: z<TeamDevConfig> = z.object({
   command: z.string().required(), args: z.array(z.string()).required(), users: z.array(z.string()).required(),
   startupTimeoutMs: z.number().step(1).min(1).required(),
   stopTimeoutMs: z.number().step(1).min(1).required(),
+  retryAfterSeconds: z.number().step(1).min(1).required(),
   routeWaitMs: z.number().step(1).min(1).required(),
   launchExchangeMs: z.number().step(1).min(1).required(),
   socketLifetimeMs: z.number().step(1).min(1).required(),
   cookieLifetimeMs: z.number().step(1).min(1).required(),
+  quota: z.object({
+    modelId: z.string().required(), contextWindow: z.number().step(1).min(1).required(),
+    maxTokens: z.number().step(1).min(1).required(),
+    personalDailyTokens: z.number().step(1).min(1).required(),
+    siteDailyTokens: z.number().step(1).min(1).required(),
+    personalConcurrency: z.number().step(1).min(1).required(),
+    siteConcurrency: z.number().step(1).min(1).required(),
+    busyTimeoutMs: z.number().step(1).min(1).required(),
+    maxBodyBytes: z.number().step(1).min(1).required(),
+    maxImagesPerRequest: z.number().step(1).min(1).required(),
+    maxInlineImageBytes: z.number().step(1).min(1).required(),
+    maxEventBytes: z.number().step(1).min(1).required(),
+    maxFileBodyBytes: z.number().step(1).min(1).required(),
+    credentialLifetimeMs: z.number().step(1).min(1).required(),
+    credentialRotateMs: z.number().step(1).min(1).required(),
+  }).required(),
 })
 
 /** Enforce loopback, private paths, fixed users, and positive bounded waits. */
@@ -52,6 +72,13 @@ export function validateTeamDevConfig(config: TeamDevConfig): UserId[] {
   }
   if (config.socketLifetimeMs > 60_000) throw new Error('socket lifetime exceeds 60 seconds')
   if (config.cookieLifetimeMs > 3_600_000) throw new Error('test cookie lifetime exceeds one hour')
+  const bound = config.quota.contextWindow + config.quota.maxTokens
+  if (!Number.isSafeInteger(bound) || bound > config.quota.personalDailyTokens
+    || bound > config.quota.siteDailyTokens) throw new Error('quota budget must admit one model request')
+  if (config.quota.credentialLifetimeMs > 900_000
+    || config.quota.credentialRotateMs >= config.quota.credentialLifetimeMs) {
+    throw new Error('quota credential rotation must precede fifteen-minute expiry')
+  }
   return users
 }
 
@@ -61,15 +88,35 @@ export const name = 'public-harness-team-dev'
 /** Start the local browser entry and the lazy per-user Harness supervisor. */
 export async function apply(ctx: Context, config: TeamDevConfig): Promise<void> {
   const users = validateTeamDevConfig(config)
-  const manager = createDevInstanceManager({ mode: 'development', host: '127.0.0.1',
-    storageRoot: config.storageRoot, webPatch: config.webPatch, command: config.command,
-    args: [...config.args], users, startupTimeoutMs: config.startupTimeoutMs,
-    stopTimeoutMs: config.stopTimeoutMs })
+  const quota = await startTeamDevQuota({ storageRoot: config.storageRoot,
+    baseWebPatch: config.webPatch, users, config: config.quota })
+  const managers = new Map(users.map(userId => [userId, createDevInstanceManager({
+    mode: 'development', host: '127.0.0.1', storageRoot: config.storageRoot,
+    webPatch: quota.patches.get(userId)!, command: config.command,
+    args: [...config.args], users: [userId], startupTimeoutMs: config.startupTimeoutMs,
+    stopTimeoutMs: config.stopTimeoutMs,
+  })]))
+  const manager = {
+    ensure: (userId: UserId) => requireManager(userId).ensure(userId),
+    launchGrant: (userId: UserId) => requireManager(userId).launchGrant(userId),
+    stop: (userId: UserId) => requireManager(userId).stop(userId),
+    close: async () => {
+      const outcomes = await Promise.allSettled([...managers.values()].map(instance => instance.close()))
+      await quota.close()
+      const failures = outcomes.filter((item): item is PromiseRejectedResult => item.status === 'rejected')
+      if (failures.length) throw new AggregateError(failures.map(item => item.reason), 'failed to stop development users')
+    },
+  }
+  function requireManager(userId: UserId) {
+    const instance = managers.get(userId)
+    if (instance === undefined) throw new Error('unknown development test user')
+    return instance
+  }
   const identity = createDevelopmentIdentity({ mode: 'team-dev', host: '127.0.0.1',
     secret: randomBytes(32), testUsers: users, lifetimeMs: config.cookieLifetimeMs })
   let entry: Awaited<ReturnType<typeof startRouterServer>>
   try {
-    entry = await startRouterServer({ host: config.host, identity,
+    entry = await startRouterServer({ retryAfterSeconds: config.retryAfterSeconds, host: config.host, identity,
       ownerRouter: createOwnerRouter({ instanceManager: manager,
         isActive: async userId => users.includes(userId), hasCapacity: async () => true,
         maxWaitMs: config.routeWaitMs }),

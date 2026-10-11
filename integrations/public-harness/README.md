@@ -23,12 +23,12 @@ This project contains independently versioned Cordis packages for the public Har
 <a id="use-this-project"></a>
 ## Use this project
 
-Build the repository's Harness CLI and Web frontend, then run `pnpm install` and `pnpm dev` from this directory. Open the printed loopback URL, choose Alice or Bob, and use each user's separate Harness Web instance. Edit `deploy/team-dev.config.json` before first launch to change the fixed test users and timeouts; set `PUBLIC_HARNESS_DEV_HOME` to choose the private data directory. The generated profile defaults to `.local/`. Run `pnpm test` and `pnpm typecheck` to check the integration. This development profile has no public registration or model provider yet.
+Build the repository's Harness CLI and Web frontend, then run `pnpm install` and `pnpm dev` from this directory. Open the printed loopback URL, choose Alice or Bob, and use each user's separate Harness Web instance. Select `Platform` → `Local mock model` in the model picker to use the durable quota service. The [UI plugin](packages/ui/README.md) installs the same brand for every user. Edit `deploy/team-dev.config.json` before first launch to change the fixed test users and limits; set `PUBLIC_HARNESS_DEV_HOME` to choose the private data directory. The generated profile defaults to `.local/`. Run `pnpm test` and `pnpm typecheck` to check the integration. This development profile has no public registration.
 
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 
-The contracts package owns canonical opaque user IDs and private instance addresses. The provisioner package defines the fixed Unix-socket operations used by the Linux runtime. The macOS and Windows development runtime starts one loopback Web process per fixed test user and uses a Web token bundle to publish startup credentials through private IPC. The router verifies the signed test-user cookie on each request and forwards only to that user's process. The quota package records personal and site token reservations in SQLite, while its Web provider reads a rotated private credential for each model operation.
+The contracts package owns canonical opaque user IDs and private instance addresses. The provisioner package defines the fixed Unix-socket operations used by the Linux runtime. The macOS and Windows development runtime starts one loopback Web process per fixed test user and uses a Web token bundle to publish startup credentials through private IPC. The router verifies the signed test-user cookie on each request and forwards only to that user's process. The quota package records personal and site token reservations in SQLite. The Web provider reads a rotated private credential for each model operation; the development service returns deterministic mock responses.
 
 <a id="further-exploration"></a>
 ## Further Exploration

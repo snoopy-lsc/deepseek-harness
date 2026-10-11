@@ -1,0 +1,1 @@
+{"extends":"../../tsconfig.json","compilerOptions":{"outDir":"lib/types","rootDir":"src","jsx":"react-jsx","declaration":true,"declarationMap":true,"sourceMap":true,"noEmit":false,"allowImportingTsExtensions":true,"rewriteRelativeImportExtensions":true},"include":["src/**/*.ts","src/**/*.tsx"]}

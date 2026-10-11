@@ -2,6 +2,8 @@
 import { readFile, mkdir, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { isDeepStrictEqual } from 'node:util'
+import { parse } from 'yaml'
 import { validateTeamDevConfig, type TeamDevConfig } from '../packages/team-dev/src/index.ts'
 
 const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url))
@@ -9,13 +11,15 @@ const integrationRoot = fileURLToPath(new URL('../', import.meta.url))
 
 /** User-adjustable local user list and startup limits. */
 export type TeamDevSettings = Pick<TeamDevConfig, 'users' | 'startupTimeoutMs' | 'stopTimeoutMs' |
-  'routeWaitMs' | 'launchExchangeMs' | 'socketLifetimeMs' | 'cookieLifetimeMs'>
+  'routeWaitMs' | 'retryAfterSeconds' | 'launchExchangeMs' | 'socketLifetimeMs' | 'cookieLifetimeMs' | 'quota'>
 
 async function ownedFile(path: string, contents: string): Promise<void> {
   let existing: string | undefined
   try { existing = await readFile(path, 'utf8') }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
-  if (existing !== undefined && existing !== contents) throw new Error(`team-dev profile file differs: ${path}`)
+  if (existing !== undefined && !isDeepStrictEqual(parse(existing), parse(contents))) {
+    throw new Error(`team-dev profile file differs: ${path}`)
+  }
   if (existing === undefined) await writeFile(path, contents, { flag: 'wx', mode: 0o600 })
 }
 

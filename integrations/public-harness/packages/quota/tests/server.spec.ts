@@ -76,7 +76,7 @@ describe('loopback quota HTTP ingress', () => {
         body: JSON.stringify({ model: 'test', max_tokens: 10, messages: [] }) })
       expect((await (await send()).text())).toContain('message_stop')
       expect((await (await send()).text())).toContain('message_stop')
-      expect((await send()).status).toBe(429)
+      expect((await send()).status).toBe(402)
       expect(upstream).toHaveBeenCalledTimes(2)
     } finally {
       await server.close()

@@ -48,7 +48,7 @@ describe('two real Harness Web processes behind one local router', () => {
       webPatch, startupTimeoutMs: 90_000, stopTimeoutMs: 15_000 })
     const identity = createDevelopmentIdentity({ mode: 'team-dev', host: '127.0.0.1',
       secret: randomBytes(32), testUsers: [alice, bob], lifetimeMs: 60_000 })
-    const entry = await startRouterServer({ host: '127.0.0.1', maxSocketLifetimeMs: 60_000, identity,
+    const entry = await startRouterServer({ retryAfterSeconds: 2, host: '127.0.0.1', maxSocketLifetimeMs: 60_000, identity,
       ownerRouter: createOwnerRouter({ instanceManager: manager, isActive: async () => true,
         hasCapacity: async () => true, maxWaitMs: 90_000 }),
       launch: createBrowserLaunch({ instanceManager: manager, maxExchangeMs: 10_000 }) })

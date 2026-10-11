@@ -2,6 +2,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo, Socket } from 'node:net'
 import type { UserId } from '@public-harness/contracts'
+import { renderSelectorPage, renderStatusPage, type TeamLocale } from '@public-harness/ui'
 import type { IdentityVerifier } from './config.ts'
 import type { OwnerRoute } from './routes.ts'
 import { forwardHttp, forwardUpgrade, type BrowserLaunch } from './proxy.ts'
@@ -13,18 +14,12 @@ export interface RouterServerConfig {
   readonly ownerRouter: { route(rawUrl: string, userId: UserId): Promise<OwnerRoute> }
   readonly launch: BrowserLaunch
   readonly maxSocketLifetimeMs: number
+  readonly retryAfterSeconds: number
   readonly developmentSelector?: { readonly users: readonly UserId[]; issue(userId: string): string }
 }
 
-const selectorCopy = {
-  en: { title: 'Choose a test user', caption: 'Local development only' },
-  zh: { title: '选择测试用户', caption: '仅用于本机开发' },
-} as const
-
-function selectorPage(users: readonly UserId[], chinese: boolean): string {
-  const copy = selectorCopy[chinese ? 'zh' : 'en']
-  const links = users.map(userId => `<li><a href="/dev/select/${userId}">${userId}</a></li>`).join('')
-  return `<!doctype html><html lang="${chinese ? 'zh' : 'en'}"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${copy.title}</title><style>body{font:16px system-ui,sans-serif;background:#f7f8fb;color:#1c2330;margin:0;min-height:100vh;display:grid;place-items:center}main{width:min(28rem,calc(100vw - 2rem));padding:2rem;border:1px solid #d7dce5;border-radius:1rem;background:#fff;box-shadow:0 12px 32px #17294a12}h1{font-size:1.5rem;margin:0 0 .5rem}p{color:#526174;margin:0 0 1.5rem}ul{list-style:none;padding:0;margin:0;display:grid;gap:.75rem}a{display:block;padding:.8rem 1rem;border:1px solid #b8c5d8;border-radius:.6rem;color:#174c91;text-decoration:none}a:hover,a:focus-visible{background:#eaf2ff;outline:2px solid #2d6ac4;outline-offset:2px}@media(prefers-color-scheme:dark){body{background:#101722;color:#f3f6fb}main{background:#1a2534;border-color:#3b4b60}p{color:#b4c1d1}a{border-color:#60748f;color:#a8c9ff}a:hover,a:focus-visible{background:#233b59}}</style><main><h1>${copy.title}</h1><p>${copy.caption}</p><ul>${links}</ul></main></html>`
+function locale(request: IncomingMessage): TeamLocale {
+  return request.headers['accept-language']?.includes('zh') ? 'zh' : 'en'
 }
 
 function selectDevelopmentUser(request: IncomingMessage, response: ServerResponse,
@@ -32,7 +27,7 @@ function selectDevelopmentUser(request: IncomingMessage, response: ServerRespons
   if (request.method !== 'GET') return false
   if (request.url === '/dev') {
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
-      .end(selectorPage(selector.users, request.headers['accept-language']?.includes('zh') ?? false))
+      .end(renderSelectorPage(selector.users, locale(request)))
     return true
   }
   const match = /^\/dev\/select\/([A-Za-z0-9_-]{1,128})$/.exec(request.url ?? '')
@@ -45,11 +40,19 @@ function selectDevelopmentUser(request: IncomingMessage, response: ServerRespons
   return true
 }
 
-function deny(response: ServerResponse, route: Exclude<OwnerRoute, { kind: 'ready' }>): void {
+function deny(request: IncomingMessage, response: ServerResponse,
+  route: Exclude<OwnerRoute, { kind: 'ready' }>, retryAfterSeconds: number): void {
   switch (route.kind) {
     case 'redirect': response.writeHead(303, { location: route.location }).end(); return
-    case 'starting': response.writeHead(503, { 'retry-after': '1' }).end(); return
-    case 'rejected': response.writeHead(route.status).end(); return
+    case 'starting': response.writeHead(503, { 'retry-after': String(retryAfterSeconds),
+      'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+      .end(renderStatusPage('starting', locale(request), retryAfterSeconds)); return
+    case 'rejected':
+      if (route.status === 503) {
+        response.writeHead(route.status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+          .end(renderStatusPage(route.reason === 'capacity' ? 'capacity-full' : 'service-unavailable', locale(request), retryAfterSeconds))
+      } else response.writeHead(route.status).end()
+      return
   }
 }
 
@@ -58,6 +61,7 @@ export async function startRouterServer(config: RouterServerConfig): Promise<{ p
   if (config.host !== '127.0.0.1') throw new Error('development router requires loopback')
   if (!Number.isSafeInteger(config.maxSocketLifetimeMs) || config.maxSocketLifetimeMs <= 0
     || config.maxSocketLifetimeMs > 60_000) throw new Error('router socket lifetime must be at most 60 seconds')
+  if (!Number.isSafeInteger(config.retryAfterSeconds) || config.retryAfterSeconds < 1) throw new Error('invalid router retry interval')
   const sockets = new Set<Socket>()
   const server = createServer((request: IncomingMessage, response: ServerResponse) => {
     void (async () => {
@@ -72,7 +76,7 @@ export async function startRouterServer(config: RouterServerConfig): Promise<{ p
         return
       }
       const route = await config.ownerRouter.route(request.url ?? '/', userId)
-      if (route.kind !== 'ready') { deny(response, route); return }
+      if (route.kind !== 'ready') { deny(request, response, route, config.retryAfterSeconds); return }
       forwardHttp(request, response, userId, route.endpoint, route.upstreamPath, config.launch, false)
     })().catch(() => { if (!response.headersSent && !response.destroyed) response.writeHead(503).end() })
   })

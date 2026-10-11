@@ -56,7 +56,10 @@ describe('private quota health and public errors', () => {
   })
 
   it.each([
-    [new QuotaExceededError('personal daily'), 429],
+    [new QuotaExceededError('personal daily'), 402],
+    [new QuotaExceededError('site daily'), 402],
+    [new QuotaExceededError('personal concurrency'), 429],
+    [new QuotaExceededError('site concurrency'), 429],
     [new QuotaRequestError('invalid private prompt'), 400],
     [new Error('upstream credential secret'), 503],
   ])('returns only a public category for %s', async (failure, status) => {

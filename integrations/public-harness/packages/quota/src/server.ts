@@ -111,7 +111,8 @@ export async function startQuotaHttpServer(config: QuotaHttpConfig): Promise<{ p
           await send(response, await config.forwardMessages(forwarded, admitted.reservation))
         } catch (error) {
           if (response.headersSent) { response.destroy(); return }
-          response.writeHead(error instanceof QuotaExceededError ? 429
+          response.writeHead(error instanceof QuotaExceededError
+            ? error.reason === 'personal daily' || error.reason === 'site daily' ? 402 : 429
             : error instanceof QuotaAuthenticationError ? 401
               : error instanceof QuotaRequestError ? 400 : 503).end()
         }

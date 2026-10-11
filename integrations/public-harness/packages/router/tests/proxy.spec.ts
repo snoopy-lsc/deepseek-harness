@@ -35,7 +35,7 @@ async function backend(name: string): Promise<InstanceEndpoint> {
 
 function router(endpoints: Record<string, InstanceEndpoint>, maxSocketLifetimeMs = 1000) {
   const ensure = vi.fn(async (userId: string) => endpoints[userId]!)
-  return startRouterServer({ host: '127.0.0.1', maxSocketLifetimeMs,
+  return startRouterServer({ retryAfterSeconds: 2, host: '127.0.0.1', maxSocketLifetimeMs,
     identity: { async verify(headers) {
       const match = /^dev=(alice|bob)$/.exec(headers.cookie ?? '')
       if (!match) throw new Error('unauthenticated')
@@ -96,7 +96,7 @@ describe('owner-only HTTP and upgrade forwarding', () => {
   })
 
   it('refuses a public development bind', async () => {
-    await expect(startRouterServer({ host: '0.0.0.0', maxSocketLifetimeMs: 1000,
+    await expect(startRouterServer({ retryAfterSeconds: 2, host: '0.0.0.0', maxSocketLifetimeMs: 1000,
       identity: { async verify() { return parseUserId('alice') } },
       ownerRouter: { async route() { return { kind: 'starting' as const } } },
       launch: { async open() { return { location: '/', setCookie: '' } } },
@@ -127,7 +127,7 @@ describe('owner-only HTTP and upgrade forwarding', () => {
     const alice = await backend('alice')
     const identity = createDevelopmentIdentity({ mode: 'team-dev', host: '127.0.0.1',
       secret: randomBytes(32), testUsers: ['alice'], lifetimeMs: 60_000 })
-    const entry = await startRouterServer({ host: '127.0.0.1', maxSocketLifetimeMs: 1000,
+    const entry = await startRouterServer({ retryAfterSeconds: 2, host: '127.0.0.1', maxSocketLifetimeMs: 1000,
       identity, developmentSelector: { users: [parseUserId('alice')], issue: identity.issue },
       ownerRouter: createOwnerRouter({ instanceManager: { ensure: async () => alice,
         async launchGrant() { return '' }, async stop() {} },

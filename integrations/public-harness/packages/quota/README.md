@@ -38,4 +38,4 @@ See the [shared user ID](../contracts/README.md) and the [quota implementation p
 <a id="dev-note"></a>
 ## Dev Note
 
-The development HTTP ingress binds one loopback listener per instance. The production control socket and runtime transport remain separate deployment work. Run one quota service per database; startup reconciles unfinished calls from the previous service process.
+The development HTTP ingress binds one loopback listener per instance. Daily allowance exhaustion returns HTTP 402, which the Harness adapter classifies as `QUOTA`; concurrency limits return HTTP 429 for transient rate limiting. The production control socket and runtime transport remain separate deployment work. Run one quota service per database; startup reconciles unfinished calls from the previous service process.
