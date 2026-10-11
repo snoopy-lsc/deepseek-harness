@@ -28,7 +28,7 @@ Generate a dsh profile for each service with `writeProductionProfile` from `depl
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 
-The router profile reads each authentik public key from its file, builds the signed-identity verifier, connects the provisioner client, and starts the router on a Unix socket with Secure cookies and one public authority. It never loads the development identity or selector and never binds TCP. Its private health socket reports only whether the provisioner answers. The provisioner profile reconciles at startup, serves the router and administrative sockets, and runs idle stop and reconcile on a fixed interval. The quota profile opens the production quota service and its private control socket.
+The router profile reads each authentik public key from its file, builds the signed-identity verifier, connects the provisioner client, and starts the router on a Unix socket with Secure cookies and one public authority (the host as browsers send it, so without a port for 443 and with the port for a staging deployment; `:80` and `:443` are rejected). It never loads the development identity or selector and never binds TCP. Its private health socket reports only whether the provisioner answers. The provisioner profile reconciles at startup, serves the router and administrative sockets, and runs idle stop and reconcile on a fixed interval. The quota profile opens the production quota service and its private control socket.
 
 <a id="further-exploration"></a>
 ## Further Exploration

@@ -38,4 +38,4 @@ kind: "package-library"
 <a id="dev-note"></a>
 ## 开发说明
 
-开发环境的 HTTP 入口为每个实例绑定一个本机监听地址。每日额度耗尽返回 HTTP 402，Harness 适配器将其识别为 `QUOTA`；并发限制返回 HTTP 429，表示临时限流。`createQuotaService` 组合出生产服务：从私有的 `0600` 文件读取平台密钥、令牌密钥和健康密钥，为每个实例打开一个绑定实例的本机监听地址，并在汇总健康结果中按类别（个人每日、全站每日、并发、未认证、无效请求、不可用）统计拒绝次数。`startQuotaControlServer` 只在私有 Unix socket 上向 provisioner 提供 `health`、`open`、`issue` 和 `close`，诊断信息经 `sanitizeDiagnostic` 处理，令牌、凭据和路径会被遮盖。每个数据库只运行一个额度服务；启动时会清理上一服务进程未完成的调用。
+开发环境的 HTTP 入口为每个实例绑定一个本机监听地址。每日额度耗尽返回 HTTP 402，Harness 适配器将其识别为 `QUOTA`；并发限制返回 HTTP 429，表示临时限流。`createQuotaService` 组合出生产服务：从私有的 `0600` 文件读取平台密钥、令牌密钥和健康密钥，为每个实例在已配置的 `listenPorts` 范围内的空闲端口上打开一个绑定实例的本机监听地址（出站防火墙只允许实例访问这一段回环端口），并在汇总健康结果中按类别（个人每日、全站每日、并发、未认证、无效请求、不可用）统计拒绝次数。`startQuotaControlServer` 只在私有 Unix socket 上向 provisioner 提供 `health`、`open`、`issue` 和 `close`，诊断信息经 `sanitizeDiagnostic` 处理，令牌、凭据和路径会被遮盖。每个数据库只运行一个额度服务；启动时会清理上一服务进程未完成的调用。

@@ -12,11 +12,17 @@
   en: 64654cad405b8ff9
   zh: 4ebeb8656f239cec
 /production-deployment/table-of-contents:
-  en: dc8316cff9eb063f
-  zh: a5b290b1fe352c71
+  en: fa216c120992cbe1
+  zh: 90b8d0e7837f6d7c
 /production-deployment/install-on-a-linux-host:
-  en: 661683154a21be95
-  zh: 4cc9063435fe3668
+  en: 1abd21bbf066bb1f
+  zh: 8abc90e95324ff45
+/production-deployment/network-boundaries:
+  en: 79c5ae70f4c67b29
+  zh: 86aed37b5ca737c8
+/production-deployment/resource-limits:
+  en: c1ff192078e75251
+  zh: cab8bfa58c8eaed7
 /production-deployment/upgrade-and-roll-back:
   en: b1dd5014019d18f6
   zh: d54321dd4e0aaf88
@@ -24,11 +30,11 @@
   en: bb36641f56afb1ff
   zh: 508858669501801c
 /production-deployment/release-check:
-  en: 0350dec05b464636
-  zh: c95f998e97d074fd
+  en: f86766a5343aaa3e
+  zh: 21fad5b52022f7dc
 /production-deployment/further-exploration:
   en: 33968f336f683b33
   zh: cf93a177c306816e
 /production-deployment/dev-note:
-  en: 75de1aed8a0835ac
-  zh: f88433ac5ddc6778
+  en: a4a0cdcbded1df84
+  zh: 632f761d2ca2c39f
