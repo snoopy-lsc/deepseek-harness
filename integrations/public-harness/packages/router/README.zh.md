@@ -38,4 +38,4 @@ kind: "package-library"
 <a id="dev-note"></a>
 ## 开发说明
 
-此包目前提供身份验证、归属路径选择及 Harness Cookie 的内部交换。HTTP/WebSocket 转发是独立的实现任务。交换时保留浏览器请求的 Host，因为 Harness 会将 Cookie 签名绑定到该地址。正式环境的 authentik 和 Caddy 配置需要在 Linux 上验证后才能开放公众访问。
+本机 `startRouterServer` 对 HTTP 请求和 WebSocket 升级执行身份与归属检查，将请求以流方式转发到对应实例，并在配置的时限内关闭已升级的连接。交换时保留浏览器请求的 Host，因为 Harness 会将 Cookie 签名绑定到该地址。正式环境的 authentik 和 Caddy 配置需要在 Linux 上验证后才能开放公众访问。

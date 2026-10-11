@@ -38,4 +38,4 @@ See the [shared user ID](../contracts/README.md) and the [router implementation 
 <a id="dev-note"></a>
 ## Dev Note
 
-This package currently supplies identity verification, owner-path selection, and private Harness cookie exchange. HTTP/WebSocket forwarding is a separate implementation task. The exchange preserves the public Host because Harness signs its browser cookie for that authority. The production authentik and Caddy configuration requires validation on Linux before public access is enabled.
+The loopback `startRouterServer` applies identity and owner checks to HTTP requests and WebSocket upgrades, streams requests to the selected instance, and closes upgraded sockets within the configured lifetime. The exchange preserves the public Host because Harness signs its browser cookie for that authority. The production authentik and Caddy configuration requires validation on Linux before public access is enabled.
