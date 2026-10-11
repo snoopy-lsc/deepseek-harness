@@ -120,3 +120,39 @@ it.skipIf(process.platform === 'win32')('does not reuse an uncertain sidecar por
   expect((await h.store.get(bob))!.instance!.webPort).toBe(29201)
   expect((await h.store.get(alice))!.pending!.webPort).toBe(29200)
 })
+
+
+it.skipIf(process.platform === 'win32')('owns a resumed complete launch before effects and stops it on provider disposal', async () => {
+  const h = await makeHarness()
+  await h.users.ensureUser(alice)
+  const instance = h.users.instanceOf((await h.store.get(alice))!)
+  const ctx = new Context() as Context
+  let forwarderClosed = false, quotaClosed = false, resumedAllocation = false
+  apply(ctx, { config: h.config, store: h.store, runner: h.runner, publicHost: 'h.test',
+    healthProbe: async () => true, chownFile: async () => {},
+    startForwarder: async () => ({ close: async () => { forwarderClosed = true } }),
+    probe: { controllers: async () => [] },
+    quota: { healthy: async () => true, open: async () => { resumedAllocation = true; return { port: 29100 } },
+      issue: async () => ({ token: 'grant', expiresAt: 1 }), close: async () => { quotaClosed = true } } })
+  const runtime = ctx.instanceRuntime
+  const users = createUserProvisioner({ config: h.config, store: h.store, directory: h.directory, runner: h.runner, runtime })
+  const service = createProvisionerService({ config: h.config, store: h.store, directory: h.directory, runner: h.runner, runtime, users })
+  h.runner.handler = async (_command, args) => {
+    if (args.includes('run')) await writeFile(join(instance.controlDir, 'ready.json'),
+      JSON.stringify({ kind: 'public-harness/web-ready', port: 8080, token: 'launch' }), { mode: 0o600 })
+    return undefined
+  }
+  try {
+    await service.handler({ op: 'ensure', userId: alice })
+    expect(resumedAllocation).toBe(false)
+    const beforeDispose = h.runner.calls.length
+    await ctx.fiber.dispose()
+    expect(forwarderClosed).toBe(true)
+    expect(quotaClosed).toBe(true)
+    expect(h.runner.calls.slice(beforeDispose).some(call => call.args.includes('rm'))).toBe(true)
+  } finally {
+    await runtime.stop(instance)
+    await ctx.fiber.dispose()
+    await h.runtime.close()
+  }
+})

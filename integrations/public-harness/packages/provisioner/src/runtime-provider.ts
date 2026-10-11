@@ -17,7 +17,7 @@ export interface ContainerProviderOptions extends Omit<RuntimeDeps, 'config' | '
 }
 /** Adapter with an awaited shutdown for its owning Cordis effect. */
 export interface ContainerInstanceRuntime extends InstanceRuntime {
-  /** Withdraw every allocation owned by this provider.
+  /** Withdraw fresh and resumed allocations owned before their host effects.
    * @returns Resolves after verified cleanup; failed resources remain recorded.
    */
   close(): Promise<void>
@@ -35,6 +35,11 @@ export function createContainerInstanceRuntime(options: ContainerProviderOptions
     if (instance.runtime.kind !== 'podman-gvisor') throw new Error('instance backend does not match container provider')
     return { userId: instance.userId, account: instance.account, container: instance.runtime.container, uid: instance.uid, gid: instance.gid,
       layout: layoutFor(config.paths, instance.account), lifecycle: 'starting' }
+  }
+  const own = (instance: Omit<RuntimeInstance, 'webPort' | 'quotaPort'>): UserRecord => {
+    const record = recordOf(instance)
+    allocations.set(instance.userId, instance)
+    return record
   }
   const runtime = createRuntime({ ...options, config, runner, claimedPorts: async () => {
     const { records, invalid } = await store.list()
@@ -56,22 +61,21 @@ export function createContainerInstanceRuntime(options: ContainerProviderOptions
     const state = await store.get(request.userId)
     const id = state?.pending?.instanceId ?? state?.instance?.instanceId
     if (id !== undefined && id !== request.instanceId) throw new Error('cleanup does not match durable launch')
-    await runtime.stop(recordOf(request)); allocations.delete(request.userId)
+    await runtime.stop(own(request)); allocations.delete(request.userId)
   }
   return {
     kind: 'podman-gvisor',
     async allocate(request) {
-      const record = recordOf(request)
-      allocations.set(request.userId, request)
+      const record = own(request)
       const ports = await runtime.allocate(record, request.instanceId)
       return { ...request, ...ports }
     },
-    prepare: instance => runtime.prepare(recordOf(instance)),
-    initializeWorkspace: instance => ensureGitWorkspace(instance.workspace, gitFor(instance.account)),
-    start: instance => runtime.start(recordOf(instance), instance),
-    launchGrant: instance => runtime.launchGrant(recordOf(instance)),
+    prepare: instance => runtime.prepare(own(instance)),
+    initializeWorkspace: instance => { own(instance); return ensureGitWorkspace(instance.workspace, gitFor(instance.account)) },
+    start: instance => runtime.start(own(instance), instance),
+    launchGrant: instance => runtime.launchGrant(own(instance)),
     stop: releaseAllocation, releaseAllocation,
-    state: instance => runtime.state(recordOf(instance)),
+    state: instance => runtime.state(own(instance)),
     async close() {
       const results = await Promise.allSettled([...allocations.values()].map(releaseAllocation))
       const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected')

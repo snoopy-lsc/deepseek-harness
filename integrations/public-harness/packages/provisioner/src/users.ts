@@ -20,17 +20,28 @@ export interface UserProvisionerDeps {
 }
 /** Common lifecycle operations over versioned records. */
 export interface UserProvisioner {
+  /** Provision account/storage and reserve launch capacity before host effects.
+   * @param userId Validated owner.
+   * @returns Provisioned record; allocation capacity remains reserved until verified cleanup.
+   */
   ensureUser(userId: UserId): Promise<UserRecord>
   /** Record verified runtime cleanup while retaining account and user data.
    * @param userId Owner whose runtime has already stopped.
    * @returns Resolves after clearing launch allocation; callers must stop resources first.
    */
   stopUser(userId: UserId): Promise<void>
+  /** Enter starting under the same user lock as stop, suspension and deletion.
+   * @param userId Owner; the caller must not already hold this user lock.
+   * @returns Allocated record; inactive users and exhausted capacity reject.
+   */
   beginStart(userId: UserId): Promise<UserRecord>
   markRunning(userId: UserId): Promise<void>
   markStopped(userId: UserId): Promise<void>
   quarantine(userId: UserId): Promise<void>
   get(userId: UserId): Promise<UserStateV2 | undefined>
+  /** Count durable pending/complete allocations and starting/running/quarantined records.
+   * @returns Reserved instance count, including allocations with no routable endpoint.
+   */
   activeCount(): Promise<number>
   withUser<T>(userId: UserId, task: () => Promise<T>): Promise<T>
   readonly store: StateStore
@@ -76,7 +87,8 @@ export function createUserProvisioner(deps: UserProvisionerDeps): UserProvisione
     return allocated
   }
   const save = async (state: UserStateV2): Promise<void> => { state.updatedAt = now(); await store.put(state) }
-  const activeCount = async (): Promise<number> => (await store.list()).records.filter(record => ACTIVE.includes(record.lifecycle)).length
+  const hasReservation = (state: UserStateV2): boolean => ACTIVE.includes(state.lifecycle) || state.instance !== null || state.pending !== undefined
+  const activeCount = async (): Promise<number> => (await store.list()).records.filter(hasReservation).length
   const requireState = async (userId: UserId): Promise<UserStateV2> => {
     const state = await store.get(userId)
     if (state === undefined) throw new Error('unknown user')
@@ -99,14 +111,21 @@ export function createUserProvisioner(deps: UserProvisionerDeps): UserProvisione
     const names = deriveNames(userId)
     let state = await store.get(userId)
     if (state === undefined) {
-      await globalLock.run('capacity', async () => { if (await activeCount() >= config.maxActiveInstances) throw new CapacityError() })
       state = { version: 2, userId, account: names.account,
         runtime: config.runtime.kind === 'systemd' ? { kind: 'systemd', unit: names.unit } : { kind: 'podman-gvisor', container: names.container },
         instance: null, acquired: [], lifecycle: 'provisioning', createdAt: now(), updatedAt: now(),
         steps: { account: false, storage: false, workspace: false } }
-      await save(state)
     }
     match(state); refuseInactive(state)
+    const reservation = state
+    // Provisioning and admission take the user lock before the shared capacity lock.
+    await globalLock.run('capacity', async () => {
+      if (!hasReservation(reservation) && await activeCount() >= config.maxActiveInstances) throw new CapacityError()
+      if (reservation.instance === null && reservation.pending === undefined) {
+        reservation.pending = { instanceId: parseInstanceId(randomBytes(18).toString('base64url')) }
+        await save(reservation)
+      }
+    })
     const layout = layoutFor(config.paths, state.account)
     let step = 'account'
     try {
@@ -125,8 +144,6 @@ export function createUserProvisioner(deps: UserProvisionerDeps): UserProvisione
       }
       if (state.instance === null) {
         step = 'allocation'
-        state.pending = { instanceId: parseInstanceId(randomBytes(18).toString('base64url')) }
-        await save(state)
         const allocated = await runtime.allocate(allocationOf(state))
         state = await requireState(userId)
         state.instance = allocated; delete state.pending
@@ -161,15 +178,15 @@ export function createUserProvisioner(deps: UserProvisionerDeps): UserProvisione
     ensureUser: userId => userLocks.run(deriveNames(parseUserId(userId)).account, async () => recordOf(await provision(userId))),
     stopUser: userId => userLocks.run(deriveNames(userId).account, async () => { await markStopped(userId) }),
     async beginStart(userId) {
-      return globalLock.run('capacity', async () => {
+      return userLocks.run(deriveNames(userId).account, () => globalLock.run('capacity', async () => {
         const state = await requireState(userId); refuseInactive(state)
-        if (!ACTIVE.includes(state.lifecycle) && await activeCount() >= config.maxActiveInstances) throw new CapacityError()
+        if (!hasReservation(state) && await activeCount() >= config.maxActiveInstances) throw new CapacityError()
         if (state.lifecycle === 'provisioning' || !state.steps.workspace || state.instance === null) throw new Error('user is not fully provisioned')
         if (!ACTIVE.includes(state.lifecycle)) {
           state.lifecycle = 'starting'; await save(state)
         }
         return recordOf(state)
-      })
+      }))
     },
     async markRunning(userId) {
       const state = await requireState(userId); refuseInactive(state)

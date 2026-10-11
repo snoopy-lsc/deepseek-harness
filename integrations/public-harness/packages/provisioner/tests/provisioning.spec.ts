@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { AccountSuspendedError, CapacityError, isolatedGitEnvironment } from '@public-harness/contracts'
 import { deriveNames, isDerivedAccountName } from '../src/accounts.ts'
 import { StorageOwnershipError, layoutFor } from '../src/storage.ts'
+import { createProvisionerService } from '../src/service.ts'
 import { createUserProvisioner } from '../src/users.ts'
 import { alice, bob, makeHarness } from './helpers.ts'
 
@@ -103,12 +104,97 @@ describe.skipIf(process.platform === 'win32')('idempotent Linux user provisionin
     await expect(h.users.beginStart(alice)).rejects.toBeInstanceOf(CapacityError)
   })
 
-  it('never lets two simultaneous starts exceed the cap', async () => {
+  it('refuses a returning user at capacity before acquiring any launch resources', async () => {
     const h = await makeHarness({ maxActiveInstances: 1 })
-    await Promise.all([h.users.ensureUser(alice), h.users.ensureUser(bob)])
-    const results = await Promise.allSettled([h.users.beginStart(alice), h.users.beginStart(bob)])
-    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1)
-    expect(await h.users.activeCount()).toBe(1)
+    await h.users.ensureUser(alice)
+    await h.runtime.stop(h.users.instanceOf((await h.store.get(alice))!))
+    await h.users.markStopped(alice)
+    await h.users.ensureUser(bob)
+    await h.users.beginStart(bob)
+    const before = (await h.store.get(alice))!
+    const calls = h.runner.calls.length
+    const service = createProvisionerService({ config: h.config, store: h.store, directory: h.directory,
+      runner: h.runner, runtime: h.runtime, users: h.users })
+    try {
+      await expect(service.handler({ op: 'ensure', userId: alice })).rejects.toBeInstanceOf(CapacityError)
+      expect(h.runner.calls).toHaveLength(calls)
+      expect(await h.store.get(alice)).toEqual(before)
+      expect(await h.users.activeCount()).toBe(1)
+    } finally { await h.runtime.close() }
+  })
+
+  it('keeps capacity durable while allocation is pending', async () => {
+    const h = await makeHarness({ maxActiveInstances: 1 })
+    let users = h.users
+    const runtime = { ...h.runtime, allocate: async (request: Parameters<typeof h.runtime.allocate>[0]) => {
+      expect((await h.store.get(alice))!.pending!.instanceId).toBe(request.instanceId)
+      expect(await users.activeCount()).toBe(1)
+      await expect(users.ensureUser(bob)).rejects.toBeInstanceOf(CapacityError)
+      expect(h.directory.created).toEqual([deriveNames(alice).account])
+      throw new Error('interrupted allocation')
+    } }
+    users = createUserProvisioner({ config: h.config, store: h.store, directory: h.directory, runner: h.runner, runtime,
+      ownership: { chown: async () => {} } })
+    await expect(users.ensureUser(alice)).rejects.toThrow('interrupted allocation')
+    expect((await h.store.get(alice))!.lifecycle).toBe('quarantined')
+    expect(await users.activeCount()).toBe(1)
+  })
+
+  it('reconciles an allocated stopped user before releasing its durable capacity', async () => {
+    const h = await makeHarness({ maxActiveInstances: 1 })
+    await h.users.ensureUser(alice)
+    const service = createProvisionerService({ config: h.config, store: h.store, directory: h.directory,
+      runner: h.runner, runtime: h.runtime, users: h.users })
+    try {
+      expect((await h.store.get(alice))!.lifecycle).toBe('stopped')
+      expect(await h.users.activeCount()).toBe(1)
+      expect(await service.lifecycle.reconcile()).toMatchObject({ stopped: 1, failures: 0 })
+      expect(await h.store.get(alice)).toMatchObject({ lifecycle: 'stopped', instance: null, acquired: ['account', 'storage'] })
+      expect(await h.users.activeCount()).toBe(0)
+    } finally { await h.runtime.close() }
+  })
+
+  it('waits for suspension before admitting the same user', async () => {
+    const h = await makeHarness()
+    await h.users.ensureUser(alice)
+    await h.users.ensureUser(bob)
+    let enteredStop!: () => void, releaseStop!: () => void
+    const entered = new Promise<void>(resolve => { enteredStop = resolve })
+    const released = new Promise<void>(resolve => { releaseStop = resolve })
+    const runtime = { ...h.runtime, stop: async (instance: Parameters<typeof h.runtime.stop>[0]) => {
+      if (instance.userId === alice) { enteredStop(); await released }
+      await h.runtime.stop(instance)
+    } }
+    const users = createUserProvisioner({ config: h.config, store: h.store, directory: h.directory, runner: h.runner, runtime })
+    const service = createProvisionerService({ config: h.config, store: h.store, directory: h.directory, runner: h.runner, runtime, users })
+    const suspension = service.lifecycle.suspend(alice)
+    let admission: Promise<{ error?: unknown }> | undefined
+    try {
+      await entered
+      admission = users.beginStart(alice).then(() => ({}), error => ({ error }))
+      // Bob drains the capacity lock while Alice's suspension owns only Alice's lock.
+      await users.beginStart(bob)
+      releaseStop()
+      await suspension
+      expect((await admission).error).toBeInstanceOf(AccountSuspendedError)
+      expect(await h.store.get(alice)).toMatchObject({ lifecycle: 'suspended', instance: null })
+    } finally {
+      releaseStop()
+      await Promise.allSettled([suspension, ...(admission === undefined ? [] : [admission])])
+      await h.runtime.close()
+    }
+  })
+
+  it('reserves capacity for only one simultaneous first allocation', async () => {
+    const h = await makeHarness({ maxActiveInstances: 1 })
+    try {
+      const results = await Promise.allSettled([h.users.ensureUser(alice), h.users.ensureUser(bob)])
+      expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1)
+      const refused = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')!
+      expect(refused.reason).toBeInstanceOf(CapacityError)
+      expect(h.directory.created).toHaveLength(1)
+      expect(await h.users.activeCount()).toBe(1)
+    } finally { await h.runtime.close() }
   })
 
   it('lists only valid records and reports damaged ones without deleting them', async () => {

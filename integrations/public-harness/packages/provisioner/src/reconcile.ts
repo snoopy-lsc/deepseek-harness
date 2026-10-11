@@ -177,6 +177,10 @@ export function createLifecycle(ctx: LifecycleContext): Lifecycle {
             const state = await users.store.get(record.userId)
             if (state === undefined) return
             if (state.lifecycle === 'quarantined') { await halt(state); await users.markStopped(state.userId); report.stopped += 1; return }
+            if ((state.lifecycle === 'provisioning' || state.lifecycle === 'stopped')
+              && (state.pending !== undefined || state.instance !== null)) {
+              await halt(state); await users.markStopped(state.userId); report.stopped += 1; return
+            }
             if (eligible(state)) { await purge(state); report.purged += 1; return }
             if (state.lifecycle === 'suspended' || state.lifecycle === 'pending-deletion') { await halt(state); report.stopped += 1; return }
             if (state.lifecycle === 'starting' || state.lifecycle === 'running') {
