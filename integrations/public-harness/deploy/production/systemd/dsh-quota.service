@@ -1,0 +1,37 @@
+[Unit]
+Description=Team Harness model quota proxy
+PartOf=dsh-public.target
+After=network-online.target
+Before=dsh-provisioner.service
+
+[Service]
+Type=simple
+User=dsh-quota
+Group=dsh-quota
+Environment=DSH_HOME=/var/lib/dsh-public/quota-home
+ExecStart=/usr/bin/node /opt/dsh-public/harness/apps/cli/lib/bin.js --profile quota
+Restart=on-failure
+RestartSec=3
+# Holds the platform model key: no new privileges, no host writes beyond its own state, loopback and Unix sockets only.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=no
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+StateDirectory=dsh-public/quota dsh-public/quota-control dsh-public/quota-home
+StateDirectoryMode=0700
+ReadOnlyPaths=/etc/dsh-public /opt/dsh-public
+
+[Install]
+WantedBy=dsh-public.target

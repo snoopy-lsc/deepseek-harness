@@ -1,0 +1,114 @@
+# Public Harness identity configuration (authentik blueprint, schema version 1).
+# Secrets are read from the authentik server's environment, never from this file:
+#   DSH_PUBLIC_HOST         public host name served by Caddy
+#   DSH_CAPTCHA_SITE_KEY    CAPTCHA site key           DSH_CAPTCHA_SECRET_KEY   CAPTCHA secret key
+# Self-registration is DISABLED until the release check allows it: the enrollment flow is bound to no brand,
+# and is only reachable once an operator sets `dsh-enrollment` as the brand's enrollment flow (see the runbook).
+version: 1
+metadata:
+  name: public-harness
+  labels:
+    blueprints.goauthentik.io/description: Harness proxy provider, application, outpost, and gated enrollment
+entries:
+  # ---- Proxy provider: forward-auth for the whole site, signed JWT per request ----------------------------------
+  - model: authentik_providers_proxy.proxyprovider
+    id: provider
+    identifiers:
+      name: dsh-public
+    attrs:
+      mode: forward_single
+      external_host: !Format ["https://%s", !Env DSH_PUBLIC_HOST]
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      # The router requires `sub` to equal X-authentik-uid, so keep the default hashed user ID subject mode.
+      sub_mode: hashed_user_id
+      access_token_validity: minutes=5
+      intercept_header_auth: false
+      basic_auth_enabled: false
+  - model: authentik_core.application
+    id: application
+    identifiers:
+      slug: dsh-public
+    attrs:
+      name: Team Harness
+      provider: !KeyOf provider
+      open_in_new_tab: false
+  - model: authentik_outposts.outpost
+    identifiers:
+      name: dsh-public-outpost
+    attrs:
+      type: proxy
+      providers: [!KeyOf provider]
+      config:
+        authentik_host: !Format ["https://%s", !Env DSH_PUBLIC_HOST]
+        authentik_host_insecure: false
+
+  # ---- Enrollment: CAPTCHA, account details, email verification, then login ------------------------------------
+  - model: authentik_flows.flow
+    id: enrollment
+    identifiers:
+      slug: dsh-enrollment
+    attrs:
+      name: Team Harness registration
+      title: Create your Team Harness account
+      designation: enrollment
+      authentication: require_unauthenticated
+  - model: authentik_stages_captcha.captchastage
+    id: captcha
+    identifiers:
+      name: dsh-enrollment-captcha
+    attrs:
+      public_key: !Env DSH_CAPTCHA_SITE_KEY
+      private_key: !Env DSH_CAPTCHA_SECRET_KEY
+      error_on_invalid_score: true
+  - model: authentik_stages_prompt.prompt
+    id: prompt-username
+    identifiers: { name: dsh-enrollment-username }
+    attrs: { field_key: username, label: Username, type: username, required: true, order: 100 }
+  - model: authentik_stages_prompt.prompt
+    id: prompt-email
+    identifiers: { name: dsh-enrollment-email }
+    attrs: { field_key: email, label: Email, type: email, required: true, order: 200 }
+  - model: authentik_stages_prompt.prompt
+    id: prompt-password
+    identifiers: { name: dsh-enrollment-password }
+    attrs: { field_key: password, label: Password, type: password, required: true, order: 300 }
+  - model: authentik_stages_prompt.prompt
+    id: prompt-password-repeat
+    identifiers: { name: dsh-enrollment-password-repeat }
+    attrs: { field_key: password_repeat, label: Password (repeat), type: password, required: true, order: 400 }
+  - model: authentik_stages_prompt.promptstage
+    id: prompts
+    identifiers: { name: dsh-enrollment-prompts }
+    attrs:
+      fields: [!KeyOf prompt-username, !KeyOf prompt-email, !KeyOf prompt-password, !KeyOf prompt-password-repeat]
+  - model: authentik_stages_user_write.userwritestage
+    id: user-write
+    identifiers: { name: dsh-enrollment-user-write }
+    attrs:
+      # The account stays inactive until the emailed link is used, so unverified accounts never reach the router.
+      user_creation_mode: always_create
+      create_users_as_inactive: true
+  - model: authentik_stages_email.emailstage
+    id: verify-email
+    identifiers: { name: dsh-enrollment-verify-email }
+    attrs:
+      use_global_settings: true
+      subject: Verify your Team Harness account
+      template: email/account_confirmation.html
+      token_expiry: minutes=30
+      activate_user_on_success: true
+  - model: authentik_stages_user_login.userloginstage
+    id: login
+    identifiers: { name: dsh-enrollment-login }
+    attrs: { session_duration: hours=8 }
+  - model: authentik_flows.flowstagebinding
+    identifiers: { target: !KeyOf enrollment, stage: !KeyOf captcha, order: 10 }
+  - model: authentik_flows.flowstagebinding
+    identifiers: { target: !KeyOf enrollment, stage: !KeyOf prompts, order: 20 }
+  - model: authentik_flows.flowstagebinding
+    identifiers: { target: !KeyOf enrollment, stage: !KeyOf user-write, order: 30 }
+  - model: authentik_flows.flowstagebinding
+    identifiers: { target: !KeyOf enrollment, stage: !KeyOf verify-email, order: 40 }
+  - model: authentik_flows.flowstagebinding
+    identifiers: { target: !KeyOf enrollment, stage: !KeyOf login, order: 50 }

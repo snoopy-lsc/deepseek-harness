@@ -1,0 +1,21 @@
+# authentik brand matching the in-app Team Harness brand (same name, mark, and gradient tokens as packages/ui).
+version: 1
+metadata:
+  name: team-harness-brand
+  labels:
+    blueprints.goauthentik.io/description: Team Harness login and enrollment branding
+entries:
+  - model: authentik_brands.brand
+    identifiers:
+      domain: !Env DSH_PUBLIC_HOST
+    attrs:
+      default: false
+      branding_title: Team Harness
+      branding_default_flow_background: ""
+      branding_custom_css: |
+        :root { --ak-accent: #1757a8; }
+        .pf-c-login__main-header::before {
+          content: "T"; display: inline-grid; place-items: center; width: 40px; height: 40px;
+          margin-right: 12px; border-radius: 28%; color: #fff; font-weight: 800;
+          background: linear-gradient(135deg, #1757a8, #359cd8);
+        }

@@ -1,0 +1,32 @@
+{
+  "controlSocket": "/run/dsh-public/control/provisioner.sock",
+  "adminSocket": "/run/dsh-public/admin/admin.sock",
+  "quotaSocket": "/var/lib/dsh-public/quota-control/quota.sock",
+  "publicHost": "harness.example.com",
+  "reconcileIntervalMs": 60000,
+  "provisioner": {
+    "paths": {
+      "storageRoot": "/var/lib/dsh-public/storage",
+      "stateDir": "/var/lib/dsh-public/state",
+      "socketDir": "/run/dsh-public/instances",
+      "runtimeAssets": "/opt/dsh-public/assets/current",
+      "quotaMount": "/var/lib/dsh-public/storage-quota-mount"
+    },
+    "tools": {
+      "getent": "/usr/bin/getent", "useradd": "/usr/sbin/useradd", "userdel": "/usr/sbin/userdel",
+      "loginctl": "/usr/bin/loginctl", "nologin": "/usr/sbin/nologin", "sharedGroup": "dsh-instances",
+      "setquota": "/usr/sbin/setquota", "nft": "/usr/sbin/nft", "quotaMount": "/var/lib/dsh-public/storage-quota-mount",
+      "runuser": "/usr/sbin/runuser", "podman": "/usr/bin/podman", "runsc": "/usr/local/bin/runsc",
+      "git": "/usr/bin/git", "env": "/usr/bin/env"
+    },
+    "socketGid": 990,
+    "maxActiveInstances": 40,
+    "idleStopMs": 1800000,
+    "deletionRecoveryMs": 2592000000,
+    "image": "localhost/dsh-instance:2026.10.0-rc1",
+    "limits": { "cpus": 2, "memoryBytes": 4294967296, "pids": 512, "openFiles": 8192, "diskBytes": 10737418240, "network": "pasta:--map-host-loopback,10.0.2.2" },
+    "readyTimeoutMs": 120000,
+    "stopTimeoutMs": 20000,
+    "quota": { "hostAddress": "10.0.2.2" }
+  }
+}

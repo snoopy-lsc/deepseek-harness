@@ -1,0 +1,26 @@
+{
+  "controlSocket": "/var/lib/dsh-public/quota-control/quota.sock",
+  "service": {
+    "stateDir": "/var/lib/dsh-public/quota",
+    "upstreamRoot": "https://model-upstream.example.com/v1",
+    "platformKeyFile": "/etc/dsh-public/secrets/platform-key",
+    "tokenSecretFile": "/etc/dsh-public/secrets/token-secret",
+    "healthSecretFile": "/etc/dsh-public/secrets/health-secret",
+    "modelId": "platform-model",
+    "contextWindow": 200000,
+    "personalDailyTokens": 2000000,
+    "siteDailyTokens": 50000000,
+    "personalConcurrency": 2,
+    "siteConcurrency": 24,
+    "busyTimeoutMs": 5000,
+    "maxBodyBytes": 8388608,
+    "maxImagesPerRequest": 8,
+    "maxInlineImageBytes": 4194304,
+    "maxEventBytes": 262144,
+    "maxFileBodyBytes": 33554432,
+    "maxFilesPerUser": 200,
+    "maxFileMetadataBytes": 4096,
+    "maxFileListLimit": 100,
+    "credentialLifetimeMs": 600000
+  }
+}

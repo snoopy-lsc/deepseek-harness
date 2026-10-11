@@ -13,7 +13,8 @@ const integrationRoot = fileURLToPath(new URL('../', import.meta.url))
 export type TeamDevSettings = Pick<TeamDevConfig, 'users' | 'maxActiveInstances' | 'idleStopMs' | 'startupTimeoutMs' | 'stopTimeoutMs' |
   'routeWaitMs' | 'retryAfterSeconds' | 'launchExchangeMs' | 'socketLifetimeMs' | 'cookieLifetimeMs' | 'quota' | 'storageLock'>
 
-async function ownedFile(path: string, contents: string): Promise<void> {
+/** Write a profile file once; an existing file must be semantically identical. */
+export async function ownedFile(path: string, contents: string): Promise<void> {
   let existing: string | undefined
   try { existing = await readFile(path, 'utf8') }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }

@@ -1,0 +1,28 @@
+[Unit]
+Description=Team Harness provisioner (privileged: host accounts, storage, gVisor containers)
+PartOf=dsh-public.target
+After=network-online.target dsh-quota.service nftables.service
+Requires=dsh-quota.service
+
+[Service]
+Type=simple
+User=root
+Environment=DSH_HOME=/var/lib/dsh-public/profiles/provisioner-home
+ExecStart=/usr/bin/node /opt/dsh-public/harness/apps/cli/lib/bin.js --profile provisioner
+Restart=on-failure
+RestartSec=3
+# Root is required for useradd, quotas, and starting each user's rootless Podman as that account; confine everything else.
+ProtectSystem=strict
+ProtectHome=no
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=no
+RestrictAddressFamilies=AF_UNIX AF_INET AF_NETLINK
+LockPersonality=yes
+UMask=0077
+ReadWritePaths=/var/lib/dsh-public /run/dsh-public /run/user /etc /var/log
+ReadOnlyPaths=/etc/dsh-public /opt/dsh-public
+
+[Install]
+WantedBy=dsh-public.target

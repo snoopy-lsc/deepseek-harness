@@ -1,0 +1,18 @@
+{
+  "publicAuthority": "harness.example.com",
+  "routerSocket": "/run/dsh-public/router/router.sock",
+  "routerSocketGid": 991,
+  "healthSocket": "/run/dsh-public/router-private/health.sock",
+  "provisionerSocket": "/run/dsh-public/control/provisioner.sock",
+  "identity": {
+    "issuer": "https://harness.example.com/application/o/dsh-public/",
+    "audience": "REPLACE_WITH_AUTHENTIK_PROVIDER_CLIENT_ID",
+    "publicKeyFiles": { "authentik-2026-10": "/etc/dsh-public/authentik-signing-key.pub.pem" }
+  },
+  "routeWaitMs": 90000,
+  "retryAfterSeconds": 2,
+  "launchExchangeMs": 10000,
+  "socketLifetimeMs": 60000,
+  "maxRequestBodyBytes": 33554432,
+  "maxHeaderBytes": 16384
+}

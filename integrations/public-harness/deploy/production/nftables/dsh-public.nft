@@ -1,0 +1,34 @@
+#!/usr/sbin/nft -f
+# Egress policy for per-user instance accounts. The provisioner refuses to start any instance unless
+# `nft list table inet dsh_instances` succeeds, so a host without these rules cannot run user code.
+#
+# Set INSTANCE_UID_MIN/MAX to the UID range that `useradd` allocates to instance accounts (UID_MIN/UID_MAX in
+# /etc/login.defs; use a dedicated range). Rootless networking (pasta) makes outbound connections as the account,
+# so `meta skuid` selects exactly instance traffic. Set RESOLVERS to the host's upstream DNS servers.
+define INSTANCE_UID_MIN = 200000
+define INSTANCE_UID_MAX = 299999
+define RESOLVERS = { 192.0.2.53 }
+
+table inet dsh_instances {
+	chain output {
+		type filter hook output priority filter; policy accept;
+
+		meta skuid < $INSTANCE_UID_MIN accept
+		meta skuid > $INSTANCE_UID_MAX accept
+
+		ct state established,related accept
+
+		# The model quota proxy listens on 127.0.0.1 (reached through pasta's host-loopback mapping).
+		oif "lo" ip daddr 127.0.0.1 tcp dport 1024-65535 accept
+		oif "lo" drop
+
+		# No private, link-local (cloud metadata), CGNAT, or multicast destinations; no IPv6 local scopes.
+		ip daddr { 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4 } drop
+		ip6 daddr { ::1, fc00::/7, fe80::/10, ff00::/8 } drop
+
+		ip daddr $RESOLVERS udp dport 53 accept
+		ip daddr $RESOLVERS tcp dport 53 accept
+		tcp dport { 80, 443 } accept
+		counter drop
+	}
+}
