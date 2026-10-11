@@ -21,6 +21,7 @@
     "maxFilesPerUser": 200,
     "maxFileMetadataBytes": 4096,
     "maxFileListLimit": 100,
-    "credentialLifetimeMs": 600000
+    "credentialLifetimeMs": 600000,
+    "listenPorts": { "min": 20000, "max": 20199 }
   }
 }

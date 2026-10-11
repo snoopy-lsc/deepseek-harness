@@ -1,9 +1,10 @@
 /** Rootless Podman + gVisor runtime: one confined container per account, reached only through a private Unix socket. */
 import { randomBytes } from 'node:crypto'
+import { createServer } from 'node:net'
 import { chmod, chown, rename, writeFile } from 'node:fs/promises'
 import { request as httpRequest } from 'node:http'
 import { join } from 'node:path'
-import type { InstanceEndpoint, UserId } from '@public-harness/contracts'
+import { portsFrom, type InstanceEndpoint, type UserId } from '@public-harness/contracts'
 import type { ProvisionerConfig } from './config.ts'
 import { startUnixForwarder, type Forwarder } from './forwarder.ts'
 import { enforceLimits, LimitsError, networkArgument, type EnforcementProbe } from './limits.ts'
@@ -30,7 +31,7 @@ export interface QuotaBridge {
 /** Ordered failures a start can report; messages never include paths, argv, or token material. */
 export class RuntimeStartError extends Error {
   override readonly name = 'RuntimeStartError'
-  constructor(readonly reason: 'gvisor-unavailable' | 'limits' | 'quota-unavailable' | 'start-failed' | 'not-ready' | 'unsafe-argv') {
+  constructor(readonly reason: 'gvisor-unavailable' | 'limits' | 'quota-unavailable' | 'start-failed' | 'not-ready' | 'unsafe-argv' | 'no-port') {
     super(`runtime start refused: ${reason}`)
   }
 }
@@ -51,6 +52,8 @@ export interface RuntimeDeps {
   readonly probe: EnforcementProbe
   readonly startForwarder?: typeof startUnixForwarder
   readonly healthProbe?: (port: number) => Promise<boolean>
+  /** Whether a loopback port can be bound right now (injectable so tests bind nothing). */
+  readonly portFree?: (port: number) => Promise<boolean>
   readonly sleep?: (ms: number) => Promise<void>
   readonly clock?: () => number
   readonly chownFile?: (path: string, uid: number, gid: number) => Promise<void>
@@ -60,13 +63,13 @@ export interface RuntimeDeps {
 }
 
 /** The exact argv for `podman` (after the executable) that starts one instance. */
-export function buildRunArgv(config: ProvisionerConfig, record: UserRecord): string[] {
+export function buildRunArgv(config: ProvisionerConfig, record: UserRecord, sidecarPort: number): string[] {
   const { limits, tools } = config
   const volume = (source: string, target: string, mode: 'rw' | 'ro'): string[] => ['--volume', `${source}:${target}:${mode},Z`]
   const env = (name: string, value: string): string[] => ['--env', `${name}=${value}`]
   return [
     '--runtime', tools.runsc, 'run', '--detach', '--replace', '--name', record.container,
-    '--network', networkArgument(limits.network, config.quota.hostAddress), '--publish', `127.0.0.1::${SIDECAR_PORT}`,
+    '--network', networkArgument(limits.network, config.quota.hostAddress), '--publish', `127.0.0.1:${sidecarPort}:${SIDECAR_PORT}`,
     '--cap-drop', 'all', '--security-opt', 'no-new-privileges', '--read-only',
     '--tmpfs', '/tmp:rw,nosuid,nodev,size=256m,mode=1777',
     '--pids-limit', String(limits.pids), '--memory', String(limits.memoryBytes), '--memory-swap', String(limits.memoryBytes),
@@ -84,6 +87,23 @@ export function buildRunArgv(config: ProvisionerConfig, record: UserRecord): str
 
 const FORBIDDEN_FLAGS = /^--(privileged|cap-add|device|pid|ipc|userns|uts|cgroupns|security-opt=(?!no-new-privileges)|add-host|dns|mount|volumes-from|group-add|env-file|net|network=host|pod)\b/
 
+/** True for `127.0.0.1:<port>:<sidecar port>` with a host port inside the configured sidecar range. */
+function publishedInRange(value: string, config: ProvisionerConfig): boolean {
+  const match = /^127\.0\.0\.1:(\d{1,5}):(\d{1,5})$/.exec(value)
+  if (match === null || Number(match[2]) !== SIDECAR_PORT) return false
+  const port = Number(match[1])
+  return port >= config.ports.sidecar.min && port <= config.ports.sidecar.max
+}
+
+/** Default bind probe. */
+function loopbackPortFree(port: number): Promise<boolean> {
+  return new Promise(resolve => {
+    const probe = createServer()
+    probe.once('error', () => resolve(false))
+    probe.listen(port, '127.0.0.1', () => probe.close(() => resolve(true)))
+  })
+}
+
 /** Reject an argv that grants more than the fixed design allows. */
 export function assertSafeRunArgv(argv: readonly string[], config: ProvisionerConfig, record: UserRecord): void {
   const allowedVolumes = new Set([
@@ -98,7 +118,7 @@ export function assertSafeRunArgv(argv: readonly string[], config: ProvisionerCo
       seen.add(value); index += 1
     } else if (FORBIDDEN_FLAGS.test(arg)) throw new RuntimeStartError('unsafe-argv')
     else if (arg === '--network' && argv[index + 1] !== networkArgument(config.limits.network, config.quota.hostAddress)) throw new RuntimeStartError('unsafe-argv')
-    else if (arg === '--publish' && !/^127\.0\.0\.1::\d+$/.test(argv[index + 1] ?? '')) throw new RuntimeStartError('unsafe-argv')
+    else if (arg === '--publish' && !publishedInRange(argv[index + 1] ?? '', config)) throw new RuntimeStartError('unsafe-argv')
   }
   if (seen.size !== allowedVolumes.size) throw new RuntimeStartError('unsafe-argv')
   if (!argv.includes('--read-only') || argv[argv.indexOf('--cap-drop') + 1] !== 'all') throw new RuntimeStartError('unsafe-argv')
@@ -136,7 +156,20 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
   const forward = deps.startForwarder ?? startUnixForwarder
   const probeHealth = deps.healthProbe ?? httpHealthProbe
   const rotateMs = deps.credentialRotateMs ?? 480_000
-  const live = new Map<UserId, { forwarder: Forwarder; timer: NodeJS.Timeout; instanceId: string }>()
+  const portFree = deps.portFree ?? loopbackPortFree
+  const live = new Map<UserId, { forwarder: Forwarder; timer: NodeJS.Timeout; instanceId: string; port: number }>()
+  let cursor = 0
+
+  /** Next unclaimed, bindable port of the sidecar range; ports of live instances are never reused. */
+  async function allocateSidecarPort(): Promise<number> {
+    const claimed = new Set([...live.values()].map(entry => entry.port))
+    for (const port of portsFrom(config.ports.sidecar, cursor)) {
+      if (claimed.has(port) || !await portFree(port)) continue
+      cursor = port - config.ports.sidecar.min + 1
+      return port
+    }
+    throw new RuntimeStartError('no-port')
+  }
 
   const asAccount = (record: UserRecord, args: readonly string[]): Promise<{ code: number; stdout: string; stderr: string }> =>
     runner.run(config.tools.runuser, ['-u', record.account, '--', config.tools.env, '-i',
@@ -177,21 +210,21 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
       const instanceId = randomBytes(18).toString('base64url')
       let failed = true
       try {
+        const sidecarPort = await allocateSidecarPort()
         const proxy = await deps.quota.open(record.userId, instanceId)
+        // The firewall allows exactly this range; a proxy listening anywhere else would be unreachable or unsafe.
+        if (proxy.port < config.ports.quota.min || proxy.port > config.ports.quota.max) throw new RuntimeStartError('quota-unavailable')
         await writeCredential(record, instanceId)
         await writePrivate(record, join(record.layout.home, 'public-harness-web.patch.yml'),
           webPatch(config, deps.publicHost, proxy.port, 'platform-model'))
-        const argv = buildRunArgv(config, record)
+        const argv = buildRunArgv(config, record, sidecarPort)
         assertSafeRunArgv(argv, config, record)
         const started = await asAccount(record, argv)
         if (started.code !== 0) throw new RuntimeStartError('start-failed')
         const ready = await waitForReady(record.layout.ctl, record.uid, config.readyTimeoutMs, 100, sleep, deps.clock)
           .catch(() => { throw new RuntimeStartError('not-ready') })
         void ready
-        const mapping = await asAccount(record, ['port', record.container, `${SIDECAR_PORT}/tcp`])
-        const match = /^127\.0\.0\.1:(\d{1,5})$/m.exec(mapping.stdout)
-        if (mapping.code !== 0 || match === null) throw new RuntimeStartError('start-failed')
-        const hostPort = Number(match[1])
+        const hostPort = sidecarPort
         const deadline = (deps.clock ?? Date.now)() + config.readyTimeoutMs
         while (!await probeHealth(hostPort)) {
           if ((deps.clock ?? Date.now)() >= deadline) throw new RuntimeStartError('not-ready')
@@ -200,7 +233,7 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
         const forwarder = await forward({ socketPath: record.layout.socketPath, port: hostPort, gid: config.socketGid })
         const timer = setInterval(() => { void writeCredential(record, instanceId).catch(() => {}) }, rotateMs)
         timer.unref()
-        live.set(record.userId, { forwarder, timer, instanceId })
+        live.set(record.userId, { forwarder, timer, instanceId, port: hostPort })
         failed = false
         return { kind: 'unix', path: record.layout.socketPath }
       } finally {

@@ -8,6 +8,11 @@
 define INSTANCE_UID_MIN = 200000
 define INSTANCE_UID_MAX = 299999
 define RESOLVERS = { 192.0.2.53 }
+# Loopback ports an instance may reach: exactly the range where the quota service opens instance listeners
+# (`listenPorts` in quota.json, `ports.quota` in provisioner.json; all three must match). Everything else on
+# loopback is dropped: other users' sidecars (`ports.sidecar`), the router, the Caddy edge, authentik, databases.
+# Keep both ranges below 32768, outside the kernel's ephemeral range.
+define QUOTA_PORTS = 20000-20199
 
 table inet dsh_instances {
 	chain output {
@@ -18,8 +23,8 @@ table inet dsh_instances {
 
 		ct state established,related accept
 
-		# The model quota proxy listens on 127.0.0.1 (reached through pasta's host-loopback mapping).
-		oif "lo" ip daddr 127.0.0.1 tcp dport 1024-65535 accept
+		# The model quota proxy listens on 127.0.0.1 (reached through pasta's host-loopback mapping), only in QUOTA_PORTS.
+		oif "lo" ip daddr 127.0.0.1 tcp dport $QUOTA_PORTS accept
 		oif "lo" drop
 
 		# Resolver accepts come first: a resolver inside a private range (typical for cloud VPCs) would otherwise be

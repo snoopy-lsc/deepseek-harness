@@ -48,7 +48,7 @@ export async function makeConfig(overrides: Partial<ProvisionerConfig> = {}): Pr
   return {
     paths, socketGid: gid, maxActiveInstances: 2, idleStopMs: 600_000, deletionRecoveryMs: 7 * 86_400_000,
     image: 'localhost/dsh-instance:1', readyTimeoutMs: 5000, stopTimeoutMs: 5000,
-    quota: { hostAddress: '10.0.2.2' },
+    quota: { hostAddress: '10.0.2.2' }, ports: { quota: { min: 29100, max: 29109 }, sidecar: { min: 29200, max: 29209 } },
     limits: { cpus: 1, memoryBytes: 1 << 30, pids: 256, openFiles: 4096, diskBytes: 5 * 2 ** 30, network: 'pasta' },
     tools: { getent: tool('getent'), useradd: tool('useradd'), userdel: tool('userdel'), loginctl: tool('loginctl'),
       nologin: '/usr/sbin/nologin', sharedGroup: 'dsh-instances', setquota: '/usr/sbin/setquota', nft: '/usr/sbin/nft',

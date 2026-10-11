@@ -6,6 +6,7 @@ import { isMap, isScalar, isSeq, parse, parseDocument, type Document } from 'yam
 import { describe, expect, it } from 'vitest'
 import { collectConfigFacts } from '../deploy/release-check.ts'
 import { PRODUCTION_PROFILES, writeProductionProfile } from '../deploy/production-profile.ts'
+import { portRangesOverlap } from '../packages/contracts/src/ports.ts'
 import { parseReleaseManifest } from '../deploy/upgrade.ts'
 import { networkArgument } from '../packages/provisioner/src/limits.ts'
 import { parseProvisionerProfileConfig } from '../packages/production/src/provisioner-service.ts'
@@ -191,6 +192,23 @@ describe('host artifacts', () => {
     // Web egress is accepted only after the private ranges were dropped, and the table ends in a drop.
     expect(webAccept).toBeGreaterThan(privateDrop)
     expect(finalDrop).toBe(list.length - 1)
+  })
+
+  it('allows instances only the quota listener range on loopback and keeps all three configurations in step', async () => {
+    const file = await text('deploy/production/nftables/dsh-public.nft')
+    const defined = /^define QUOTA_PORTS = (\d+)-(\d+)$/m.exec(file)
+    expect(defined).not.toBeNull()
+    const range = { min: Number(defined![1]), max: Number(defined![2]) }
+    const provisioner = parseProvisionerProfileConfig(await json('deploy/production/config/provisioner.example.json')).provisioner
+    const quota = parseQuotaProfileConfig(await json('deploy/production/config/quota.example.json')).service
+    expect(quota.listenPorts).toEqual(range)
+    expect(provisioner.ports.quota).toEqual(range)
+    // The sidecar range is published for the host-side forwarder only; instances must not be able to reach it.
+    expect(portRangesOverlap(provisioner.ports.sidecar, range)).toBe(false)
+    const loopback = (await rules()).filter(line => line.startsWith('oif "lo"'))
+    expect(loopback).toEqual(['oif "lo" ip daddr 127.0.0.1 tcp dport $QUOTA_PORTS accept', 'oif "lo" drop'])
+    expect(file).not.toMatch(/1024-65535/)
+    expect(file).not.toContain(String(provisioner.ports.sidecar.min))
   })
 
   const nft = process.env.NFT_BIN

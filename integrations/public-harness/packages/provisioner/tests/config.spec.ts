@@ -14,6 +14,14 @@ describe('provisioner configuration', () => {
     ['bad group name', (c: any) => ({ ...c, tools: { ...c.tools, sharedGroup: '../x' } })],
     ['missing limit', (c: any) => ({ ...c, limits: { ...c.limits, pids: 0 } })],
     ['host network', (c: any) => ({ ...c, limits: { ...c.limits, network: 'host' } })],
+    ['missing ports', (c: any) => { const { ports: _ports, ...rest } = c; return rest }],
+    ['privileged port range', (c: any) => ({ ...c, ports: { ...c.ports, quota: { min: 80, max: 90 } } })],
+    ['range in the ephemeral space', (c: any) => ({ ...c, ports: { ...c.ports, sidecar: { min: 40000, max: 40009 } } })],
+    ['range far too wide', (c: any) => ({ ...c, ports: { ...c.ports, sidecar: { min: 2000, max: 20000 } } })],
+    ['range smaller than capacity', (c: any) => ({ ...c, ports: { ...c.ports, quota: { min: 29100, max: 29100 } } })],
+    ['inverted range', (c: any) => ({ ...c, ports: { ...c.ports, quota: { min: 29109, max: 29100 } } })],
+    ['overlapping ranges', (c: any) => ({ ...c, ports: { quota: { min: 29100, max: 29109 }, sidecar: { min: 29105, max: 29115 } } })],
+    ['extra range key', (c: any) => ({ ...c, ports: { ...c.ports, quota: { min: 29100, max: 29109, step: 2 } } })],
     ['bad quota address', (c: any) => ({ ...c, quota: { hostAddress: 'localhost' } })],
   ])('rejects %s', async (_name, mutate) => {
     const config = mutate(await makeConfig())

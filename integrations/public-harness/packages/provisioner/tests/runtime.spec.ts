@@ -15,7 +15,8 @@ import { connect, createServer } from 'node:net'
 const TOKEN = 'launch-token-SECRET-123'
 const controllers = { controllers: async () => ['cpu', 'memory', 'pids', 'io'] }
 
-async function setup(options: { quotaHealthy?: boolean } = {}) {
+async function setup(options: { quotaHealthy?: boolean; busyPorts?: number[] } = {}) {
+  const busyPorts = options.busyPorts
   const config = await makeConfig()
   const account = deriveNames(alice)
   const layout = layoutFor(config.paths, account.account)
@@ -27,7 +28,7 @@ async function setup(options: { quotaHealthy?: boolean } = {}) {
   const quotaCalls: string[] = []
   const quota: QuotaBridge = {
     healthy: async () => options.quotaHealthy ?? true,
-    open: async () => { quotaCalls.push('open'); return { port: 45000 } },
+    open: async () => { quotaCalls.push('open'); return { port: 29100 } },
     issue: async () => ({ token: 'quota-token.signed', expiresAt: Date.now() + 600_000 }),
     close: async () => { quotaCalls.push('close') },
   }
@@ -38,12 +39,11 @@ async function setup(options: { quotaHealthy?: boolean } = {}) {
       await writeFile(join(layout.ctl, 'ready.json'), JSON.stringify({ kind: 'public-harness/web-ready', port: 8080, token: TOKEN }), { mode: 0o600 })
       return { code: 0, stdout: 'abcdef\n', stderr: '' }
     }
-    if (args.includes('port')) return { code: 0, stdout: '127.0.0.1:41000\n', stderr: '' }
     return undefined
   }
   const runtime = createRuntime({ config, runner, quota, probe: controllers, publicHost: 'harness.example.test',
     startForwarder: async options => { forwarded.push(options); return { close: async () => { forwarderClosed += 1 } } },
-    healthProbe: async () => true, sleep: async ms => { now += ms }, clock: () => now })
+    healthProbe: async () => true, portFree: async port => !(busyPorts ?? []).includes(port), sleep: async ms => { now += ms }, clock: () => now })
   return { config, record, runner, runtime, forwarded, quotaCalls, closed: () => forwarderClosed, layout }
 }
 
@@ -84,12 +84,12 @@ describe('confined container launch', () => {
 
   it('uses exactly the planned argv: runsc, read-only root, no capabilities, four mounts, loopback-only publish', async () => {
     const { config, record } = await setup()
-    const argv = buildRunArgv(config, record)
+    const argv = buildRunArgv(config, record, 29200)
     expect(argv.slice(0, 6)).toEqual(['--runtime', '/usr/bin/runsc', 'run', '--detach', '--replace', '--name'])
     const volumes = argv.flatMap((arg, index) => arg === '--volume' ? [argv[index + 1]] : [])
     expect(volumes).toEqual([`${record.layout.home}:/home/harness:rw,Z`, `${record.layout.workspace}:/workspace:rw,Z`,
       `${record.layout.ctl}:/run/harness-ctl:rw,Z`, `${config.paths.runtimeAssets}:/opt/public-harness:ro,Z`])
-    expect(argv).toEqual(expect.arrayContaining(['--cap-drop', 'all', '--read-only', '--publish', `127.0.0.1::${SIDECAR_PORT}`,
+    expect(argv).toEqual(expect.arrayContaining(['--cap-drop', 'all', '--read-only', '--publish', `127.0.0.1:29200:${SIDECAR_PORT}`,
       '--pids-limit', '256', '--memory', String(1 << 30), '--memory-swap', String(1 << 30), '--cpus', '1']))
     expect(argv[argv.indexOf('--network') + 1]).toBe('pasta:--map-host-loopback,10.0.2.2,--no-splice')
     expect(argv.slice(-3)).toEqual([config.image, 'node', '/opt/public-harness/container-entry.js'])
@@ -111,13 +111,44 @@ describe('confined container launch', () => {
     [['--network', 'host']],
     [['--network', 'pasta:--map-host-loopback,10.0.2.2']],
     [['--publish', '0.0.0.0:80:80']],
+    [['--publish', '127.0.0.1::8081']],
+    [['--publish', '127.0.0.1:5432:8081']],
+    [['--publish', '127.0.0.1:29299:8081']],
+    [['--publish', '127.0.0.1:29200:22']],
     [['--mount', 'type=bind,src=/,dst=/h']],
     [['--add-host', 'x:10.0.0.1']],
   ])('refuses a forbidden grant %j', async extra => {
     const { config, record } = await setup()
-    const argv = buildRunArgv(config, record)
+    const argv = buildRunArgv(config, record, 29200)
     argv.splice(argv.indexOf(config.image), 0, ...extra)
     expect(() => assertSafeRunArgv(argv, config, record)).toThrow(RuntimeStartError)
+  })
+
+  it('publishes the sidecar on a port of the configured range, skipping busy and live ports', async () => {
+    const { runner, runtime, record, config } = await setup({ busyPorts: [29200, 29201] })
+    await runtime.start(record)
+    const argv = runner.calls.find(call => call.args.includes('run'))!.args
+    expect(argv[argv.indexOf('--publish') + 1]).toBe(`127.0.0.1:29202:${SIDECAR_PORT}`)
+    expect(config.ports.sidecar).toEqual({ min: 29200, max: 29209 })
+    // A restart takes the next port instead of reusing one that may still be draining.
+    await runtime.start(record)
+    const second = runner.calls.filter(call => call.args.includes('run')).at(-1)!.args
+    expect(second[second.indexOf('--publish') + 1]).toBe(`127.0.0.1:29203:${SIDECAR_PORT}`)
+  })
+
+  it('refuses to start when every sidecar port is taken', async () => {
+    const { runner, runtime, record } = await setup({ busyPorts: Array.from({ length: 10 }, (_, index) => 29200 + index) })
+    await expect(runtime.start(record)).rejects.toMatchObject({ reason: 'no-port' })
+    expect(runner.calls.some(call => call.args.includes('run'))).toBe(false)
+  })
+
+  it('refuses a quota listener outside the firewall-allowed range', async () => {
+    const { config, record } = await setup()
+    const runner = new FakeRunner()
+    const runtime = createRuntime({ config, runner, quota: { healthy: async () => true, open: async () => ({ port: 29110 }),
+      issue: async () => ({ token: 'a.b', expiresAt: 1 }), close: async () => {} }, probe: controllers, publicHost: 'h.test', portFree: async () => true })
+    await expect(runtime.start(record)).rejects.toMatchObject({ reason: 'quota-unavailable' })
+    expect(runner.calls.some(call => call.args.includes('run'))).toBe(false)
   })
 
   it('refuses to start without gVisor and creates nothing', async () => {
@@ -146,7 +177,7 @@ describe('confined container launch', () => {
     const { runner, runtime, record, forwarded, config, quotaCalls, layout } = await setup()
     const endpoint = await runtime.start(record)
     expect(endpoint).toEqual({ kind: 'unix', path: layout.socketPath })
-    expect(forwarded).toEqual([{ socketPath: layout.socketPath, port: 41000, gid: config.socketGid }])
+    expect(forwarded).toEqual([{ socketPath: layout.socketPath, port: 29200, gid: config.socketGid }])
     expect(JSON.stringify(runner.calls)).not.toContain(TOKEN)
     const runCall = runner.calls.find(call => call.args.includes('run'))!
     expect(runCall.command).toBe('/usr/sbin/runuser')

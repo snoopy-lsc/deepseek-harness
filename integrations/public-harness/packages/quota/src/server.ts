@@ -12,6 +12,8 @@ import type { TokenIssuer } from './tokens.ts'
 /** One private listener serves one bound Harness instance. */
 export interface QuotaHttpConfig {
   readonly host: string
+  /** Fixed listening port; omitted (development) lets the system choose one. */
+  readonly port?: number
   readonly instanceId: string
   readonly issuer: TokenIssuer
   readonly admission: { admit(request: AdmissionRequest): Promise<AdmittedRequest> }
@@ -159,7 +161,7 @@ export async function startQuotaHttpServer(config: QuotaHttpConfig): Promise<{ p
   server.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)) })
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)
-    server.listen(0, config.host, () => { server.off('error', reject); resolve() })
+    server.listen(config.port ?? 0, config.host, () => { server.off('error', reject); resolve() })
   })
   const port = (server.address() as AddressInfo).port
   let closing: Promise<void> | undefined

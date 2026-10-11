@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { AccountSuspendedError, CapacityError, createActivityTracker, ensureGitWorkspace, fromWireError,
+import { portRangesOverlap, portsFrom, validatePortRange, AccountSuspendedError, CapacityError, createActivityTracker, ensureGitWorkspace, fromWireError,
   isolatedGitEnvironment, parseUserId, startIdleReaper, toWireError, validateIdleMs } from '../src/index.ts'
 
 const dirs: string[] = []
@@ -49,6 +49,25 @@ describe('private Git workspace', () => {
     const env = isolatedGitEnvironment()
     expect(env.GIT_CONFIG_NOSYSTEM).toBe('1')
     expect(env.GIT_CONFIG_GLOBAL).toMatch(/null|NUL/i)
+  })
+})
+
+describe('loopback port ranges', () => {
+  it('accepts a narrow range below the ephemeral space and rejects everything else', () => {
+    expect(validatePortRange({ min: 20000, max: 20199 }, 'r', 200)).toEqual({ min: 20000, max: 20199 })
+    for (const bad of [null, [], {}, { min: 1, max: 2 }, { min: 1024, max: 32768 }, { min: 5000, max: 4000 }, { min: 1.5, max: 3000 },
+      { min: '2000', max: 3000 }, { min: 2000, max: 3000, extra: 1 }, { min: 1024, max: 6000 }]) {
+      expect(() => validatePortRange(bad, 'r')).toThrow(/r must/)
+    }
+    expect(() => validatePortRange({ min: 20000, max: 20009 }, 'r', 11)).toThrow(/at least 11/)
+  })
+
+  it('detects overlap and walks the range once from any start', () => {
+    expect(portRangesOverlap({ min: 1, max: 5 }, { min: 5, max: 9 })).toBe(true)
+    expect(portRangesOverlap({ min: 1, max: 4 }, { min: 5, max: 9 })).toBe(false)
+    expect([...portsFrom({ min: 10, max: 13 }, 2)]).toEqual([12, 13, 10, 11])
+    expect([...portsFrom({ min: 10, max: 13 }, -1)]).toEqual([13, 10, 11, 12])
+    expect([...portsFrom({ min: 10, max: 13 }, 400)]).toEqual([10, 11, 12, 13])
   })
 })
 

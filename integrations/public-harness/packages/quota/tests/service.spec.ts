@@ -27,7 +27,7 @@ async function setup(overrides: Partial<QuotaServiceConfig> = {}): Promise<{ con
     healthSecretFile: await secret('health.key', 'h'.repeat(24)), modelId: 'platform-model', contextWindow: 4096,
     personalDailyTokens: 6000, siteDailyTokens: 100_000, personalConcurrency: 2, siteConcurrency: 8, busyTimeoutMs: 1000,
     maxBodyBytes: 100_000, maxImagesPerRequest: 2, maxInlineImageBytes: 10_000, maxEventBytes: 65_536, maxFileBodyBytes: 100_000,
-    maxFilesPerUser: 10, maxFileMetadataBytes: 4096, maxFileListLimit: 20, credentialLifetimeMs: 600_000, ...overrides }
+    maxFilesPerUser: 10, maxFileMetadataBytes: 4096, maxFileListLimit: 20, credentialLifetimeMs: 600_000, listenPorts: { min: 29100, max: 29139 }, ...overrides }
   return { config, calls: [] }
 }
 
@@ -61,6 +61,24 @@ describe('production quota service', () => {
     await chmod(config.platformKeyFile, 0o600)
     await writeFile(config.tokenSecretFile, 'short', { mode: 0o600 })
     await expect(createQuotaService(config)).rejects.toThrow(/too short/)
+  })
+
+  it('opens listeners only inside the configured range, never reuses a live port, and frees it on close', async () => {
+    const { config, calls } = await setup({ listenPorts: { min: 29150, max: 29151 } })
+    const service = await start(config, calls)
+    const first = (await service.open(alice, 'i1')).port
+    const second = (await service.open(parseUserId('bob'), 'i2')).port
+    expect([first, second].sort()).toEqual([29150, 29151])
+    await expect(service.open(parseUserId('carol'), 'i3')).rejects.toThrow(/no free listener port/)
+    await service.close(alice)
+    expect((await service.open(parseUserId('carol'), 'i3')).port).toBe(first)
+    // Reopening for the same user replaces that user's listener inside the range.
+    expect([first, second]).toContain((await service.open(parseUserId('bob'), 'i4')).port)
+  })
+
+  it.each([undefined, { min: 80, max: 90 }, { min: 40000, max: 40010 }, { min: 3000, max: 2000 }])('rejects listenPorts %j', async listenPorts => {
+    const { config } = await setup({ listenPorts: listenPorts as never })
+    expect(() => validateQuotaServiceConfig(config)).toThrow(/listenPorts/)
   })
 
   it('meters a model call end to end, keeps the platform key upstream-only, and reports aggregate health', async () => {

@@ -4,7 +4,7 @@ import { isAbsolute } from 'node:path'
 /** Evidence names; each is a recorded result from a rehearsal on the production host. */
 export const REQUIRED_EVIDENCE = [
   'caddy-tls-header-stripping', 'authentik-security-version', 'authentik-email-captcha', 'tool-execution-under-gvisor',
-  'two-user-isolation', 'quota-fail-closed', 'account-lifecycle', 'restart-recovery', 'backup-restore', 'capacity',
+  'two-user-isolation', 'loopback-isolation', 'sandbox-kill-recovery', 'quota-fail-closed', 'account-lifecycle', 'restart-recovery', 'backup-restore', 'capacity',
 ] as const
 
 export type EvidenceName = typeof REQUIRED_EVIDENCE[number]

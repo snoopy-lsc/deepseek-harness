@@ -1,6 +1,6 @@
 /** Required host configuration for the Linux provisioner; nothing here comes from a request. */
 import { isAbsolute } from 'node:path'
-import { validateIdleMs } from '@public-harness/contracts'
+import { portRangesOverlap, validateIdleMs, validatePortRange, type PortRange } from '@public-harness/contracts'
 import type { AccountToolchain } from './accounts.ts'
 import { validateLimits, type LimitTools, type Limits } from './limits.ts'
 
@@ -41,6 +41,12 @@ export interface ProvisionerConfig {
   readonly stopTimeoutMs: number
   /** Address inside the instance that reaches the quota proxy (host loopback mapping) and its port. */
   readonly quota: { readonly hostAddress: string }
+  /**
+   * The only loopback ports instances may ever reach or occupy. `quota` is where the quota service opens instance
+   * listeners (mirrors its `listenPorts` and the firewall's `QUOTA_PORTS`); `sidecar` is where the provisioner publishes
+   * each instance's sidecar, which only the host-side forwarder uses and the firewall therefore does not allow.
+   */
+  readonly ports: { readonly quota: PortRange; readonly sidecar: PortRange }
 }
 
 /** Validate before any host change; every failure names the setting, never a value. */
@@ -60,6 +66,9 @@ export function validateProvisionerConfig(config: ProvisionerConfig): Provisione
   validateIdleMs(config.idleStopMs)
   if (!/^[A-Za-z0-9][A-Za-z0-9._\/:@-]{0,255}$/.test(config.image) || /^(localhost\/)?$/.test(config.image)) throw new Error('image is invalid')
   if (!/^[0-9]{1,3}(\.[0-9]{1,3}){3}$/.test(config.quota.hostAddress)) throw new Error('quota.hostAddress must be an IPv4 address')
+  const quotaPorts = validatePortRange(config.ports?.quota, 'ports.quota', config.maxActiveInstances)
+  const sidecarPorts = validatePortRange(config.ports?.sidecar, 'ports.sidecar', config.maxActiveInstances)
+  if (portRangesOverlap(quotaPorts, sidecarPorts)) throw new Error('ports.quota and ports.sidecar must not overlap')
   validateLimits(config.limits)
   return config
 }

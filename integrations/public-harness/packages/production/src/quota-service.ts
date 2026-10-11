@@ -10,7 +10,7 @@ export interface QuotaProfileConfig { readonly controlSocket: string; readonly s
 
 const SERVICE_KEYS = ['stateDir', 'upstreamRoot', 'platformKeyFile', 'tokenSecretFile', 'healthSecretFile', 'modelId', 'contextWindow',
   'personalDailyTokens', 'siteDailyTokens', 'personalConcurrency', 'siteConcurrency', 'busyTimeoutMs', 'maxBodyBytes', 'maxImagesPerRequest',
-  'maxInlineImageBytes', 'maxEventBytes', 'maxFileBodyBytes', 'maxFilesPerUser', 'maxFileMetadataBytes', 'maxFileListLimit', 'credentialLifetimeMs']
+  'maxInlineImageBytes', 'maxEventBytes', 'maxFileBodyBytes', 'maxFilesPerUser', 'maxFileMetadataBytes', 'maxFileListLimit', 'credentialLifetimeMs', 'listenPorts']
 
 /** Strict parse; the quota service re-validates every limit at startup. */
 export function parseQuotaProfileConfig(value: unknown): QuotaProfileConfig {

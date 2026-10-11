@@ -1,7 +1,7 @@
 /** Production composition: durable ledger, pinned upstream, instance-bound listeners, and a private control surface. */
 import { lstat, readFile } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
-import type { UserId } from '@public-harness/contracts'
+import { portsFrom, validatePortRange, type PortRange, type UserId } from '@public-harness/contracts'
 import { createAdmission } from './admission.ts'
 import { createFilesProxy } from './files.ts'
 import { createRejectionCounter, inspectQuotaHealth, type QuotaHealth } from './health.ts'
@@ -36,6 +36,12 @@ export interface QuotaServiceConfig {
   readonly maxFileMetadataBytes: number
   readonly maxFileListLimit: number
   readonly credentialLifetimeMs: number
+  /**
+   * Loopback ports for the instance listeners. The egress firewall allows instances to reach exactly this range on
+   * 127.0.0.1 and nothing else on loopback, so it must equal `QUOTA_PORTS` in the nftables file and the provisioner's
+   * `ports.quota`, and must not be used by any other service.
+   */
+  readonly listenPorts: PortRange
 }
 
 /** Startup checks: refuse to run with a missing, non-positive, or unsafe setting. */
@@ -50,6 +56,7 @@ export function validateQuotaServiceConfig(config: QuotaServiceConfig): void {
   for (const [name, value] of Object.entries(config)) {
     if (typeof value === 'number' && (!Number.isSafeInteger(value) || value <= 0)) throw new Error(`${name} must be a positive safe integer`)
   }
+  validatePortRange(config.listenPorts, 'listenPorts')
   if (config.credentialLifetimeMs > 900_000) throw new Error('credentialLifetimeMs exceeds fifteen minutes')
   if (config.contextWindow > config.personalDailyTokens || config.contextWindow > config.siteDailyTokens) {
     throw new Error('daily budgets must admit one model request')
@@ -97,6 +104,7 @@ export async function createQuotaService(config: QuotaServiceConfig, options: { 
     maxEventBytes: config.maxEventBytes, ledger, fetcher: options.fetcher })
   const counter = createRejectionCounter()
   const listeners = new Map<UserId, { close(): Promise<void> }>()
+  let cursor = 0
   const inspect = (): Promise<QuotaHealth> => inspectQuotaHealth(ledger, counter)
   const closeListener = async (userId: UserId): Promise<void> => {
     const existing = listeners.get(userId)
@@ -108,11 +116,22 @@ export async function createQuotaService(config: QuotaServiceConfig, options: { 
     async healthy() { return (await inspect()).available },
     async open(userId, instanceId) {
       await closeListener(userId)
-      const listener = await startQuotaHttpServer({ host: '127.0.0.1', instanceId, issuer, admission, forwardMessages, files,
-        maxBodyBytes: config.maxBodyBytes, maxFileBodyBytes: config.maxFileBodyBytes, rejections: counter,
-        health: { secret: healthSecret, inspect } })
-      listeners.set(userId, listener)
-      return { port: listener.port }
+      // Take the first free port of the configured range, starting after the last one handed out.
+      for (const port of portsFrom(config.listenPorts, cursor)) {
+        let listener: Awaited<ReturnType<typeof startQuotaHttpServer>>
+        try {
+          listener = await startQuotaHttpServer({ host: '127.0.0.1', port, instanceId, issuer, admission, forwardMessages, files,
+            maxBodyBytes: config.maxBodyBytes, maxFileBodyBytes: config.maxFileBodyBytes, rejections: counter,
+            health: { secret: healthSecret, inspect } })
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE') continue
+          throw error
+        }
+        cursor = port - config.listenPorts.min + 1
+        listeners.set(userId, listener)
+        return { port: listener.port }
+      }
+      throw new Error('no free listener port in listenPorts')
     },
     issue: (userId, instanceId) => issuer.issue(userId, instanceId),
     close: closeListener,

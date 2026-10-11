@@ -27,6 +27,7 @@
     "limits": { "cpus": 2, "memoryBytes": 4294967296, "pids": 512, "openFiles": 8192, "diskBytes": 10737418240, "network": "pasta" },
     "readyTimeoutMs": 120000,
     "stopTimeoutMs": 20000,
-    "quota": { "hostAddress": "10.0.2.2" }
+    "quota": { "hostAddress": "10.0.2.2" },
+    "ports": { "quota": { "min": 20000, "max": 20199 }, "sidecar": { "min": 21000, "max": 21199 } }
   }
 }
