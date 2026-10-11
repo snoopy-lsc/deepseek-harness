@@ -11,7 +11,7 @@ const integrationRoot = fileURLToPath(new URL('../', import.meta.url))
 
 /** User-adjustable local user list and startup limits. */
 export type TeamDevSettings = Pick<TeamDevConfig, 'users' | 'startupTimeoutMs' | 'stopTimeoutMs' |
-  'routeWaitMs' | 'retryAfterSeconds' | 'launchExchangeMs' | 'socketLifetimeMs' | 'cookieLifetimeMs' | 'quota'>
+  'routeWaitMs' | 'retryAfterSeconds' | 'launchExchangeMs' | 'socketLifetimeMs' | 'cookieLifetimeMs' | 'quota' | 'storageLock'>
 
 async function ownedFile(path: string, contents: string): Promise<void> {
   let existing: string | undefined

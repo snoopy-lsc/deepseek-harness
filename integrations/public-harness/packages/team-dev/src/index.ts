@@ -4,12 +4,12 @@ import { isAbsolute } from 'node:path'
 import type { Context, Fiber } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { parseUserId, type UserId } from '@public-harness/contracts'
-import { createDevInstanceManager } from '@public-harness/dev-runtime'
+import { createDevInstanceManager, validateDevUsers } from '@public-harness/dev-runtime'
 import { createDevelopmentIdentity } from '@public-harness/router/dev-identity'
 import { createOwnerRouter } from '@public-harness/router/routes'
 import { createBrowserLaunch } from '@public-harness/router/launch'
 import { startRouterServer } from '@public-harness/router/server'
-import { startTeamDevQuota, type TeamDevQuotaConfig } from './quota.ts'
+import { startTeamDevQuota, validateStorageLockConfig, type TeamDevQuotaConfig, type StorageLockConfig } from './quota.ts'
 
 /** Paths and limits for a development server with fixed local test users. */
 export interface TeamDevConfig {
@@ -27,6 +27,7 @@ export interface TeamDevConfig {
   readonly socketLifetimeMs: number
   readonly cookieLifetimeMs: number
   readonly quota: TeamDevQuotaConfig
+  readonly storageLock: StorageLockConfig
 }
 
 /** Parse required profile settings before any listener or child starts. */
@@ -56,6 +57,8 @@ export const Config: z<TeamDevConfig> = z.object({
     credentialLifetimeMs: z.number().step(1).min(1).required(),
     credentialRotateMs: z.number().step(1).min(1).required(),
   }).required(),
+  storageLock: z.object({ staleMs: z.number().step(1).min(5000).required(),
+    updateMs: z.number().step(1).min(1000).required() }).required(),
 })
 
 /** Enforce loopback, private paths, fixed users, and positive bounded waits. */
@@ -66,7 +69,8 @@ export function validateTeamDevConfig(config: TeamDevConfig): UserId[] {
   }
   if (config.args.length === 0) throw new Error('team-dev dsh command arguments are required')
   const users = config.users.map(parseUserId)
-  if (users.length === 0 || new Set(users).size !== users.length) throw new Error('fixed test users are required')
+  validateDevUsers(users)
+  validateStorageLockConfig(config.storageLock)
   for (const [name, value] of Object.entries(config).filter(([name]) => name.endsWith('Ms'))) {
     if (!Number.isSafeInteger(value) || Number(value) <= 0) throw new Error(`${name} must be positive`)
   }
@@ -89,7 +93,7 @@ export const name = 'public-harness-team-dev'
 export async function apply(ctx: Context, config: TeamDevConfig): Promise<void> {
   const users = validateTeamDevConfig(config)
   const quota = await startTeamDevQuota({ storageRoot: config.storageRoot,
-    baseWebPatch: config.webPatch, users, config: config.quota })
+    baseWebPatch: config.webPatch, users, config: config.quota, storageLock: config.storageLock })
   const managers = new Map(users.map(userId => [userId, createDevInstanceManager({
     mode: 'development', host: '127.0.0.1', storageRoot: config.storageRoot,
     webPatch: quota.patches.get(userId)!, command: config.command,

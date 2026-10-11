@@ -27,7 +27,7 @@ From the integration root, run `pnpm dev` after building the repository's Harnes
 <a id="configuration"></a>
 ## Configuration
 
-`deploy/team-dev.config.json` sets the fixed user list, positive lifecycle limits, the waiting-page refresh interval, model context and output bounds, daily token budgets, concurrency, body limits, and credential rotation. The plugin requires `127.0.0.1`, absolute storage, patch, and executable paths, and a nonempty unique user list. Socket lifetime is at most one minute, cookie lifetime at most one hour, and model credentials at most fifteen minutes. The profile generator writes private files under `PUBLIC_HARNESS_DEV_HOME` or `.local/` and refuses to overwrite changed profile files.
+`deploy/team-dev.config.json` sets the fixed user list, positive lifecycle limits, the waiting-page refresh interval, model context and output bounds, daily token budgets, concurrency, body limits, and credential rotation. The plugin requires `127.0.0.1`, absolute storage, patch, and executable paths, and a nonempty unique user list. Socket lifetime is at most one minute, cookie lifetime at most one hour, and model credentials at most fifteen minutes. `storageLock.staleMs` and `storageLock.updateMs` configure the exclusive data-directory lease: the stale limit is at least five seconds and the heartbeat at least one second, at most half the stale limit. A second server cannot use that directory while its lease is live. After an unclean stop, a stale lease can be reclaimed after the configured interval. The profile generator writes private files under `PUBLIC_HARNESS_DEV_HOME` or `.local/` and refuses to overwrite changed profile files.
 
 <a id="further-exploration"></a>
 ## Further Exploration

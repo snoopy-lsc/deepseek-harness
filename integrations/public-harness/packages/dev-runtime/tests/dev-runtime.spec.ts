@@ -27,6 +27,10 @@ async function config() {
 }
 
 describe('development instance manager', () => {
+  it.each([['Alice', 'alice'], ['CON'], ['aux'], ['LPT1']])('rejects nonportable user paths %s', async (...users) => {
+    const settings = await config()
+    expect(() => createDevInstanceManager({ ...settings, users: users.map(parseUserId) })).toThrow('user')
+  })
   it('starts two loopback children with separate homes and workspaces', async () => {
     const manager = createDevInstanceManager(await config())
     try {

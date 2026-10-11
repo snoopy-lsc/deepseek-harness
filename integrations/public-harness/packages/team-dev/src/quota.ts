@@ -3,7 +3,6 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
 import type { AddressInfo } from 'node:net'
 import type { UserId } from '@public-harness/contracts'
 import { createQuotaLedger } from '@public-harness/quota/ledger'
@@ -11,6 +10,23 @@ import { createTokenIssuer } from '@public-harness/quota/tokens'
 import { createAdmission } from '@public-harness/quota/admission'
 import { createMessagesForwarder } from '@public-harness/quota/messages'
 import { startQuotaHttpServer } from '@public-harness/quota/server'
+import { validateDevUsers } from '@public-harness/dev-runtime'
+import lockfile from 'proper-lockfile'
+
+/** Portable ownership lease settings for one development data root. */
+export interface StorageLockConfig {
+  readonly staleMs: number
+  readonly updateMs: number
+}
+
+/** Validate the maintained lock provider's lease and heartbeat limits.
+ * @param config - explicit development storage ownership timing.
+ */
+export function validateStorageLockConfig(config: StorageLockConfig): void {
+  const { staleMs, updateMs } = config
+  if (!Number.isSafeInteger(staleMs) || staleMs < 5000 || !Number.isSafeInteger(updateMs)
+    || updateMs < 1000 || updateMs > staleMs / 2) throw new Error('invalid development storage lock timing')
+}
 
 /** Required development model and resource limits. */
 export interface TeamDevQuotaConfig {
@@ -66,8 +82,12 @@ export async function startTeamDevQuota(options: {
   readonly baseWebPatch: string
   readonly users: readonly UserId[]
   readonly config: TeamDevQuotaConfig
+  readonly storageLock: StorageLockConfig
 }): Promise<TeamDevQuota> {
   const { config } = options
+  validateDevUsers(options.users)
+  validateStorageLockConfig(options.storageLock)
+  const { staleMs, updateMs } = options.storageLock
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(config.modelId)
     || !Number.isSafeInteger(config.credentialLifetimeMs) || config.credentialLifetimeMs < 1
     || config.credentialLifetimeMs > 900_000
@@ -78,10 +98,13 @@ export async function startTeamDevQuota(options: {
   const quotaHome = join(options.storageRoot, 'quota')
   await privateDirectory(options.storageRoot)
   await privateDirectory(quotaHome)
-  const ledger = createQuotaLedger({ databasePath: join(quotaHome, 'ledger.sqlite'),
+  const release = await lockfile.lock(options.storageRoot, { stale: staleMs, update: updateMs, retries: 0 })
+  let ledger: ReturnType<typeof createQuotaLedger>
+  try { ledger = createQuotaLedger({ databasePath: join(quotaHome, 'ledger.sqlite'),
     personalDailyTokens: config.personalDailyTokens, siteDailyTokens: config.siteDailyTokens,
     personalConcurrency: config.personalConcurrency, siteConcurrency: config.siteConcurrency,
-    busyTimeoutMs: config.busyTimeoutMs })
+    busyTimeoutMs: config.busyTimeoutMs }) }
+  catch (error) { await release(); throw error }
   const issuer = createTokenIssuer({ secret: randomBytes(32), issuer: 'team-dev',
     lifetimeMs: config.credentialLifetimeMs })
   const platformKey = randomBytes(32).toString('base64url')
@@ -113,8 +136,8 @@ export async function startTeamDevQuota(options: {
     })
     const parsed: unknown = JSON.parse(await readFile(options.baseWebPatch, 'utf8'))
     if (!Array.isArray(parsed)) throw new Error('development Web patch must contain a list')
-    const providerUrl = pathToFileURL(fileURLToPath(new URL('../../quota-provider/lib/index.js', import.meta.url))).href
-    const uiUrl = pathToFileURL(fileURLToPath(new URL('../../ui/lib/index.js', import.meta.url))).href
+    const providerUrl = import.meta.resolve('@public-harness/quota-provider')
+    const uiUrl = import.meta.resolve('@public-harness/ui')
     for (const userId of options.users) {
       const home = join(options.storageRoot, 'users', userId, 'home')
       await privateDirectory(join(options.storageRoot, 'users'))
@@ -161,7 +184,9 @@ export async function startTeamDevQuota(options: {
       for (const timer of timers) clearInterval(timer)
       await Promise.all(rotations)
       const outcomes = await Promise.allSettled(listeners.map(listener => listener.close()))
-      try { await closeServer(mock) } finally { ledger.close() }
+      try { await closeServer(mock) } finally {
+        try { ledger.close() } finally { await release() }
+      }
       const failures = outcomes.filter((item): item is PromiseRejectedResult => item.status === 'rejected')
       if (failures.length) throw new AggregateError(failures.map(item => item.reason), 'failed to stop quota listeners')
     })() } }
@@ -169,8 +194,9 @@ export async function startTeamDevQuota(options: {
     for (const timer of timers) clearInterval(timer)
     await Promise.all(rotations)
     await Promise.allSettled(listeners.map(listener => listener.close()))
-    if (mockStarted) await closeServer(mock)
-    ledger.close()
+    try { if (mockStarted) await closeServer(mock) } finally {
+      try { ledger.close() } finally { await release() }
+    }
     throw error
   }
 }

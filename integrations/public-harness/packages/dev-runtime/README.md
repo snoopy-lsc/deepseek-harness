@@ -23,7 +23,7 @@ This provider implements `InstanceManager` for macOS and Windows development. It
 <a id="use-this-package"></a>
 ## Use this package
 
-Pass `createDevInstanceManager` an absolute storage root, a fixed list of validated test user IDs, a built `dsh` command and arguments, the Web token overlay path, and positive startup and stop timeouts. The manager rejects every bind except `127.0.0.1` and every mode except `development` before starting a child. Call `close()` to await child shutdown.
+Pass `createDevInstanceManager` an absolute storage root, a fixed list of validated test user IDs, a built `dsh` command and arguments, the Web token overlay path, and positive startup and stop timeouts. IDs must be unique under case folding and cannot be Windows reserved device names. The manager rejects every bind except `127.0.0.1` and every mode except `development` before starting a child. Call `close()` to await child shutdown.
 
 <a id="understand-the-implementation"></a>
 ## Understand the implementation

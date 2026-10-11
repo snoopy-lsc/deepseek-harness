@@ -23,7 +23,7 @@ kind: "package-library"
 <a id="use-this-package"></a>
 ## 使用此包
 
-向 `createQuotaLedger` 传入位于私有目录内的绝对数据库路径，以及正数的个人和全站限额。转发模型请求前调用 `reserve(userId, maximumTokens)`。收到最终用量时调用 `settle(id, actualTokens)`；请求中断或缺少用量时省略 `actualTokens`。`status()` 只提供不含用户记录的全站汇总；`inspectQuotaHealth` 将存储故障转成不可用状态。配置后的 `/internal/health` 入口需要单独的私有凭据。服务关闭时关闭账本。
+向 `createQuotaLedger` 传入位于私有目录内的绝对数据库路径，以及正数的个人和全站限额。转发模型请求前调用 `reserve(userId, maximumTokens)`。收到最终用量时调用 `settle(id, actualTokens)`；请求中断或缺少用量时省略 `actualTokens`。`status()` 只提供不含用户记录的全站汇总；`inspectQuotaHealth` 将存储故障转成不可用状态。配置后的 `/internal/health` 入口需要单独的私有凭据。服务关闭时先关闭 HTTP 监听端口，再关闭账本；关闭监听端口会取消活动响应体，并等待请求清理完成。
 
 <a id="understand-accounting"></a>
 ## 了解计费方式

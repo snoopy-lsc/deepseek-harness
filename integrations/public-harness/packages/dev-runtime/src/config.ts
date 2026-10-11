@@ -22,10 +22,18 @@ export function validateDevRuntimeConfig(config: DevRuntimeConfig): void {
   if (!isAbsolute(config.storageRoot) || !isAbsolute(config.command) || !isAbsolute(config.webPatch)) {
     throw new Error('development runtime paths must be absolute')
   }
-  if (!config.users.length || new Set(config.users).size !== config.users.length) {
-    throw new Error('development runtime requires distinct fixed test users')
-  }
+  validateDevUsers(config.users)
   for (const value of [config.startupTimeoutMs, config.stopTimeoutMs]) {
     if (!Number.isInteger(value) || value <= 0) throw new Error('development runtime timeouts must be positive')
+  }
+}
+
+/** Require fixed identities with distinct portable directory names.
+ * @param users - canonical IDs configured for a local development server.
+ */
+export function validateDevUsers(users: readonly UserId[]): void {
+  if (!users.length || new Set(users.map(user => user.toLowerCase())).size !== users.length
+    || users.some(user => /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(user))) {
+    throw new Error('development runtime requires distinct fixed test users')
   }
 }

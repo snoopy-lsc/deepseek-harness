@@ -41,20 +41,28 @@ async function readBounded(request: IncomingMessage, limit: number): Promise<Buf
   return Buffer.concat(chunks, length)
 }
 
-async function send(response: ServerResponse, result: Response): Promise<void> {
+async function send(response: ServerResponse, result: Response, signal: AbortSignal): Promise<void> {
   response.writeHead(result.status, { 'content-type': result.headers.get('content-type') ?? 'application/octet-stream' })
   if (result.body === null) { response.end(); return }
   const reader = result.body.getReader()
+  let cancellation: Promise<void> | undefined
+  const cancel = (): Promise<void> => cancellation ??= reader.cancel().catch((_error: unknown) => {
+    /* Quota settlement owns cancellation failure. */
+  })
+  const abort = (): void => { void cancel() }
+  signal.addEventListener('abort', abort, { once: true })
+  if (signal.aborted) abort()
   let done = false
   try {
-    while (!response.destroyed) {
+    while (!response.destroyed && !signal.aborted) {
       const next = await reader.read()
       if (next.done) { done = true; break }
-      if (!response.write(next.value)) await once(response, 'drain')
+      if (!response.write(next.value)) await once(response, 'drain', { signal })
     }
     if (!response.destroyed) response.end()
   } finally {
-    if (!done) await reader.cancel().catch(() => { /* Quota settlement owns cancellation failure. */ })
+    signal.removeEventListener('abort', abort)
+    try { if (!done || cancellation !== undefined) await cancel() } finally { reader.releaseLock() }
   }
 }
 
@@ -75,10 +83,11 @@ export async function startQuotaHttpServer(config: QuotaHttpConfig): Promise<{ p
   }
   if (config.health !== undefined && config.health.secret.length < 16) throw new Error('private health secret is required')
   const sockets = new Set<Socket>()
+  const pending = new Set<Promise<void>>()
   const server = createServer((request, response) => {
     const abort = new AbortController()
     response.once('close', () => abort.abort())
-    void (async () => {
+    const work = (async () => {
       const path = new URL(request.url ?? '/', 'http://127.0.0.1').pathname
       const authorization = bearer(request)
       if (path === '/internal/health' && config.health !== undefined) {
@@ -108,7 +117,7 @@ export async function startQuotaHttpServer(config: QuotaHttpConfig): Promise<{ p
             instanceId: config.instanceId, authorization, contentType: headers.get('content-type') ?? undefined, body: bytes })
           const forwarded = new Request(`http://127.0.0.1${path}`, { method: 'POST',
             headers, body: Uint8Array.from(bytes), signal: abort.signal })
-          await send(response, await config.forwardMessages(forwarded, admitted.reservation))
+          await send(response, await config.forwardMessages(forwarded, admitted.reservation), abort.signal)
         } catch (error) {
           if (response.headersSent) { response.destroy(); return }
           response.writeHead(error instanceof QuotaExceededError
@@ -126,12 +135,14 @@ export async function startQuotaHttpServer(config: QuotaHttpConfig): Promise<{ p
           method: request.method, headers,
           ...request.method === 'POST' ? { body: Uint8Array.from(bytes) } : {}, signal: abort.signal,
         })
-        await send(response, await config.files.handle(userId, target))
+        await send(response, await config.files.handle(userId, target), abort.signal)
       } catch {
         if (response.headersSent) response.destroy()
         else response.writeHead(401).end()
       }
     })().catch(() => { if (!response.destroyed) response.destroy() })
+    pending.add(work)
+    void work.then(() => { pending.delete(work) })
   })
   server.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)) })
   await new Promise<void>((resolve, reject) => {
@@ -139,8 +150,10 @@ export async function startQuotaHttpServer(config: QuotaHttpConfig): Promise<{ p
     server.listen(0, config.host, () => { server.off('error', reject); resolve() })
   })
   const port = (server.address() as AddressInfo).port
-  return { port, async close() {
+  let closing: Promise<void> | undefined
+  return { port, close() { return closing ??= (async () => {
     for (const socket of sockets) socket.destroy()
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
-  } }
+    await Promise.all(pending)
+  })() } }
 }

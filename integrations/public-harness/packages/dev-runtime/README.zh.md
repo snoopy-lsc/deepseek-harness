@@ -23,7 +23,7 @@ kind: "package-library"
 <a id="use-this-package"></a>
 ## 使用此包
 
-向 `createDevInstanceManager` 传入绝对存储根目录、已校验的固定测试用户 ID、已构建的 `dsh` 命令及参数、Web token overlay 路径，以及正数的启动和停止超时。管理器在启动子进程前拒绝除 `127.0.0.1` 外的绑定地址，也拒绝除 `development` 外的模式。调用 `close()` 等待子进程关闭。
+向 `createDevInstanceManager` 传入绝对存储根目录、已校验的固定测试用户 ID、已构建的 `dsh` 命令及参数、Web token overlay 路径，以及正数的启动和停止超时。ID 忽略大小写后必须唯一，且不能使用 Windows 保留设备名。管理器在启动子进程前拒绝除 `127.0.0.1` 外的绑定地址，也拒绝除 `development` 外的模式。调用 `close()` 等待子进程关闭。
 
 <a id="understand-the-implementation"></a>
 ## 了解实现

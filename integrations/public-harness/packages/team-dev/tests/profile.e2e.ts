@@ -14,6 +14,7 @@ describe('team-dev dsh profile', () => {
       users: ['alice', 'bob'], startupTimeoutMs: 90_000, stopTimeoutMs: 15_000,
       routeWaitMs: 90_000, retryAfterSeconds: 2, launchExchangeMs: 10_000,
       socketLifetimeMs: 60_000, cookieLifetimeMs: 60_000,
+      storageLock: { staleMs: 120_000, updateMs: 10_000 },
       quota: { modelId: 'team-dev-mock', contextWindow: 4096, maxTokens: 1024,
         personalDailyTokens: 100_000, siteDailyTokens: 200_000,
         personalConcurrency: 2, siteConcurrency: 8, busyTimeoutMs: 5000,

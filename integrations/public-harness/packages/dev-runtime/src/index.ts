@@ -5,6 +5,7 @@ import { validateDevRuntimeConfig } from './config.ts'
 import { startWebProcess, type RunningWeb } from './processes.ts'
 
 export type { DevRuntimeConfig } from './config.ts'
+export { validateDevUsers } from './config.ts'
 
 export interface DevInstanceManager extends InstanceManager {
   readonly storageRoot: string

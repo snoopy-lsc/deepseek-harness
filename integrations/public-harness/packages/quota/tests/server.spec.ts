@@ -14,6 +14,31 @@ import type { QuotaLedger, ReservationId } from '../src/ledger.ts'
 const alice = parseUserId('alice')
 
 describe('loopback quota HTTP ingress', () => {
+  it('cancels a backpressured model body before shutdown returns', async () => {
+    const issuer = createTokenIssuer({ secret: randomBytes(32), issuer: 'test-dev', lifetimeMs: 60_000 })
+    let cancellations = 0
+    const server = await startQuotaHttpServer({ host: '127.0.0.1', instanceId: 'instance-a', issuer,
+      admission: { async admit() { return { userId: alice, reservation: {
+        id: 'reservation' as ReservationId, userId: alice, day: '2026-10-11', maximumTokens: 100,
+      } } } },
+      forwardMessages: async () => new Response(new ReadableStream<Uint8Array>({
+        start(controller) { controller.enqueue(new Uint8Array(16 * 1024 * 1024)) },
+        cancel() { cancellations += 1 },
+      })), files: { handle: vi.fn(), owns: vi.fn() }, maxBodyBytes: 100, maxFileBodyBytes: 100,
+    })
+    try {
+      const abort = new AbortController()
+      const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST', headers: { authorization: `Bearer ${issuer.issue(alice, 'instance-a').token}` },
+        body: '{}', signal: abort.signal,
+      })
+      await response.body!.getReader().read()
+      abort.abort()
+      await expect.poll(() => cancellations, { timeout: 1000 }).toBe(1)
+      await server.close()
+      expect(cancellations).toBe(1)
+    } finally { await server.close() }
+  })
   it('binds each credential to the receiving instance before forwarding', async () => {
     const issuer = createTokenIssuer({ secret: randomBytes(32), issuer: 'test-dev', lifetimeMs: 60_000 })
     const ledger: QuotaLedger = { async reserve(userId, maximumTokens) {

@@ -23,7 +23,7 @@ This package stores model token reservations in SQLite and checks signed, instan
 <a id="use-this-package"></a>
 ## Use this package
 
-Pass `createQuotaLedger` an absolute database path inside a private directory and positive personal and site limits. Call `reserve(userId, maximumTokens)` before forwarding a model request. Call `settle(id, actualTokens)` when final usage arrives, or omit `actualTokens` after interruption or missing usage. `status()` provides site totals without user records; `inspectQuotaHealth` converts storage failure into an unavailable result. A configured `/internal/health` endpoint requires a separate private credential. Close the ledger during service shutdown.
+Pass `createQuotaLedger` an absolute database path inside a private directory and positive personal and site limits. Call `reserve(userId, maximumTokens)` before forwarding a model request. Call `settle(id, actualTokens)` when final usage arrives, or omit `actualTokens` after interruption or missing usage. `status()` provides site totals without user records; `inspectQuotaHealth` converts storage failure into an unavailable result. A configured `/internal/health` endpoint requires a separate private credential. Close the HTTP listener before the ledger during service shutdown; listener shutdown cancels active bodies and joins request cleanup.
 
 <a id="understand-accounting"></a>
 ## Understand accounting
