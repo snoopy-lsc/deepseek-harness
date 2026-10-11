@@ -2,7 +2,7 @@ import { chmod, mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { parseUserId } from '../../contracts/src/index.ts'
+import { parseUserId } from '@public-harness/contracts'
 import { ProvisionerClient, startProvisionerServer } from '../src/protocol.ts'
 
 describe.skipIf(process.platform === 'win32')('fixed provisioner protocol', () => {

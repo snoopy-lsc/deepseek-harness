@@ -1,11 +1,11 @@
 /** Fixed, bounded Unix-socket protocol for the Linux provisioner. */
-import { chmod, lstat, stat, unlink } from 'node:fs/promises'
+import { chmod, chown, lstat, stat, unlink } from 'node:fs/promises'
 import { createConnection, createServer, type Server, type Socket } from 'node:net'
 import { dirname } from 'node:path'
 import type { InstanceEndpoint, UserId } from '@public-harness/contracts'
-import { parseInstanceEndpoint, parseUserId } from '@public-harness/contracts'
+import { fromWireError, parseInstanceEndpoint, parseUserId, toWireError } from '@public-harness/contracts'
 
-const MAX_MESSAGE_BYTES = 65_536
+export const MAX_MESSAGE_BYTES = 65_536
 const REQUEST_TIMEOUT_MS = 10_000
 const OPERATIONS = ['ensure', 'launch-grant', 'stop', 'status'] as const
 
@@ -25,7 +25,7 @@ function parseRequest(value: unknown): ProvisionerRequest {
   return { op: record.op as ProvisionerRequest['op'], userId: parseUserId(record.userId) }
 }
 
-function readLine(socket: Socket): Promise<unknown> {
+export function readLine(socket: Socket): Promise<unknown> {
   return new Promise((resolve, reject) => {
     let pending = Buffer.alloc(0)
     const cleanup = (): void => {
@@ -56,32 +56,34 @@ function readLine(socket: Socket): Promise<unknown> {
   })
 }
 
-function sendLine(socket: Socket, value: unknown): void {
+export function sendLine(socket: Socket, value: unknown): void {
   const data = Buffer.from(`${JSON.stringify(value)}\n`)
   if (data.byteLength > MAX_MESSAGE_BYTES) throw new Error('response too large')
   socket.end(data)
 }
 
-/** Start one private control socket. Its parent directory must be owner-only. */
-export async function startProvisionerServer(path: string, handler: ProvisionerHandler): Promise<{ close(): Promise<void> }> {
+/** Who besides the owner may connect: one dedicated group, never other users. */
+export interface SocketAccess { readonly gid: number }
+
+/** Start one private line-framed control socket. Its parent directory must be owner-only (or owner plus one group). */
+export async function startLineServer(path: string, handle: (raw: unknown) => Promise<unknown>,
+  access?: SocketAccess): Promise<{ close(): Promise<void> }> {
   if (process.platform === 'win32') throw new Error('Unix provisioner sockets require Linux or macOS')
   const parent = await stat(dirname(path))
-  if (!parent.isDirectory() || (parent.mode & 0o077) !== 0 || parent.uid !== process.getuid?.()) {
+  const forbidden = access === undefined ? 0o077 : 0o027
+  if (!parent.isDirectory() || (parent.mode & forbidden) !== 0 || parent.uid !== process.getuid?.()) {
     throw new Error('control socket requires an owner-only private directory')
   }
+  if (access !== undefined && (!Number.isSafeInteger(access.gid) || access.gid < 0)) throw new Error('invalid socket group')
   const sockets = new Set<Socket>()
   const server: Server = createServer(socket => {
     sockets.add(socket)
     socket.once('close', () => sockets.delete(socket))
     void (async () => {
       try {
-        const request = parseRequest(await readLine(socket))
-        const result = await handler(request)
-        sendLine(socket, { ok: true, result })
+        sendLine(socket, { ok: true, result: await handle(await readLine(socket)) })
       } catch (error) {
-        const message = error instanceof Error && /^(invalid request|invalid user ID|message too large|response too large)$/.test(error.message)
-          ? error.message : 'request failed'
-        try { sendLine(socket, { ok: false, error: message }) }
+        try { sendLine(socket, { ok: false, error: toWireError(error) }) }
         catch { socket.destroy() }
       }
     })()
@@ -91,7 +93,8 @@ export async function startProvisionerServer(path: string, handler: ProvisionerH
       server.once('error', reject)
       server.listen(path, () => { server.off('error', reject); resolve() })
     })
-    await chmod(path, 0o600)
+    if (access !== undefined) { await chown(path, process.getuid!(), access.gid); await chmod(path, 0o660) }
+    else await chmod(path, 0o600)
   } catch (error) {
     server.close()
     throw error
@@ -104,6 +107,12 @@ export async function startProvisionerServer(path: string, handler: ProvisionerH
       if (entry?.isSocket()) await unlink(path)
     },
   }
+}
+
+/** Start the router-facing control socket; only the four fixed operations are accepted. */
+export async function startProvisionerServer(path: string, handler: ProvisionerHandler,
+  access?: SocketAccess): Promise<{ close(): Promise<void> }> {
+  return startLineServer(path, async raw => handler(parseRequest(raw)), access)
 }
 
 /** Client for the four provisioner operations. */
@@ -124,7 +133,7 @@ export class ProvisionerClient {
       const response = await readLine(socket)
       if (typeof response !== 'object' || response === null || Array.isArray(response)) throw new Error('invalid response')
       const record = response as Record<string, unknown>
-      if (record.ok === false && typeof record.error === 'string') throw new Error(record.error)
+      if (record.ok === false && typeof record.error === 'string') throw fromWireError(record.error)
       if (record.ok !== true || !Object.hasOwn(record, 'result')) throw new Error('invalid response')
       return record.result
     } finally {
