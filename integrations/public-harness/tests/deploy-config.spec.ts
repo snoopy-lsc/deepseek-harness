@@ -165,6 +165,34 @@ describe('host artifacts', () => {
     expect(nft).toMatch(/oif "lo" drop/)
   })
 
+  /** Active rule lines of the output chain, in evaluation order. */
+  const rules = async (): Promise<string[]> => (await text('deploy/production/nftables/dsh-public.nft')).split('\n')
+    .map(line => line.trim()).filter(line => line !== '' && !line.startsWith('#') && /^(meta|ct|oif|ip6?|tcp|udp|counter)\b/.test(line))
+
+  it('accepts the resolvers before it drops private ranges, so a private resolver keeps working', async () => {
+    const list = await rules()
+    const at = (pattern: RegExp): number => list.findIndex(line => pattern.test(line))
+    const resolverUdp = at(/^ip daddr \$RESOLVERS udp dport 53 accept$/)
+    const resolverTcp = at(/^ip daddr \$RESOLVERS tcp dport 53 accept$/)
+    const privateDrop = at(/^ip daddr \{[^}]*10\.0\.0\.0\/8[^}]*\} drop$/)
+    const webAccept = at(/^tcp dport \{ 80, 443 \} accept$/)
+    const finalDrop = at(/^counter drop$/)
+    expect(resolverUdp).toBeGreaterThanOrEqual(0)
+    expect(resolverTcp).toBeGreaterThanOrEqual(0)
+    expect(privateDrop).toBeGreaterThan(resolverUdp)
+    expect(privateDrop).toBeGreaterThan(resolverTcp)
+    // Web egress is accepted only after the private ranges were dropped, and the table ends in a drop.
+    expect(webAccept).toBeGreaterThan(privateDrop)
+    expect(finalDrop).toBe(list.length - 1)
+  })
+
+  const nft = process.env.NFT_BIN
+  it.skipIf(nft === undefined)('is accepted by the real nft parser', () => {
+    // `nft -c` needs CAP_NET_ADMIN, so it runs inside an unprivileged user and network namespace.
+    const checked = spawnSync('unshare', ['-Urn', nft!, '-c', '-f', join(root, 'deploy/production/nftables/dsh-public.nft')], { encoding: 'utf8' })
+    expect(checked.status, checked.stderr).toBe(0)
+  })
+
   it('ships syntactically valid operator scripts that fail closed', async () => {
     for (const script of await files('deploy/production/scripts')) {
       const body = await text(script)
