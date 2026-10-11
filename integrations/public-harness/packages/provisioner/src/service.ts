@@ -23,6 +23,8 @@ export interface ProvisionerServiceOptions {
   readonly users?: UserProvisioner
   readonly tracker?: ActivityTracker
   readonly clock?: () => number
+  /** How long a successful container check is trusted (default 5 s). */
+  readonly livenessTtlMs?: number
 }
 
 /** The running service. */
@@ -43,11 +45,11 @@ export function createProvisionerService(options: ProvisionerServiceOptions): Pr
   const runtime = options.runtime ?? createRuntime({ config, runner, quota: options.quota, probe: options.probe,
     publicHost: options.publicHost, clock: options.clock })
   const endpoints = new Map<UserId, InstanceEndpoint>()
-  const lifecycle = createLifecycle({ users, runtime, tracker, config, directory, endpoints, clock: options.clock })
+  const lifecycle = createLifecycle({ users, runtime, tracker, config, directory, endpoints, clock: options.clock, livenessTtlMs: options.livenessTtlMs })
 
   async function ensure(userId: UserId): Promise<InstanceEndpoint> {
     const cached = endpoints.get(userId)
-    if (cached !== undefined) { tracker.touch(userId); return cached }
+    if (cached !== undefined && !await lifecycle.reapIfDead(userId)) { tracker.touch(userId); return cached }
     await users.ensureUser(userId)
     return users.withUser(userId, async () => {
       const known = endpoints.get(userId)
@@ -83,10 +85,14 @@ export function createProvisionerService(options: ProvisionerServiceOptions): Pr
           const state = await users.get(userId)
           endpoints.delete(userId); tracker.forget(userId)
           if (state !== undefined && state.uid !== undefined) await runtime.stop(users.recordOf(state))
-          await users.stopUser(userId)
+          // Already inside the per-user lock: `stopUser` would wait on that same lock forever.
+          await users.markStopped(userId)
         })
         return null
-      case 'status': return (await users.get(userId))?.lifecycle ?? 'absent'
+      case 'status':
+        // Never report `running` for a container that died out of band (OOM, kill): verify, clean up, then answer.
+        await lifecycle.reapIfDead(userId)
+        return (await users.get(userId))?.lifecycle ?? 'absent'
     }
   }
   return { handler, lifecycle, tracker }

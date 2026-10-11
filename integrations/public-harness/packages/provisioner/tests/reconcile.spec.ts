@@ -18,7 +18,9 @@ class FakeRuntime implements Runtime {
   }
   async stop(record: { account: string }): Promise<void> { this.stopped.push(record.account) }
   async launchGrant(): Promise<string> { return 'grant' }
-  async isRunning(): Promise<boolean> { return true }
+  alive = true
+  async isRunning(): Promise<boolean> { return this.alive }
+  async state(): Promise<'running' | 'stopped' | 'unknown'> { return this.alive ? 'running' : 'stopped' }
 }
 
 async function service(overrides = {}) {
@@ -155,5 +157,70 @@ describe.skipIf(process.platform === 'win32')('suspend, restart, and recovery', 
     const report = await svc.lifecycle.reconcile()
     expect(report.invalid).toEqual([name])
     await mkdir(h.config.paths.socketDir, { recursive: true })
+  })
+})
+
+const within = <T,>(work: Promise<T>, ms = 2000): Promise<T> =>
+  Promise.race([work, new Promise<never>((_, reject) => setTimeout(() => reject(new Error('hung')), ms))])
+
+describe.skipIf(process.platform === 'win32')('stop and external kill', () => {
+  it('the stop operation completes (it used to wait on its own per-user lock), stops the container, and marks the user stopped', async () => {
+    const { runtime, call } = await service()
+    await call('ensure')
+    await within(call('stop'))
+    expect(runtime.stopped).toHaveLength(1)
+    expect(await call('status')).toBe('stopped')
+    await within(call('stop'))
+    await call('ensure')
+    expect(runtime.started).toHaveLength(2)
+  })
+
+  it('never reports running for a container that was killed out of band, and wakes it on the next request', async () => {
+    const { h, runtime, call } = await service()
+    await call('ensure')
+    expect(await call('status')).toBe('running')
+    runtime.alive = false
+    // A successful check is trusted for the TTL (5 s) so routing does not run `podman inspect` per request.
+    expect(await call('status')).toBe('running')
+    h.clock.now += 6000
+    expect(await call('status')).toBe('stopped')
+    expect(runtime.stopped).toHaveLength(1)
+    await expect(call('launch-grant')).rejects.toThrow(/not running/)
+    runtime.alive = true
+    await call('ensure')
+    expect(runtime.started).toHaveLength(2)
+    expect(await call('status')).toBe('running')
+  })
+
+  it('does not hand out a cached endpoint whose container died: the request restarts the instance', async () => {
+    const { h, runtime, call } = await service()
+    await call('ensure')
+    runtime.alive = false
+    h.clock.now += 6000
+    await call('ensure')
+    expect(runtime.stopped).toHaveLength(1)
+    expect(runtime.started).toHaveLength(2)
+  })
+
+  it('reconcile releases a routable instance whose container is gone, but leaves unknown answers alone', async () => {
+    const { runtime, call, svc } = await service()
+    await call('ensure')
+    runtime.state = async () => 'unknown'
+    expect(await svc.lifecycle.reconcile()).toMatchObject({ restored: 1, stopped: 0 })
+    runtime.state = async () => 'stopped'
+    expect(await svc.lifecycle.reconcile()).toMatchObject({ restored: 0, stopped: 1, failures: 0 })
+    expect(await call('status')).toBe('stopped')
+    runtime.state = async () => 'running'
+    await call('ensure')
+    expect(runtime.started).toHaveLength(2)
+  })
+
+  it('treats an inspect that cannot answer as alive', async () => {
+    const { h, runtime, call } = await service()
+    await call('ensure')
+    runtime.state = async () => { throw new Error('podman timed out') }
+    h.clock.now += 6000
+    expect(await call('status')).toBe('running')
+    expect(runtime.stopped).toHaveLength(0)
   })
 })

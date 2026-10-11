@@ -4,9 +4,10 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { deriveNames } from '../src/accounts.ts'
 import { LimitsError, enforceLimits, networkArgument, validateLimits } from '../src/limits.ts'
-import { CONTAINER, RuntimeStartError, SIDECAR_PORT, assertSafeRunArgv, buildRunArgv, createRuntime, type QuotaBridge } from '../src/runtime.ts'
+import { CONTAINER, RuntimeStartError, RuntimeStopError, SIDECAR_PORT, assertSafeRunArgv, buildRunArgv, createRuntime, type QuotaBridge } from '../src/runtime.ts'
 import { startSidecar } from '../src/sidecar.ts'
 import { readReady, waitForReady } from '../src/token-channel.ts'
+import type { CommandRunner } from '../src/system.ts'
 import type { UserRecord } from '../src/users.ts'
 import { FakeRunner, alice, gid, makeConfig, uid } from './helpers.ts'
 import { layoutFor } from '../src/storage.ts'
@@ -255,5 +256,66 @@ describe('in-container sidecar', () => {
     })
     expect(received).toBe('hello')
     sidecar.close(); target.close()
+  })
+})
+
+describe('stopping and inspecting containers', () => {
+  const rmCalls = (runner: { calls: Array<{ command: string; args: string[] }> }): string[][] => runner.calls.filter(call => call.args.includes('rm') || call.args.includes('kill')).map(call => call.args.slice(call.args.indexOf('/usr/bin/podman') + 1))
+
+  it('reads the real container state: running, stopped, gone, or unknown', async () => {
+    const { runner, runtime, record } = await setup()
+    const answer = (code: number, stdout = '', stderr = ''): void => { runner.handler = () => ({ code, stdout, stderr }) }
+    answer(0, 'true\n'); expect(await runtime.state(record)).toBe('running'); expect(await runtime.isRunning(record)).toBe(true)
+    answer(0, 'false\n'); expect(await runtime.state(record)).toBe('stopped'); expect(await runtime.isRunning(record)).toBe(false)
+    answer(125, '', 'Error: no such container abc'); expect(await runtime.state(record)).toBe('stopped')
+    answer(125, '', 'Error: something else'); expect(await runtime.state(record)).toBe('unknown')
+    answer(127); expect(await runtime.state(record)).toBe('unknown')
+  })
+
+  it('escalates to kill and a forced remove when the polite stop fails, then succeeds', async () => {
+    const { runner, runtime, record } = await setup()
+    let polite = true
+    runner.handler = (_command, args) => args.includes('rm') && polite && args.includes('--time') ? ((polite = false), { code: 127, stdout: '', stderr: '' }) : undefined
+    await runtime.stop(record)
+    expect(rmCalls(runner)).toEqual([
+      ['rm', '--force', '--ignore', '--time', '5', record.container],
+      ['kill', '--signal', 'KILL', record.container],
+      ['rm', '--force', '--ignore', record.container]])
+  })
+
+  it('does not wait forever on a runner that never answers: the deadline escalates to kill', async () => {
+    const config = await makeConfig({ stopTimeoutMs: 20 })
+    const base = await setup()
+    const calls: Array<{ command: string; args: string[] }> = []
+    let hung = 0
+    const runner: CommandRunner = { run: async (command, args, options) => {
+      calls.push({ command, args: [...args] })
+      // The first, polite remove never returns (a stuck container engine); everything after it answers normally.
+      if (args.includes('--time') && hung++ === 0) { expect(options?.timeoutMs).toBe(20 + 15); return new Promise(() => {}) }
+      return { code: 0, stdout: '', stderr: '' }
+    } }
+    const runtime = createRuntime({ config, runner, quota: { healthy: async () => true, open: async () => ({ port: 29100 }),
+      issue: async () => ({ token: 'a.b', expiresAt: 1 }), close: async () => {} }, probe: controllers, publicHost: 'h.test',
+      stopGraceMs: 15, deadlineSlackMs: 10 })
+    const started = Date.now()
+    await runtime.stop(base.record)
+    expect(Date.now() - started).toBeLessThan(2000)
+    expect(rmCalls({ calls }).map(args => args[0])).toEqual(['rm', 'kill', 'rm'])
+  })
+
+  it('fails loudly, but still clears the launch token, when the container cannot be removed', async () => {
+    const { runner, runtime, record, layout } = await setup()
+    await runtime.start(record)
+    runner.handler = (_command, args) => args.includes('rm') || args.includes('kill') ? { code: 1, stdout: '', stderr: '' }
+      : args.includes('inspect') ? { code: 0, stdout: 'true\n', stderr: '' } : undefined
+    await expect(runtime.stop(record)).rejects.toBeInstanceOf(RuntimeStopError)
+    await expect(readReady(layout.ctl, uid)).resolves.toBeUndefined()
+  })
+
+  it('accepts a failed remove when the container turns out to be gone', async () => {
+    const { runner, runtime, record } = await setup()
+    runner.handler = (_command, args) => args.includes('rm') ? { code: 1, stdout: '', stderr: '' }
+      : args.includes('inspect') ? { code: 125, stdout: '', stderr: 'no such container' } : undefined
+    await expect(runtime.stop(record)).resolves.toBeUndefined()
   })
 })

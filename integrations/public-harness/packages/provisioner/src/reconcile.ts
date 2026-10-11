@@ -24,6 +24,8 @@ export interface LifecycleContext {
   readonly directory: Pick<AccountDirectory, 'remove'>
   readonly endpoints: Map<UserId, InstanceEndpoint>
   readonly clock?: () => number
+  /** How long a successful container check is trusted before the next `podman inspect` (default 5 s). */
+  readonly livenessTtlMs?: number
 }
 
 /** Outcome of one reconcile pass; contains only counts and record file names. */
@@ -39,6 +41,12 @@ export interface Lifecycle {
   confirmDeletion(userId: UserId): Promise<void>
   deleteUser(userId: UserId): Promise<void>
   idleStop(): Promise<UserId[]>
+  /**
+   * If the user is routable but its container is gone or stopped (killed out of band, for example by the gVisor memory
+   * or pids limit), release its socket, forwarder, and quota listener and mark it stopped. Returns true when it did.
+   * Successful checks are cached for `livenessTtlMs`; an inspect that cannot tell leaves everything unchanged.
+   */
+  reapIfDead(userId: UserId): Promise<boolean>
 }
 
 /** Build lifecycle operations over the shared context. */
@@ -74,7 +82,35 @@ export function createLifecycle(ctx: LifecycleContext): Lifecycle {
     await users.store.delete(state.userId)
   }
 
+  const ttl = ctx.livenessTtlMs ?? 5000
+  const lastChecked = new Map<UserId, number>()
+  const containerStopped = async (state: UserState): Promise<boolean> =>
+    state.uid !== undefined && state.gid !== undefined
+    && await runtime.state(users.recordOf(state)).catch(() => 'unknown' as const) === 'stopped'
+
+  /** Caller holds the user's lock. */
+  async function releaseDead(state: UserState): Promise<boolean> {
+    if (!ctx.endpoints.has(state.userId) || !await containerStopped(state)) return false
+    await halt(state)
+    await users.markStopped(state.userId)
+    return true
+  }
+
   const lifecycle: Lifecycle = {
+    async reapIfDead(userId) {
+      if (!ctx.endpoints.has(userId)) return false
+      const at = now()
+      const previous = lastChecked.get(userId)
+      if (previous !== undefined && at - previous < ttl) return false
+      lastChecked.set(userId, at)
+      const probe = await users.get(userId)
+      if (probe === undefined || !await containerStopped(probe)) return false
+      // Decide again under the lock: the instance may have been stopped and restarted since the first look.
+      return users.withUser(userId, async () => {
+        const state = await users.store.get(userId)
+        return state !== undefined && await releaseDead(state)
+      })
+    },
     async suspend(userId) {
       await mutate(userId, async state => {
         await halt(state)
@@ -137,7 +173,11 @@ export function createLifecycle(ctx: LifecycleContext): Lifecycle {
             if (state.lifecycle === 'suspended' || state.lifecycle === 'pending-deletion') { await halt(state); report.stopped += 1; return }
             if (state.lifecycle === 'starting' || state.lifecycle === 'running') {
               // A provisioner restart or host reboot lost the routing socket and rotation timer: restart cleanly on demand.
-              if (ctx.endpoints.has(state.userId)) { ctx.tracker.touch(state.userId); report.restored += 1; return }
+              if (ctx.endpoints.has(state.userId)) {
+                // Routable in memory is not enough: the container may have been killed since the last pass.
+                if (await releaseDead(state)) { report.stopped += 1; return }
+                ctx.tracker.touch(state.userId); report.restored += 1; return
+              }
               await halt(state)
               await users.markStopped(state.userId)
               report.stopped += 1

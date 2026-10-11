@@ -36,12 +36,23 @@ export class RuntimeStartError extends Error {
   }
 }
 
+/** The container could not be removed even after SIGKILL; the instance stays recorded until reconcile retries. */
+export class RuntimeStopError extends Error {
+  override readonly name = 'RuntimeStopError'
+  constructor() { super('runtime stop failed: container is stuck') }
+}
+
+/** What the container engine says about one instance. `unknown` means the question itself failed. */
+export type ContainerState = 'running' | 'stopped' | 'unknown'
+
 /** Container lifecycle operations. */
 export interface Runtime {
   start(record: UserRecord): Promise<InstanceEndpoint>
   stop(record: UserRecord): Promise<void>
   launchGrant(record: UserRecord): Promise<string>
   isRunning(record: UserRecord): Promise<boolean>
+  /** The real container state, read from the engine rather than from the provisioner's own records. */
+  state(record: UserRecord): Promise<ContainerState>
 }
 
 /** Collaborators; every one is injectable so no privileged command runs in tests. */
@@ -60,6 +71,10 @@ export interface RuntimeDeps {
   /** Credential rotation cadence; must be shorter than the quota credential lifetime. */
   readonly credentialRotateMs?: number
   readonly publicHost: string
+  /** Time allowed beyond `stopTimeoutMs` for the engine to answer a stop before it is declared hung (default 10 s). */
+  readonly stopGraceMs?: number
+  /** Margin after a command's own timeout before the provisioner stops waiting for the runner (default 1 s). */
+  readonly deadlineSlackMs?: number
 }
 
 /** The exact argv for `podman` (after the executable) that starts one instance. */
@@ -171,10 +186,28 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     throw new RuntimeStartError('no-port')
   }
 
-  const asAccount = (record: UserRecord, args: readonly string[]): Promise<{ code: number; stdout: string; stderr: string }> =>
-    runner.run(config.tools.runuser, ['-u', record.account, '--', config.tools.env, '-i',
+  /**
+   * Run podman as the account. The deadline is enforced twice: by the runner (kills the process) and here, so a runner
+   * that never answers still cannot block a lifecycle operation; a missed deadline reports exit status 124.
+   */
+  const asAccount = (record: UserRecord, args: readonly string[], timeoutMs = 120_000): Promise<{ code: number; stdout: string; stderr: string }> => {
+    let timer: NodeJS.Timeout | undefined
+    const deadline = new Promise<{ code: number; stdout: string; stderr: string }>(resolve => {
+      timer = setTimeout(() => resolve({ code: 124, stdout: '', stderr: '' }), timeoutMs + (deps.deadlineSlackMs ?? 1000))
+      timer.unref()
+    })
+    const result = runner.run(config.tools.runuser, ['-u', record.account, '--', config.tools.env, '-i',
       `XDG_RUNTIME_DIR=/run/user/${record.uid}`, `HOME=${record.layout.podman}`, 'PATH=/usr/bin:/bin',
-      config.tools.podman, ...args], { timeoutMs: 120_000 })
+      config.tools.podman, ...args], { timeoutMs })
+    return Promise.race([result, deadline]).finally(() => clearTimeout(timer))
+  }
+
+  async function containerState(record: UserRecord): Promise<ContainerState> {
+    const result = await asAccount(record, ['container', 'inspect', '--format', '{{.State.Running}}', record.container], 30_000)
+    if (result.code === 0) return result.stdout.trim() === 'true' ? 'running' : 'stopped'
+    // podman exits 125 with "no such container" when it is gone; any other failure says nothing about the container.
+    return result.code === 125 && /no such/i.test(result.stderr) ? 'stopped' : 'unknown'
+  }
 
   async function writePrivate(record: UserRecord, path: string, contents: string): Promise<void> {
     const temporary = `${path}.${randomBytes(6).toString('hex')}.tmp`
@@ -193,8 +226,17 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     const entry = live.get(record.userId)
     if (entry !== undefined) { clearInterval(entry.timer); live.delete(record.userId); await entry.forwarder.close().catch(() => {}) }
     await deps.quota.close(record.userId).catch(() => {})
-    await asAccount(record, ['rm', '--force', '--ignore', '--time', String(Math.ceil(config.stopTimeoutMs / 1000)), record.container])
-    await clearReady(record.layout.ctl).catch(() => {})
+    try { await removeContainer(record) } finally { await clearReady(record.layout.ctl).catch(() => {}) }
+  }
+
+  /** Polite stop within the configured time, then SIGKILL, then a forced remove; fails loudly if it is still there. */
+  async function removeContainer(record: UserRecord): Promise<void> {
+    const polite = await asAccount(record, ['rm', '--force', '--ignore', '--time', String(Math.ceil(config.stopTimeoutMs / 1000)), record.container],
+      config.stopTimeoutMs + (deps.stopGraceMs ?? 10_000))
+    if (polite.code === 0) return
+    await asAccount(record, ['kill', '--signal', 'KILL', record.container], 15_000)
+    const forced = await asAccount(record, ['rm', '--force', '--ignore', record.container], 30_000)
+    if (forced.code !== 0 && await containerState(record) !== 'stopped') throw new RuntimeStopError()
   }
 
   return {
@@ -246,9 +288,7 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
       if (ready === undefined) throw new Error('launch grant unavailable')
       return ready.token
     },
-    async isRunning(record) {
-      const result = await asAccount(record, ['container', 'inspect', '--format', '{{.State.Running}}', record.container])
-      return result.code === 0 && result.stdout.trim() === 'true'
-    },
+    isRunning: async record => await containerState(record) === 'running',
+    state: containerState,
   }
 }
