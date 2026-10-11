@@ -51,6 +51,43 @@ importers:
         specifier: workspace:*
         version: link:../contracts
 
+  packages/production:
+    dependencies:
+      '@deepseek-ai/schemastery':
+        specifier: 3.18.5-alpha.1
+        version: 3.18.5-alpha.1
+      '@public-harness/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@public-harness/provisioner':
+        specifier: workspace:*
+        version: link:../provisioner
+      '@public-harness/provisioner-client':
+        specifier: workspace:*
+        version: link:../provisioner-client
+      '@public-harness/quota':
+        specifier: workspace:*
+        version: link:../quota
+      '@public-harness/router':
+        specifier: workspace:*
+        version: link:../router
+      '@public-harness/ui':
+        specifier: workspace:*
+        version: link:../ui
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5-alpha.1
+        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
+
+  packages/provisioner-client:
+    dependencies:
+      '@public-harness/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@public-harness/provisioner':
+        specifier: workspace:*
+        version: link:../provisioner
+
   packages/quota:
     dependencies:
       '@public-harness/contracts':
