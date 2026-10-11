@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "release": "2026.10.0-rc1",
-  "harness": { "package": "@deepseek-ai/dsh", "version": "0.2.1-alpha.1" },
-  "image": "localhost/dsh-instance:2026.10.0-rc1",
+  "release": "2026.10.0-rc2",
+  "harness": { "package": "@deepseek-ai/dsh", "version": "0.2.1-alpha.2" },
+  "image": "localhost/dsh-instance:2026.10.0-rc2",
   "pluginApi": {
     "@deepseek-ai/cordis": "4.0.5-alpha.1",
     "@deepseek-ai/schemastery": "3.18.5-alpha.1"

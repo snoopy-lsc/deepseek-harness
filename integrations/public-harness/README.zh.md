@@ -25,6 +25,8 @@ kind: "package-library"
 
 先构建仓库中的 Harness CLI 和 Web 前端，再在此目录运行 `pnpm install` 和 `pnpm dev`。打开输出的本机地址，选择 Alice 或 Bob，即可进入各自独立的 Harness Web 实例。在模型选择器中选择 `Platform` → `Local mock model`，即可使用持久化额度服务。[界面插件](packages/ui/README.zh.md)为每位用户安装相同的品牌。首次启动前可编辑 `deploy/team-dev.config.json` 修改固定测试用户和限额；用 `PUBLIC_HARNESS_DEV_HOME` 指定私有数据目录。生成的配置默认保存在 `.local/`。运行 `pnpm test` 和 `pnpm typecheck` 检查集成。此开发配置没有公开注册。
 
+插件开发依赖与[生产发布清单](deploy/release-manifest.json)面向 Harness `0.2.1-alpha.2`。清单使用独立的候选发布编号，因此开放公开注册需要为该候选版本记录的 Linux 验证结果。
+
 <a id="understand-the-implementation"></a>
 ## 了解实现
 

@@ -23,7 +23,7 @@
     "maxActiveInstances": 40,
     "idleStopMs": 1800000,
     "deletionRecoveryMs": 2592000000,
-    "image": "localhost/dsh-instance:2026.10.0-rc1",
+    "image": "localhost/dsh-instance:2026.10.0-rc2",
     "imageArchive": "/opt/dsh-public/image/dsh-instance.tar",
     "limits": { "cpus": 2, "memoryBytes": 4294967296, "pids": 2048, "openFiles": 8192, "diskBytes": 10737418240, "network": "pasta" },
     "readyTimeoutMs": 120000,
