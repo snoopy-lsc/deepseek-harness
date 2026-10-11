@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-10-11-public-harness-native-deployment.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/superpowers/plans/2026-10-11-public-harness-native-deployment.md
+/native-harness-deployment-implementation-plan:
+  en: d03f00c5b60a897b
+  zh: 64276f01a8e46f08
+/native-harness-deployment-implementation-plan/global-constraints:
+  en: bfa204f79a0aee5d
+  zh: e8d47c6425d073fd
+/native-harness-deployment-implementation-plan/review-focus:
+  en: af9caf21133c3479
+  zh: 66d4b720aff1b384
+/native-harness-deployment-implementation-plan/review-focus/task-1-native-profiles-and-host-configuration:
+  en: ea3cd66784516375
+  zh: 778a62f156fe25f7
+/native-harness-deployment-implementation-plan/review-focus/task-2-evidence-backup-and-safe-upgrades:
+  en: d57d62f092dab9d7
+  zh: 8d3985ed03c4a33e
+/native-harness-deployment-implementation-plan/review-focus/task-3-dedicated-linux-rehearsal-and-public-admission:
+  en: 84cb215e1a70b531
+  zh: 0eef1f26888e87f7

@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-10-11-public-harness-native-identity.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/superpowers/plans/2026-10-11-public-harness-native-identity.md
+/native-harness-identity-implementation-plan:
+  en: da476843cad8d4e1
+  zh: e2ca335d36034948
+/native-harness-identity-implementation-plan/global-constraints:
+  en: 0ed6ef2c03b21dda
+  zh: 954d4703bc43b289
+/native-harness-identity-implementation-plan/review-focus:
+  en: ba08f9bbce8b3812
+  zh: 6db0b3956f77bd20
+/native-harness-identity-implementation-plan/review-focus/task-1-better-auth-service-and-verified-registration:
+  en: 952fe8c420bb00eb
+  zh: b604384436211092
+/native-harness-identity-implementation-plan/review-focus/task-2-live-session-verification-and-revocation:
+  en: 3d152e574c439c66
+  zh: 60ff4ede8379abdf
+/native-harness-identity-implementation-plan/review-focus/task-3-unified-account-pages-and-browser-flow:
+  en: 754f7ed3a53112fd
+  zh: aa4bd3f4e3a06a14

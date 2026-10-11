@@ -1,0 +1,25 @@
+# Bilingual-pair consistency record for 2026-10-11-public-harness-native-runtime.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/superpowers/plans/2026-10-11-public-harness-native-runtime.md
+/native-harness-runtime-implementation-plan:
+  en: 0f36904896759333
+  zh: 2719236547c4f2c7
+/native-harness-runtime-implementation-plan/global-constraints:
+  en: 5f6069fefae440d8
+  zh: 8ef1ec6cf2e1bed8
+/native-harness-runtime-implementation-plan/review-focus:
+  en: 147de3413969b64e
+  zh: 80663fbe332aba50
+/native-harness-runtime-implementation-plan/review-focus/task-1-runtime-service-and-durable-backend-selection:
+  en: 0647e110f1a2912c
+  zh: ae05cd18ea0942ea
+/native-harness-runtime-implementation-plan/review-focus/task-2-native-accounts-storage-and-confined-units:
+  en: a7cc714ce121c0b3
+  zh: d2b7aa009e3b39c8
+/native-harness-runtime-implementation-plan/review-focus/task-3-uid-networking-and-observed-enforcement:
+  en: 3755647dd9934004
+  zh: c5d0d844784981e2
+/native-harness-runtime-implementation-plan/review-focus/task-4-native-runtime-lifecycle-and-readiness:
+  en: 0acc0df415f410a4
+  zh: 09afbef8e97a23e3
