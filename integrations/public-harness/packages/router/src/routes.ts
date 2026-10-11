@@ -1,5 +1,5 @@
 /** Exact owner-path selection before a Harness instance can receive traffic. */
-import type { InstanceEndpoint, InstanceManager, UserId } from '@public-harness/contracts'
+import { AccountSuspendedError, CapacityError, type InstanceEndpoint, type InstanceManager, type UserId } from '@public-harness/contracts'
 
 /** One route result consumed by the browser HTTP and upgrade handlers. */
 export type OwnerRoute =
@@ -71,7 +71,12 @@ export function createOwnerRouter(config: OwnerRouterConfig): { route(rawUrl: st
         const endpoint = await bounded(ensure(userId), config.maxWaitMs)
         if (endpoint === undefined) return { kind: 'starting' }
         return { kind: 'ready', endpoint, upstreamPath: upstreamPath! }
-      } catch { return { kind: 'rejected', status: 503, reason: 'service' } }
+      } catch (error) {
+        // The provisioner is authoritative for capacity and account state; its typed refusals map to bounded pages.
+        if (error instanceof CapacityError) return { kind: 'rejected', status: 503, reason: 'capacity' }
+        if (error instanceof AccountSuspendedError) return { kind: 'rejected', status: 403, reason: 'account' }
+        return { kind: 'rejected', status: 503, reason: 'service' }
+      }
     },
   }
 }
