@@ -25,6 +25,14 @@ export interface QuotaLedger {
   close(): void
 }
 
+/** Aggregate quota counters without individual users or requests. */
+export interface QuotaAggregate {
+  readonly siteTokensUsed: number
+  readonly siteTokensLimit: number
+  readonly siteInFlight: number
+  readonly siteConcurrencyLimit: number
+}
+
 /** A specific capacity limit rejected admission before upstream access. */
 export class QuotaExceededError extends Error {
   constructor(readonly reason: 'personal daily' | 'site daily' | 'personal concurrency' | 'site concurrency') {
@@ -52,7 +60,9 @@ function transaction<T>(database: DatabaseSync, operation: () => T): T {
 }
 
 /** Open the ledger and charge unfinished reservations from an earlier process. */
-export function createQuotaLedger(config: QuotaConfig, clock: () => Date = () => new Date()): QuotaLedger {
+export function createQuotaLedger(config: QuotaConfig, clock: () => Date = () => new Date()): QuotaLedger & {
+  status(): Promise<QuotaAggregate>
+} {
   validateQuotaConfig(config)
   if (process.platform !== 'win32' && (statSync(dirname(config.databasePath)).mode & 0o077) !== 0) {
     throw new Error('quota database parent must be private')
@@ -88,6 +98,14 @@ export function createQuotaLedger(config: QuotaConfig, clock: () => Date = () =>
   const settlement = database.prepare('UPDATE reservations SET charged_tokens = ? WHERE id = ? AND charged_tokens IS NULL')
   const requireOpen = (): void => { if (closed) throw new Error('quota ledger is closed') }
   return {
+    async status() {
+      requireOpen()
+      const now = clock()
+      if (!Number.isFinite(now.valueOf())) throw new Error('quota clock is invalid')
+      const day = now.toISOString().slice(0, 10)
+      return { siteTokensUsed: scalar(siteTokens, day), siteTokensLimit: config.siteDailyTokens,
+        siteInFlight: scalar(sitePending), siteConcurrencyLimit: config.siteConcurrency }
+    },
     async reserve(userId, maximumTokens) {
       requireOpen()
       if (!Number.isSafeInteger(maximumTokens) || maximumTokens <= 0) throw new Error('maximumTokens must be a positive safe integer')

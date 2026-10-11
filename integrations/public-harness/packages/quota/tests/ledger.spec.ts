@@ -102,4 +102,19 @@ describe('durable quota ledger', () => {
     ledger.close()
     await expect(ledger.reserve(alice, 1)).rejects.toThrow(/closed/i)
   })
+
+  it('reports aggregate site capacity and availability without user records', async () => {
+    const { open, nextDay } = await fixture()
+    const ledger = open()
+    const pending = await ledger.reserve(alice, 40)
+    await ledger.settle((await ledger.reserve(bob, 20)).id, 5)
+    expect(await ledger.status()).toEqual({ siteTokensUsed: 45, siteTokensLimit: 200,
+      siteInFlight: 1, siteConcurrencyLimit: 3 })
+    await ledger.settle(pending.id, 10)
+    nextDay()
+    expect(await ledger.status()).toEqual({ siteTokensUsed: 0, siteTokensLimit: 200,
+      siteInFlight: 0, siteConcurrencyLimit: 3 })
+    ledger.close()
+    await expect(ledger.status()).rejects.toThrow(/closed/i)
+  })
 })

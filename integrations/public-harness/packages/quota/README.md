@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This package stores model token reservations in SQLite and checks signed, instance-bound requests before admission. It checks each user's daily allowance, the site's daily allowance, and both in-flight request limits in one transaction before a model call can start. It also forwards Messages streams and keeps Files metadata scoped to the user who uploaded each file.
+This package stores model token reservations in SQLite and checks signed, instance-bound requests before admission. It checks each user's daily allowance, the site's daily allowance, and both in-flight request limits in one transaction before a model call can start. It also forwards Messages streams, keeps Files metadata scoped to the uploader, and reports aggregate site health through a private credential.
 
 ## Table of Contents
 
@@ -23,7 +23,7 @@ This package stores model token reservations in SQLite and checks signed, instan
 <a id="use-this-package"></a>
 ## Use this package
 
-Pass `createQuotaLedger` an absolute database path inside a private directory and positive personal and site limits. Call `reserve(userId, maximumTokens)` before forwarding a model request. Call `settle(id, actualTokens)` when final usage arrives, or omit `actualTokens` after interruption or missing usage. Close the ledger during service shutdown.
+Pass `createQuotaLedger` an absolute database path inside a private directory and positive personal and site limits. Call `reserve(userId, maximumTokens)` before forwarding a model request. Call `settle(id, actualTokens)` when final usage arrives, or omit `actualTokens` after interruption or missing usage. `status()` provides site totals without user records; `inspectQuotaHealth` converts storage failure into an unavailable result. A configured `/internal/health` endpoint requires a separate private credential. Close the ledger during service shutdown.
 
 <a id="understand-accounting"></a>
 ## Understand accounting

@@ -1,9 +1,11 @@
 /** Loopback quota ingress with a server-owned instance identity. */
 import { once } from 'node:events'
+import { timingSafeEqual } from 'node:crypto'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo, Socket } from 'node:net'
-import type { AdmissionRequest, AdmittedRequest } from './admission.ts'
+import { QuotaAuthenticationError, QuotaRequestError, type AdmissionRequest, type AdmittedRequest } from './admission.ts'
 import type { FilesProxy } from './files.ts'
+import type { QuotaHealth } from './health.ts'
 import { QuotaExceededError, type Reservation } from './ledger.ts'
 import type { TokenIssuer } from './tokens.ts'
 
@@ -17,6 +19,14 @@ export interface QuotaHttpConfig {
   readonly files: Pick<FilesProxy, 'handle' | 'owns'>
   readonly maxBodyBytes: number
   readonly maxFileBodyBytes: number
+  readonly health?: { readonly secret: string; inspect(): Promise<QuotaHealth> }
+}
+
+function privateSecretMatches(actual: string | undefined, expected: string): boolean {
+  if (actual === undefined) return false
+  const left = Buffer.from(actual)
+  const right = Buffer.from(`Bearer ${expected}`)
+  return left.length === right.length && timingSafeEqual(left, right)
 }
 
 async function readBounded(request: IncomingMessage, limit: number): Promise<Buffer> {
@@ -63,6 +73,7 @@ export async function startQuotaHttpServer(config: QuotaHttpConfig): Promise<{ p
   for (const value of [config.maxBodyBytes, config.maxFileBodyBytes]) {
     if (!Number.isSafeInteger(value) || value <= 0) throw new Error('quota HTTP body limits must be positive')
   }
+  if (config.health !== undefined && config.health.secret.length < 16) throw new Error('private health secret is required')
   const sockets = new Set<Socket>()
   const server = createServer((request, response) => {
     const abort = new AbortController()
@@ -70,6 +81,15 @@ export async function startQuotaHttpServer(config: QuotaHttpConfig): Promise<{ p
     void (async () => {
       const path = new URL(request.url ?? '/', 'http://127.0.0.1').pathname
       const authorization = bearer(request)
+      if (path === '/internal/health' && config.health !== undefined) {
+        if (request.method !== 'GET' || !privateSecretMatches(authorization, config.health.secret)) {
+          response.writeHead(401).end(); return
+        }
+        const report = await config.health.inspect()
+        response.writeHead(report.available ? 200 : 503, { 'content-type': 'application/json' })
+          .end(JSON.stringify(report))
+        return
+      }
       if (authorization === undefined) { response.writeHead(401).end(); return }
       const isMessages = path === '/v1/messages'
       const isFiles = path === '/v1/files' || /^\/v1\/files\/[A-Za-z0-9_-]{1,128}$/.test(path)
@@ -92,7 +112,8 @@ export async function startQuotaHttpServer(config: QuotaHttpConfig): Promise<{ p
         } catch (error) {
           if (response.headersSent) { response.destroy(); return }
           response.writeHead(error instanceof QuotaExceededError ? 429
-            : error instanceof Error && /token|authorization|instance/i.test(error.message) ? 401 : 400).end()
+            : error instanceof QuotaAuthenticationError ? 401
+              : error instanceof QuotaRequestError ? 400 : 503).end()
         }
         return
       }

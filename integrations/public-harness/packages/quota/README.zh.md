@@ -9,7 +9,7 @@ kind: "package-library"
 
 ## Summary
 
-此包将模型 token 预留记录保存在 SQLite 中，并在准入前检查经过签名且绑定实例的请求。在开始模型调用前，它通过同一事务检查每位用户的每日额度、全站每日额度，以及两级并发请求上限。它还负责转发 Messages 流，并让 Files 元数据只归上传者所有。
+此包将模型 token 预留记录保存在 SQLite 中，并在准入前检查经过签名且绑定实例的请求。在开始模型调用前，它通过同一事务检查每位用户的每日额度、全站每日额度，以及两级并发请求上限。它还负责转发 Messages 流、让 Files 元数据只归上传者所有，并通过私有凭据报告全站汇总健康状态。
 
 ## Table of Contents
 
@@ -23,7 +23,7 @@ kind: "package-library"
 <a id="use-this-package"></a>
 ## 使用此包
 
-向 `createQuotaLedger` 传入位于私有目录内的绝对数据库路径，以及正数的个人和全站限额。转发模型请求前调用 `reserve(userId, maximumTokens)`。收到最终用量时调用 `settle(id, actualTokens)`；请求中断或缺少用量时省略 `actualTokens`。服务关闭时关闭账本。
+向 `createQuotaLedger` 传入位于私有目录内的绝对数据库路径，以及正数的个人和全站限额。转发模型请求前调用 `reserve(userId, maximumTokens)`。收到最终用量时调用 `settle(id, actualTokens)`；请求中断或缺少用量时省略 `actualTokens`。`status()` 只提供不含用户记录的全站汇总；`inspectQuotaHealth` 将存储故障转成不可用状态。配置后的 `/internal/health` 入口需要单独的私有凭据。服务关闭时关闭账本。
 
 <a id="understand-accounting"></a>
 ## 了解计费方式

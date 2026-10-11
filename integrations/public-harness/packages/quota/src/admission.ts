@@ -24,6 +24,14 @@ export interface AdmissionRequest {
 /** Admission result consumed by the bounded Messages forwarder. */
 export interface AdmittedRequest { readonly userId: UserId; readonly reservation: Reservation }
 
+/** A caller supplied an unsupported or over-limit Messages request. */
+export class QuotaRequestError extends Error {}
+
+/** A caller did not present a valid instance-bound credential. */
+export class QuotaAuthenticationError extends Error {}
+
+function reject(message: string): never { throw new QuotaRequestError(message) }
+
 function positive(name: string, value: number): void {
   if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${name} must be a positive safe integer`)
 }
@@ -40,17 +48,17 @@ function imagesWithinLimits(body: unknown, config: AdmissionConfig): string[] {
     const record = value as Record<string, unknown>
     if (record.type === 'image') {
       count += 1
-      if (count > config.maxImagesPerRequest) throw new Error('request image count exceeds limit')
+      if (count > config.maxImagesPerRequest) reject('request image count exceeds limit')
       const source = record.source
-      if (typeof source !== 'object' || source === null || Array.isArray(source)) throw new Error('invalid request image')
+      if (typeof source !== 'object' || source === null || Array.isArray(source)) reject('invalid request image')
       const image = source as Record<string, unknown>
       if (image.type === 'file' && typeof image.file_id === 'string'
         && /^[A-Za-z0-9_-]{1,128}$/.test(image.file_id)) fileIds.push(image.file_id)
       else if (image.type === 'base64' && typeof image.data === 'string'
         && /^[A-Za-z0-9+/]*={0,2}$/.test(image.data)) {
         inlineBytes += Math.ceil(image.data.length * 3 / 4)
-        if (inlineBytes > config.maxInlineImageBytes) throw new Error('request image bytes exceed limit')
-      } else throw new Error('unsupported request image')
+        if (inlineBytes > config.maxInlineImageBytes) reject('request image bytes exceed limit')
+      } else reject('unsupported request image')
     }
     pending.push(...Object.values(record))
   }
@@ -74,29 +82,31 @@ export function createAdmission(dependencies: {
   }
   return {
     async admit(request) {
-      if (request.method !== 'POST') throw new Error('unsupported request method')
-      if (request.path !== '/v1/messages') throw new Error('unsupported request path')
-      if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(request.contentType ?? '')) throw new Error('unsupported content type')
-      if (request.body.byteLength > config.maxBodyBytes) throw new Error('request body exceeds limit')
+      if (request.method !== 'POST') reject('unsupported request method')
+      if (request.path !== '/v1/messages') reject('unsupported request path')
+      if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(request.contentType ?? '')) reject('unsupported content type')
+      if (request.body.byteLength > config.maxBodyBytes) reject('request body exceeds limit')
       const match = /^Bearer ([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/.exec(request.authorization ?? '')
-      if (match === null) throw new Error('invalid quota authorization')
-      const userId = issuer.verify(match[1]!, request.instanceId)
+      if (match === null) throw new QuotaAuthenticationError('invalid quota authorization')
+      let userId: UserId
+      try { userId = issuer.verify(match[1]!, request.instanceId) }
+      catch (error) { throw new QuotaAuthenticationError(error instanceof Error ? error.message : 'invalid quota credential') }
       let parsed: unknown
       try { parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(request.body)) }
-      catch { throw new Error('invalid request JSON') }
-      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('invalid request JSON')
+      catch { reject('invalid request JSON') }
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) reject('invalid request JSON')
       const data = parsed as Record<string, unknown>
-      if (typeof data.model !== 'string' || !Object.hasOwn(config.modelContextWindows, data.model)) throw new Error('unsupported model')
+      if (typeof data.model !== 'string' || !Object.hasOwn(config.modelContextWindows, data.model)) reject('unsupported model')
       const context = config.modelContextWindows[data.model]
       if (context === undefined) throw new Error('model context window is missing')
-      if (!Number.isSafeInteger(data.max_tokens) || Number(data.max_tokens) <= 0) throw new Error('max_tokens is required')
-      if (!Array.isArray(data.messages)) throw new Error('request messages are required')
+      if (!Number.isSafeInteger(data.max_tokens) || Number(data.max_tokens) <= 0) reject('max_tokens is required')
+      if (!Array.isArray(data.messages)) reject('request messages are required')
       const fileIds = imagesWithinLimits(data, config)
       for (const fileId of fileIds) {
-        if (dependencies.ownsFile?.(userId, fileId) !== true) throw new Error('request image file ownership denied')
+        if (dependencies.ownsFile?.(userId, fileId) !== true) reject('request image file ownership denied')
       }
       const maximumTokens = context + Number(data.max_tokens)
-      if (!Number.isSafeInteger(maximumTokens)) throw new Error('request has no safe token bound')
+      if (!Number.isSafeInteger(maximumTokens)) reject('request has no safe token bound')
       return { userId, reservation: await ledger.reserve(userId, maximumTokens) }
     },
   }
