@@ -14,7 +14,7 @@ import { layoutFor } from '../src/storage.ts'
 import { connect, createServer } from 'node:net'
 
 const TOKEN = 'launch-token-SECRET-123'
-const controllers = { controllers: async () => ['cpu', 'memory', 'pids', 'io'] }
+const controllers = { controllers: async () => ['cpuset', 'cpu', 'io', 'memory', 'hugetlb', 'pids'] }
 
 async function setup(options: { quotaHealthy?: boolean; busyPorts?: number[] } = {}) {
   const busyPorts = options.busyPorts
@@ -57,6 +57,17 @@ describe('mandatory limits', () => {
   it.each([0, -1, Number.NaN])('rejects a non-positive limit %s', value => {
     expect(() => validateLimits({ ...good, pids: value })).toThrow(LimitsError)
   })
+  it.each([[255, 1 << 30], [4096, (512 << 20) - 1]])('rejects limits that leave no room for the Harness (pids %s, memory %s)', (pids, memoryBytes) => {
+    expect(() => validateLimits({ ...good, pids, memoryBytes })).toThrow(LimitsError)
+  })
+  it('requires every delegated controller the rootless gVisor runtime needs', async () => {
+    const tools = { setquota: '/usr/sbin/setquota', nft: '/usr/sbin/nft', quotaMount: '/srv' }
+    const limits = validateLimits(good)
+    for (const missing of ['cpu', 'cpuset', 'hugetlb', 'io', 'memory', 'pids']) {
+      const present = ['cpu', 'cpuset', 'hugetlb', 'io', 'memory', 'pids'].filter(name => name !== missing)
+      await expect(enforceLimits(new FakeRunner(), { controllers: async () => present }, tools, limits, 1001)).rejects.toThrow(new RegExp(`controller ${missing} `))
+    }
+  })
   it.each(['host', 'none', 'container:other', 'ns:/proc/1/ns/net', 'bridge', 'pasta; rm', 'pasta:--map-host-loopback,10.0.2.2', 'pasta:--splice', ''])('rejects network %j', network => {
     expect(() => validateLimits({ ...good, network })).toThrow(LimitsError)
   })
@@ -65,7 +76,7 @@ describe('mandatory limits', () => {
     const tools = { setquota: '/usr/sbin/setquota', nft: '/usr/sbin/nft', quotaMount: '/srv' }
     const limits = validateLimits(good)
     const runner = new FakeRunner()
-    await expect(enforceLimits(runner, { controllers: async () => ['cpu', 'memory'] }, tools, limits, 1001)).rejects.toThrow(/pids/)
+    await expect(enforceLimits(runner, { controllers: async () => ['cpu', 'memory'] }, tools, limits, 1001)).rejects.toThrow(/controller/)
     await expect(enforceLimits(runner, { controllers: async () => { throw new Error('x') } }, tools, limits, 1001)).rejects.toThrow(/cgroup/)
     runner.handler = command => command.endsWith('nft') ? { code: 1, stdout: '', stderr: '' } : undefined
     await expect(enforceLimits(runner, controllers, tools, limits, 1001)).rejects.toThrow(/firewall/)

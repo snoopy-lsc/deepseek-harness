@@ -19,6 +19,17 @@ export class LimitsError extends Error {
   constructor(reason: string) { super(`resource limits: ${reason}`) }
 }
 
+/**
+ * Smallest accepted limits. Under gVisor the pids limit counts the sandbox's own host threads (about 45 idle, roughly
+ * 2-3 more per guest process), not guest processes, and hitting the memory or pids limit kills the whole sandbox
+ * instead of one process. Values below these leave no room for the Harness itself.
+ */
+export const MIN_PIDS = 256
+export const MIN_MEMORY_BYTES = 512 << 20
+
+/** cgroup v2 controllers the account's user manager must delegate; rootless podman with runsc did not start without all six. */
+export const REQUIRED_CONTROLLERS = ['cpu', 'cpuset', 'hugetlb', 'io', 'memory', 'pids'] as const
+
 const REQUIRED = ['cpus', 'memoryBytes', 'pids', 'openFiles', 'diskBytes'] as const
 
 /** Validate configuration shape before touching the host. */
@@ -30,8 +41,8 @@ export function validateLimits(value: unknown): Limits {
     if (typeof field !== 'number' || !Number.isFinite(field) || field <= 0) throw new LimitsError(`${key} must be positive`)
     if (key !== 'cpus' && !Number.isSafeInteger(field)) throw new LimitsError(`${key} must be an integer`)
   }
-  if (Number(record.memoryBytes) < 64 << 20) throw new LimitsError('memoryBytes below 64 MiB')
-  if (Number(record.pids) < 16) throw new LimitsError('pids below 16')
+  if (Number(record.memoryBytes) < MIN_MEMORY_BYTES) throw new LimitsError('memoryBytes below 512 MiB')
+  if (Number(record.pids) < MIN_PIDS) throw new LimitsError(`pids below ${MIN_PIDS}`)
   const network = record.network
   if (network !== 'pasta' && network !== 'slirp4netns') throw new LimitsError('network must be exactly pasta or slirp4netns')
   return { cpus: Number(record.cpus), memoryBytes: Number(record.memoryBytes), pids: Number(record.pids),
@@ -61,7 +72,7 @@ export async function enforceLimits(runner: CommandRunner, probe: EnforcementPro
   limits: Limits, uid: number): Promise<void> {
   if (!isAbsolute(tools.quotaMount)) throw new LimitsError('quota mount must be absolute')
   const controllers = await probe.controllers(uid).catch(() => [] as string[])
-  for (const required of ['cpu', 'memory', 'pids']) {
+  for (const required of REQUIRED_CONTROLLERS) {
     if (!controllers.includes(required)) throw new LimitsError(`cgroup controller ${required} is not delegated`)
   }
   const firewall = await runner.run(tools.nft, ['list', 'table', 'inet', 'dsh_instances'])

@@ -24,7 +24,7 @@
     "idleStopMs": 1800000,
     "deletionRecoveryMs": 2592000000,
     "image": "localhost/dsh-instance:2026.10.0-rc1",
-    "limits": { "cpus": 2, "memoryBytes": 4294967296, "pids": 512, "openFiles": 8192, "diskBytes": 10737418240, "network": "pasta" },
+    "limits": { "cpus": 2, "memoryBytes": 4294967296, "pids": 2048, "openFiles": 8192, "diskBytes": 10737418240, "network": "pasta" },
     "readyTimeoutMs": 120000,
     "stopTimeoutMs": 20000,
     "quota": { "hostAddress": "10.0.2.2" },
