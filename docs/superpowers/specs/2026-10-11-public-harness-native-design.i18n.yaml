@@ -1,0 +1,37 @@
+# Bilingual-pair consistency record for 2026-10-11-public-harness-native-design.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/superpowers/specs/2026-10-11-public-harness-native-design.md
+/native-public-harness-deployment-proposal:
+  en: 04da9d045c130230
+  zh: 79456d055f4c70da
+/native-public-harness-deployment-proposal/summary:
+  en: 800f9d4b0e3f5f08
+  zh: 52987edfab665f33
+/native-public-harness-deployment-proposal/contents:
+  en: 01afb5eb10f69371
+  zh: 3b137f26e13729e1
+/native-public-harness-deployment-proposal/deployment-choice:
+  en: 46cd337c95b6aea1
+  zh: fb2df46ab4ebe38e
+/native-public-harness-deployment-proposal/service-ownership:
+  en: b090dce47b4bbb3d
+  zh: 26112db82c17aa8d
+/native-public-harness-deployment-proposal/host-enforcement:
+  en: 6ad6676217e4c796
+  zh: f5f64c3918a34dae
+/native-public-harness-deployment-proposal/identity-and-registration:
+  en: f8e03ed2aa73712c
+  zh: c66df42918d7ac67
+/native-public-harness-deployment-proposal/lifecycle-and-persistence:
+  en: 33625863893b7a40
+  zh: 332a5ff0ff5d7c67
+/native-public-harness-deployment-proposal/integration-changes:
+  en: 924c4ba98aedf8a6
+  zh: 44268c1154e1bf8f
+/native-public-harness-deployment-proposal/verification-and-release:
+  en: ecc754dec19c51b1
+  zh: 6d7fb17285e80f11
+/native-public-harness-deployment-proposal/sources:
+  en: 512ba387f446c0e5
+  zh: e7f2257bde80000a
