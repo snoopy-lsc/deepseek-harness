@@ -9,7 +9,7 @@ kind: "package-library"
 
 ## Summary
 
-此包提供运行 Linux 部署的三个 Cordis 插件：`team-router`（无特权，签名身份入口）、`provisioner`（root，主机账号和容器）和 `quota`（持有平台密钥）。每个插件接收一个指向 root 所有的 JSON 文件的路径，遇到任何未知、缺失或不安全的设置都会拒绝启动。
+此包为三个 Linux 服务 profile 提供 Cordis 插件：`team-router`（无特权，签名身份入口）、`provisioner`（root，主机账号和运行时生命周期）和 `quota`（持有平台密钥）。每个插件接收一个指向 root 所有的 JSON 文件的路径，遇到任何未知、缺失或不安全的设置都会拒绝启动。
 
 ## Table of Contents
 
@@ -28,7 +28,7 @@ kind: "package-library"
 <a id="understand-the-implementation"></a>
 ## 了解实现
 
-路由器配置从文件读取每个 authentik 公钥，构建签名身份验证器，连接配置服务客户端，并在 Unix socket 上启动路由器，启用 Secure cookie 和唯一的公开地址（即浏览器实际发送的主机：443 不带端口，预发布部署带端口；`:80` 和 `:443` 会被拒绝）。它从不加载开发身份或选择器，也从不绑定 TCP。其私有健康 socket 只报告配置服务是否应答。配置服务配置在启动时执行 reconcile，提供路由器 socket 和管理 socket，并按固定间隔执行空闲停止和 reconcile。额度配置打开生产额度服务及其私有控制 socket。
+路由器配置从文件读取每个 authentik 公钥，构建签名身份验证器，连接配置服务客户端，并在 Unix socket 上启动路由器，启用 Secure cookie 和唯一的公开地址（即浏览器实际发送的主机：443 不带端口，预发布部署带端口；`:80` 和 `:443` 会被拒绝）。它从不加载开发身份或选择器，也从不绑定 TCP。其私有健康 socket 只报告配置服务是否应答。配置服务配置先挂载显式容器运行时 provider，再挂载依赖该运行时的消费者，拒绝不同的配置后端，在启动时执行 reconcile，提供路由器 socket 和管理 socket，并按固定间隔执行空闲停止和 reconcile。额度配置打开生产额度服务及其私有控制 socket。
 
 <a id="further-exploration"></a>
 ## 延伸阅读

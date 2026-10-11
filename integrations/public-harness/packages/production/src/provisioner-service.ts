@@ -5,9 +5,7 @@ import { startAdminServer } from '@public-harness/provisioner/admin'
 import { validateProvisionerConfig, type ProvisionerConfig } from '@public-harness/provisioner/config'
 import { startProvisionerServer } from '@public-harness/provisioner/protocol'
 import { createProvisionerService, type ProvisionerService } from '@public-harness/provisioner/service'
-import type { QuotaBridge } from '@public-harness/provisioner/runtime'
-import { createQuotaControlClient } from '@public-harness/quota/control'
-import { readFile } from 'node:fs/promises'
+import type { InstanceRuntime } from '@public-harness/contracts'
 import { absolutePath, exactRecord, positiveInt, readConfigFile } from './config-file.ts'
 
 /** Sockets and cadences around the provisioner configuration. */
@@ -27,19 +25,12 @@ export function parseProvisionerProfileConfig(value: unknown): ProvisionerProfil
   return { controlSocket: absolutePath(record.controlSocket, 'controlSocket'), adminSocket: absolutePath(record.adminSocket, 'adminSocket'),
     quotaSocket: absolutePath(record.quotaSocket, 'quotaSocket'), publicHost: record.publicHost,
     reconcileIntervalMs: positiveInt(record.reconcileIntervalMs, 'reconcileIntervalMs'),
-    provisioner: validateProvisionerConfig(record.provisioner as ProvisionerConfig) }
-}
-
-/** Real cgroup probe: controllers delegated to the account's user manager. */
-export async function cgroupControllers(uid: number): Promise<string[]> {
-  const text = await readFile(`/sys/fs/cgroup/user.slice/user-${uid}.slice/user@${uid}.service/cgroup.controllers`, 'utf8')
-  return text.trim().split(/\s+/)
+    provisioner: validateProvisionerConfig(record.provisioner) }
 }
 
 /** Start sockets and the periodic reconcile/idle loop. */
-export async function startProvisioner(profile: ProvisionerProfileConfig, quota?: QuotaBridge): Promise<{ service: ProvisionerService; close(): Promise<void> }> {
-  const service = createProvisionerService({ config: profile.provisioner, publicHost: profile.publicHost,
-    quota: quota ?? createQuotaControlClient(profile.quotaSocket), probe: { controllers: cgroupControllers } })
+export async function startProvisioner(profile: ProvisionerProfileConfig, runtime: InstanceRuntime): Promise<{ service: ProvisionerService; close(): Promise<void> }> {
+  const service = createProvisionerService({ config: profile.provisioner, runtime })
   await service.lifecycle.reconcile()
   const control = await startProvisionerServer(profile.controlSocket, service.handler, { gid: profile.provisioner.socketGid })
   let admin: Awaited<ReturnType<typeof startAdminServer>>
@@ -58,13 +49,14 @@ export async function startProvisioner(profile: ProvisionerProfileConfig, quota?
 
 /** Stable Cordis plugin name. */
 export const name = 'public-harness-provisioner'
+export const inject = ['instanceRuntime']
 export interface PluginConfig { configFile: string }
 export const Config: z<PluginConfig> = z.object({ configFile: z.string().required() })
 
 /** Cordis entry for `dsh --profile provisioner`. */
 export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
   if (process.platform !== 'linux') throw new Error('the provisioner runs only on Linux')
-  const running = await startProvisioner(parseProvisionerProfileConfig(await readConfigFile(config.configFile)))
+  const running = await startProvisioner(parseProvisionerProfileConfig(await readConfigFile(config.configFile)), ctx.instanceRuntime)
   const lifecycle = ctx as Context & Pick<Fiber, 'effect'>
   lifecycle.effect(() => async () => { await running.close() }, 'public-harness.provisioner')
 }

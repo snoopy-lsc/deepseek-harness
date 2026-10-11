@@ -1,9 +1,10 @@
 import { execFileSync } from 'node:child_process'
-import { mkdir, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { describe, expect, it } from 'vitest'
 import { AccountSuspendedError, CapacityError, isolatedGitEnvironment } from '@public-harness/contracts'
 import { deriveNames, isDerivedAccountName } from '../src/accounts.ts'
 import { StorageOwnershipError, layoutFor } from '../src/storage.ts'
+import { createUserProvisioner } from '../src/users.ts'
 import { alice, bob, makeHarness } from './helpers.ts'
 
 describe.skipIf(process.platform === 'win32')('idempotent Linux user provisioning', () => {
@@ -42,6 +43,21 @@ describe.skipIf(process.platform === 'win32')('idempotent Linux user provisionin
     expect(record.lifecycle).toBe('stopped')
     expect(await h.store.get(alice)).toMatchObject({ steps: { account: true, storage: true, workspace: true } })
     expect((await h.store.get(alice))?.lastError).toBeUndefined()
+  })
+
+  it('prepares protections before workspace initialization when resuming a complete allocation', async () => {
+    const h = await makeHarness()
+    await h.users.ensureUser(alice)
+    const interrupted = (await h.store.get(alice))!
+    interrupted.lifecycle = 'provisioning'; interrupted.steps.workspace = false
+    interrupted.acquired = interrupted.acquired.filter(resource => resource !== 'policy')
+    await h.store.put(interrupted)
+    const effects: string[] = []
+    const users = createUserProvisioner({ config: h.config, store: h.store, directory: h.directory, runner: h.runner,
+      runtime: { ...h.runtime, prepare: async () => { effects.push('prepare') }, initializeWorkspace: async () => { effects.push('git') } } })
+    await users.ensureUser(alice)
+    expect(effects).toEqual(['prepare', 'git'])
+    expect((await h.store.get(alice))!.acquired).toContain('policy')
   })
 
   it('refuses a pre-existing directory with the wrong owner and stays unpublished', async () => {
@@ -114,5 +130,42 @@ describe.skipIf(process.platform === 'win32')('idempotent Linux user provisionin
     expect((await h.store.get(alice))?.lifecycle).toBe('stopped')
     expect((await stat(record.layout.workspace)).isDirectory()).toBe(true)
     expect(h.directory.removed).toEqual([])
+  })
+})
+
+
+describe.skipIf(process.platform === 'win32')('runtime record migration', () => {
+  it('legacy_records_keep_container_backend', async () => {
+    const { migrateUserState } = await import('../src/state.ts')
+    const legacy = { version: 1, userId: alice, account: deriveNames(alice).account, lifecycle: 'stopped',
+      steps: { account: true, storage: true, workspace: true }, uid: process.getuid!(), gid: process.getgid!(),
+      createdAt: 1, updatedAt: 2 }
+    expect(migrateUserState(legacy)).toMatchObject({ version: 2, runtime: { kind: 'podman-gvisor', container: legacy.account }, instance: null,
+      acquired: ['account', 'storage'] })
+    expect(legacy.version).toBe(1)
+  })
+
+  it('reads a valid legacy file unchanged and writes version 2 on its next mutation', async () => {
+    const h = await makeHarness()
+    const legacy = { version: 1, userId: alice, account: deriveNames(alice).account, lifecycle: 'stopped',
+      steps: { account: true, storage: true, workspace: true }, uid: process.getuid!(), gid: process.getgid!(), createdAt: 1, updatedAt: 2 }
+    const file = `${h.config.paths.stateDir}/${legacy.account}.json`
+    const original = JSON.stringify(legacy) + '\n'
+    await writeFile(file, original)
+    const migrated = (await h.store.get(alice))!
+    expect(migrated.runtime.kind).toBe('podman-gvisor')
+    expect(await readFile(file, 'utf8')).toBe(original)
+    await h.store.put(migrated)
+    expect(JSON.parse(await readFile(file, 'utf8')).version).toBe(2)
+  })
+
+  it.each([{ version: 99 }, { version: 2, runtime: { kind: 'unknown' } }, { version: 1, userId: alice }])('refuses damaged or unknown records without rewriting them', async value => {
+    const h = await makeHarness()
+    const file = `${h.config.paths.stateDir}/${deriveNames(alice).account}.json`
+    const text = JSON.stringify(value) + '\n'
+    await writeFile(file, text)
+    await expect(h.store.get(alice)).rejects.toThrow()
+    expect((await h.store.list()).invalid).toEqual([`${deriveNames(alice).account}.json`])
+    expect(await readFile(file, 'utf8')).toBe(text)
   })
 })

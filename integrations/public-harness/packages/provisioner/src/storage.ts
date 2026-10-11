@@ -11,6 +11,8 @@ export interface StorageLayout {
   readonly home: string
   /** Mounted as the instance's private Git workspace. */
   readonly workspace: string
+  readonly cache: string
+  readonly tmp: string
   /** Mounted for the private launch-token channel. */
   readonly ctl: string
   /** Rootless Podman graph and runtime state; never mounted into the instance. */
@@ -29,7 +31,7 @@ export class StorageOwnershipError extends Error {
 export function layoutFor(paths: { readonly storageRoot: string; readonly socketDir: string }, account: string): StorageLayout {
   if (!isDerivedAccountName(account)) throw new Error('layout requires a derived account name')
   const root = join(paths.storageRoot, 'users', account)
-  return { root, home: join(root, 'home'), workspace: join(root, 'workspace'), ctl: join(root, 'ctl'),
+  return { root, home: join(root, 'home'), workspace: join(root, 'workspace'), cache: join(root, 'cache'), tmp: join(root, 'tmp'), ctl: join(root, 'ctl'),
     podman: join(root, 'podman'), socketPath: join(paths.socketDir, `${account}.sock`) }
 }
 
@@ -57,14 +59,14 @@ async function ensureOwnedDirectory(path: string, identity: AccountIdentity, own
 
 /** Create the account's private tree, refusing pre-existing paths with the wrong owner or type. */
 export async function ensureStorage(paths: { readonly storageRoot: string }, layout: StorageLayout,
-  identity: AccountIdentity, ownership: Ownership = hostOwnership): Promise<void> {
+  identity: AccountIdentity, ownership: Ownership, kind: 'systemd' | 'podman-gvisor'): Promise<void> {
   const users = join(paths.storageRoot, 'users')
   await mkdir(users, { recursive: true, mode: 0o711 })
   const parent = await lstat(users)
   if (!parent.isDirectory() || parent.isSymbolicLink() || (parent.mode & 0o022) !== 0) {
     throw new StorageOwnershipError('users directory is unsafe')
   }
-  for (const path of [layout.root, layout.home, layout.workspace, layout.ctl, layout.podman]) {
+  for (const path of [layout.root, layout.home, layout.workspace, layout.cache, layout.tmp, layout.ctl, ...(kind === 'podman-gvisor' ? [layout.podman] : [])]) {
     await ensureOwnedDirectory(path, identity, ownership)
   }
 }

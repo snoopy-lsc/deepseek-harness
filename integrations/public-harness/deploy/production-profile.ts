@@ -24,6 +24,9 @@ export async function writeProductionProfile(home: string, name: ProductionProfi
   const url = pathToFileURL(join(options.installRoot ?? integrationRoot, 'packages', 'production', 'lib', `${plugin}.js`)).href
   await ownedFile(join(profile, 'package.json'), `${JSON.stringify({ name: `dsh-profile-${name}`, private: true, type: 'module', dsh: { profile: { bundles: [] } } })}\n`)
   await ownedFile(join(profile, 'cordis.yml'), '[]\n')
-  await ownedFile(join(profile, 'cordis.patch.yml'), `${JSON.stringify([{ insert: [{ id, name: url, config: { configFile: options.configFile } }] }])}\n`)
+  const provider = { id: 'public-harness-container-runtime', name: pathToFileURL(join(options.installRoot ?? integrationRoot,
+    'packages', 'production', 'lib', 'container-runtime.js')).href, config: { configFile: options.configFile } }
+  const consumer = { id, name: url, config: { configFile: options.configFile } }
+  await ownedFile(join(profile, 'cordis.patch.yml'), `${JSON.stringify([{ insert: name === 'provisioner' ? [provider, consumer] : [consumer] }])}\n`)
   return profile
 }

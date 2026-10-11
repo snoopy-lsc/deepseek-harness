@@ -138,3 +138,9 @@ describe('strict production configuration files', () => {
     await expect(readConfigFile(file)).rejects.toThrow(/valid JSON/)
   })
 })
+
+it('exports the built production container provider used by the generated profile', async () => {
+  const provider = await import('@public-harness/production/container-runtime')
+  expect(provider.name).toBe('public-harness-container-runtime')
+  expect(typeof provider.apply).toBe('function')
+})

@@ -9,7 +9,7 @@ kind: "package-library"
 
 ## Summary
 
-本库定义团队路由使用、由开发和 Linux provider 实现的 `InstanceManager` 服务。它校验跨进程或线路传入的用户 ID 和实例地址。
+本库校验用户与启动标识、派生运行时名称和私有实例端点。路由器使用 `InstanceManager`；Linux 配置服务使用显式选择的 `InstanceRuntime` provider。
 
 ## Table of Contents
 
@@ -28,7 +28,7 @@ kind: "package-library"
 <a id="understand-the-implementation"></a>
 ## 了解实现
 
-`ensure` 返回私有地址，`launchGrant` 返回当前 Web 启动凭据，`stop` 结束进程但保留用户数据。provider 负责生命周期和存储；本库不执行 I/O。
+`InstanceRuntime.allocate` 为服务器分配的同一个启动 ID 预留真实的 Web 和额度端口。`prepare` 在 `initializeWorkspace` 执行用户代码之前建立强制保护；`start` 在就绪后返回端点。`releaseAllocation` 清理未完成的分配，`stop` 清理完整实例。资源可能残留时清理会拒绝，`state` 区分未知结果与已停止进程。配置服务保留部分分配证据，直到清理得到验证。`InstanceManager` 的路由器操作保持不变；本库不执行 I/O。
 
 <a id="further-exploration"></a>
 ## 延伸阅读

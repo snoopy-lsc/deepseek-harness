@@ -1,5 +1,5 @@
 import { isAbsolute } from 'node:path'
-import type {} from '@deepseek-ai/cordis'
+import type { Context as CordisContext } from '@deepseek-ai/cordis'
 import type { Branded } from '@deepseek-ai/dsh-brand'
 
 /** Opaque platform user identifier. */
@@ -38,7 +38,7 @@ export interface InstanceManager {
 }
 
 declare module '@deepseek-ai/cordis' {
-  interface Context {
+  interface Context extends InstanceType<typeof CordisContext> {
     instanceManager: InstanceManager
   }
 }
@@ -48,3 +48,4 @@ export * from './git-workspace.ts'
 export * from './idle.ts'
 export * from './line-protocol.ts'
 export * from './ports.ts'
+export * from './runtime.ts'

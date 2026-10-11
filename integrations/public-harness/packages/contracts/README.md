@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This library defines the `InstanceManager` service consumed by the team router and implemented by development and Linux providers. It validates user IDs and instance endpoints received across process or wire boundaries.
+This library validates user and launch identities, derived runtime names, and private instance endpoints. Routers use `InstanceManager`; Linux provisioners use an explicitly selected `InstanceRuntime` provider.
 
 ## Table of Contents
 
@@ -28,7 +28,7 @@ Call `parseUserId` for an external identity before using it as an `InstanceManag
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 
-`ensure` returns one private endpoint, `launchGrant` returns the current Web startup credential, and `stop` ends the process while retaining user data. The provider owns lifecycle and storage; this library performs no I/O.
+`InstanceRuntime.allocate` reserves real Web and quota ports for one server-assigned launch ID. `prepare` establishes mandatory protections before `initializeWorkspace` executes user code; `start` returns an endpoint after readiness. `releaseAllocation` cleans up incomplete allocations, while `stop` cleans up complete instances. Cleanup rejects when resources may remain, and `state` distinguishes unknown outcomes from stopped processes. The provisioner retains partial allocation evidence until verified cleanup. `InstanceManager` keeps its router operations unchanged; this library performs no I/O.
 
 <a id="further-exploration"></a>
 ## Further Exploration

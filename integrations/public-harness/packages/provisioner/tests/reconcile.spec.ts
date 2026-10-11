@@ -2,19 +2,23 @@ import { mkdir, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { AccountSuspendedError, CapacityError, type InstanceEndpoint } from '@public-harness/contracts'
+import { AccountSuspendedError, CapacityError, type InstanceEndpoint, type InstanceRuntime, type RuntimeInstance } from '@public-harness/contracts'
 import { deriveNames } from '../src/accounts.ts'
 import { DeletionNotAllowedError, sweepSockets } from '../src/reconcile.ts'
-import type { Runtime } from '../src/runtime.ts'
 import { createProvisionerService } from '../src/service.ts'
 import { alice, bob, makeHarness } from './helpers.ts'
 
-class FakeRuntime implements Runtime {
+class FakeRuntime implements InstanceRuntime {
+  readonly kind = 'podman-gvisor'
+  async allocate(request: Omit<RuntimeInstance, 'webPort' | 'quotaPort'>): Promise<RuntimeInstance> { return { ...request, webPort: 29200, quotaPort: 29100 } }
+  async prepare(): Promise<void> {}
+  async initializeWorkspace(): Promise<void> {}
+  async releaseAllocation(record: { account: string }): Promise<void> { await this.stop(record) }
   readonly started: string[] = []
   readonly stopped: string[] = []
-  async start(record: { account: string; layout: { socketPath: string } }): Promise<InstanceEndpoint> {
+  async start(record: RuntimeInstance): Promise<InstanceEndpoint> {
     this.started.push(record.account)
-    return { kind: 'unix', path: record.layout.socketPath }
+    return { kind: 'unix', path: `${record.controlDir}/instance.sock` }
   }
   async stop(record: { account: string }): Promise<void> { this.stopped.push(record.account) }
   async launchGrant(): Promise<string> { return 'grant' }
@@ -26,9 +30,7 @@ class FakeRuntime implements Runtime {
 async function service(overrides = {}) {
   const h = await makeHarness(overrides)
   const runtime = new FakeRuntime()
-  const svc = createProvisionerService({ config: h.config, quota: { healthy: async () => true, open: async () => ({ port: 1 }),
-    issue: async () => ({ token: 'a.b', expiresAt: 1 }), close: async () => {} }, probe: { controllers: async () => [] },
-    publicHost: 'h.test', runner: h.runner, directory: h.directory, store: h.store, users: h.users, runtime, clock: () => h.clock.now })
+  const svc = createProvisionerService({ config: h.config, runner: h.runner, directory: h.directory, store: h.store, users: h.users, runtime, clock: () => h.clock.now })
   const call = (op: 'ensure' | 'launch-grant' | 'stop' | 'status', userId = alice) => svc.handler({ op, userId })
   return { h, runtime, svc, call }
 }
@@ -56,9 +58,7 @@ describe.skipIf(process.platform === 'win32')('suspend, restart, and recovery', 
     const { h, runtime, svc, call } = await service()
     await call('ensure')
     // A reboot loses the in-memory routing table; the durable record still says running.
-    const fresh = createProvisionerService({ config: h.config, quota: { healthy: async () => true, open: async () => ({ port: 1 }),
-      issue: async () => ({ token: 'a.b', expiresAt: 1 }), close: async () => {} }, probe: { controllers: async () => [] }, publicHost: 'h.test',
-      runner: h.runner, directory: h.directory, store: h.store, users: h.users, runtime, clock: () => h.clock.now })
+    const fresh = createProvisionerService({ config: h.config, runner: h.runner, directory: h.directory, store: h.store, users: h.users, runtime, clock: () => h.clock.now })
     expect((await h.store.get(alice))?.lifecycle).toBe('running')
     const report = await fresh.lifecycle.reconcile()
     expect(report).toMatchObject({ stopped: 1, failures: 0 })
@@ -223,4 +223,40 @@ describe.skipIf(process.platform === 'win32')('stop and external kill', () => {
     expect(await call('status')).toBe('running')
     expect(runtime.stopped).toHaveLength(0)
   })
+})
+
+
+describe.skipIf(process.platform === 'win32')('runtime backend ownership', () => {
+  it('backend_mismatch_refuses_start', async () => {
+    const h = await makeHarness()
+    await h.users.ensureUser(alice)
+    h.runner.calls.length = 0
+    const { createUserProvisioner } = await import('../src/users.ts')
+    const runtime = { kind: 'systemd' as const, allocate: async (request: Omit<RuntimeInstance, 'webPort' | 'quotaPort'>) => ({ ...request, webPort: 22000, quotaPort: 29100 }),
+      releaseAllocation: async () => {}, prepare: async () => {}, initializeWorkspace: async () => {},
+      start: async (): Promise<InstanceEndpoint> => { throw new Error('must not start') }, launchGrant: async () => 'grant',
+      stop: async () => {}, state: async () => 'stopped' as const }
+    const config = { ...h.config, runtime: { kind: 'systemd' as const } }
+    const users = createUserProvisioner({ config, store: h.store, runner: h.runner, directory: h.directory, runtime })
+    await expect(users.ensureUser(alice)).rejects.toThrow(/backend/)
+    expect(h.runner.calls).toEqual([])
+    expect(h.directory.created).toHaveLength(1)
+  })
+  it('refuses an absent provider before allocating host resources', async () => {
+    const h = await makeHarness()
+    expect(() => createProvisionerService({ config: { ...h.config, runtime: { kind: 'systemd' } },
+      runner: h.runner, directory: h.directory, store: h.store })).toThrow(/provider/)
+    expect(h.runner.calls).toEqual([])
+    expect(h.directory.created).toEqual([])
+  })
+})
+
+
+it.skipIf(process.platform === 'win32')('capacity_refusal_allocates_nothing for simultaneous first launches', async () => {
+  const { h, runtime, call } = await service({ maxActiveInstances: 1 })
+  const results = await Promise.allSettled([call('ensure', alice), call('ensure', bob)])
+  expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1)
+  expect(results.find(result => result.status === 'rejected')).toMatchObject({ reason: { name: 'CapacityError' } })
+  expect(h.directory.created).toHaveLength(1)
+  expect(runtime.started).toHaveLength(1)
 })

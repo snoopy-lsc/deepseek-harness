@@ -4,8 +4,8 @@ import { createServer } from 'node:net'
 import { chmod, chown, rename, writeFile } from 'node:fs/promises'
 import { request as httpRequest } from 'node:http'
 import { join } from 'node:path'
-import { portsFrom, type InstanceEndpoint, type UserId } from '@public-harness/contracts'
-import type { ProvisionerConfig } from './config.ts'
+import { parseInstanceId, portsFrom, type InstanceEndpoint, type InstanceId, type RuntimeInstance, type UserId } from '@public-harness/contracts'
+import type { ContainerConfig } from './config.ts'
 import { startUnixForwarder, type Forwarder } from './forwarder.ts'
 import { enforceLimits, LimitsError, networkArgument, type EnforcementProbe } from './limits.ts'
 import { clearReady, readReady, waitForReady } from './token-channel.ts'
@@ -23,8 +23,8 @@ export const CONTAINER = { home: '/home/harness', workspace: '/workspace', ctl: 
 export interface QuotaBridge {
   healthy(): Promise<boolean>
   /** Open the instance-bound model-proxy listener and return its host loopback port. */
-  open(userId: UserId, instanceId: string): Promise<{ readonly port: number }>
-  issue(userId: UserId, instanceId: string): Promise<{ readonly token: string; readonly expiresAt: number }>
+  open(userId: UserId, instanceId: InstanceId): Promise<{ readonly port: number }>
+  issue(userId: UserId, instanceId: InstanceId): Promise<{ readonly token: string; readonly expiresAt: number }>
   close(userId: UserId): Promise<void>
 }
 
@@ -47,7 +47,9 @@ export type ContainerState = 'running' | 'stopped' | 'unknown'
 
 /** Container lifecycle operations. */
 export interface Runtime {
-  start(record: UserRecord): Promise<InstanceEndpoint>
+  start(record: UserRecord, allocation?: RuntimeInstance): Promise<InstanceEndpoint>
+  prepare(record: UserRecord): Promise<void>
+  allocate(record: UserRecord, instanceId: InstanceId): Promise<{ webPort: number; quotaPort: number }>
   stop(record: UserRecord): Promise<void>
   launchGrant(record: UserRecord): Promise<string>
   isRunning(record: UserRecord): Promise<boolean>
@@ -57,7 +59,10 @@ export interface Runtime {
 
 /** Collaborators; every one is injectable so no privileged command runs in tests. */
 export interface RuntimeDeps {
-  readonly config: ProvisionerConfig
+  /** Durable sidecar reservations, including quarantined launches recovered after restart. */
+  readonly claimedPorts?: () => Promise<readonly number[]>
+  readonly acquired?: (userId: UserId, instanceId: InstanceId, resource: 'network' | 'quota' | 'unit' | 'forwarder', ports?: { webPort?: number; quotaPort?: number }) => Promise<void>
+  readonly config: ContainerConfig
   readonly runner: CommandRunner
   readonly quota: QuotaBridge
   readonly probe: EnforcementProbe
@@ -78,7 +83,7 @@ export interface RuntimeDeps {
 }
 
 /** The exact argv for `podman` (after the executable) that starts one instance. */
-export function buildRunArgv(config: ProvisionerConfig, record: UserRecord, sidecarPort: number): string[] {
+export function buildRunArgv(config: ContainerConfig, record: UserRecord, sidecarPort: number): string[] {
   const { limits, tools } = config
   const volume = (source: string, target: string, mode: 'rw' | 'ro'): string[] => ['--volume', `${source}:${target}:${mode},Z`]
   const env = (name: string, value: string): string[] => ['--env', `${name}=${value}`]
@@ -103,7 +108,7 @@ export function buildRunArgv(config: ProvisionerConfig, record: UserRecord, side
 const FORBIDDEN_FLAGS = /^--(privileged|cap-add|device|pid|ipc|userns|uts|cgroupns|security-opt=(?!no-new-privileges)|add-host|dns|mount|volumes-from|group-add|env-file|net|network=host|pod)\b/
 
 /** True for `127.0.0.1:<port>:<sidecar port>` with a host port inside the configured sidecar range. */
-function publishedInRange(value: string, config: ProvisionerConfig): boolean {
+function publishedInRange(value: string, config: ContainerConfig): boolean {
   const match = /^127\.0\.0\.1:(\d{1,5}):(\d{1,5})$/.exec(value)
   if (match === null || Number(match[2]) !== SIDECAR_PORT) return false
   const port = Number(match[1])
@@ -120,7 +125,7 @@ function loopbackPortFree(port: number): Promise<boolean> {
 }
 
 /** Reject an argv that grants more than the fixed design allows. */
-export function assertSafeRunArgv(argv: readonly string[], config: ProvisionerConfig, record: UserRecord): void {
+export function assertSafeRunArgv(argv: readonly string[], config: ContainerConfig, record: UserRecord): void {
   const allowedVolumes = new Set([
     `${record.layout.home}:${CONTAINER.home}:rw,Z`, `${record.layout.workspace}:${CONTAINER.workspace}:rw,Z`,
     `${record.layout.ctl}:${CONTAINER.ctl}:rw,Z`, `${config.paths.runtimeAssets}:${CONTAINER.assets}:ro,Z`])
@@ -150,7 +155,7 @@ export function httpHealthProbe(port: number): Promise<boolean> {
   })
 }
 
-function webPatch(config: ProvisionerConfig, publicHost: string, proxyPort: number, modelId: string): string {
+function webPatch(config: ContainerConfig, publicHost: string, proxyPort: number, modelId: string): string {
   const bundle = (name: string): string => `file://${CONTAINER.assets}/packages/${name}/lib/index.js`
   return `${JSON.stringify([
     { id: 'web-runtime', config: { openBrowser: false, printUrl: false, publicUrl: null, surfaceContext: true, trustedHosts: [publicHost] } },
@@ -173,12 +178,14 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
   const rotateMs = deps.credentialRotateMs ?? 480_000
   const portFree = deps.portFree ?? loopbackPortFree
   const imageLock = new KeyedLock()
-  const live = new Map<UserId, { forwarder: Forwarder; timer: NodeJS.Timeout; instanceId: string; port: number }>()
+  const live = new Map<UserId, { forwarder: Forwarder; timer: NodeJS.Timeout; instanceId: InstanceId; port: number }>()
+  const reserved = new Map<UserId, number>()
+  const allocationLock = new KeyedLock()
   let cursor = 0
 
   /** Next unclaimed, bindable port of the sidecar range; ports of live instances are never reused. */
   async function allocateSidecarPort(): Promise<number> {
-    const claimed = new Set([...live.values()].map(entry => entry.port))
+    const claimed = new Set([...live.values()].map(entry => entry.port).concat([...reserved.values()], [...(await deps.claimedPorts?.() ?? [])]))
     for (const port of portsFrom(config.ports.sidecar, cursor)) {
       if (claimed.has(port) || !await portFree(port)) continue
       cursor = port - config.ports.sidecar.min + 1
@@ -235,16 +242,24 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     await rename(temporary, path)
   }
 
-  async function writeCredential(record: UserRecord, instanceId: string): Promise<void> {
+  async function writeCredential(record: UserRecord, instanceId: InstanceId): Promise<void> {
     const issued = await deps.quota.issue(record.userId, instanceId)
     await writePrivate(record, join(record.layout.home, 'quota-credential.json'), `${JSON.stringify(issued)}\n`)
   }
 
   async function teardown(record: UserRecord): Promise<void> {
+    const errors: unknown[] = []
     const entry = live.get(record.userId)
-    if (entry !== undefined) { clearInterval(entry.timer); live.delete(record.userId); await entry.forwarder.close().catch(() => {}) }
-    await deps.quota.close(record.userId).catch(() => {})
-    try { await removeContainer(record) } finally { await clearReady(record.layout.ctl).catch(() => {}) }
+    if (entry !== undefined) {
+      clearInterval(entry.timer)
+      try { await entry.forwarder.close() } catch (error) { errors.push(error) }
+    }
+    try { await deps.quota.close(record.userId) } catch (error) { errors.push(error) }
+    try { await removeContainer(record) } catch (error) { errors.push(error) }
+    try { await clearReady(record.layout.ctl) } catch (error) { errors.push(error) }
+    if (errors.length === 1) throw errors[0]
+    if (errors.length) throw new AggregateError(errors, 'runtime cleanup could not be verified')
+    live.delete(record.userId); reserved.delete(record.userId)
   }
 
   /** Polite stop within the configured time, then SIGKILL, then a forced remove; fails loudly if it is still there. */
@@ -257,24 +272,36 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     if (forced.code !== 0 && await containerState(record) !== 'stopped') throw new RuntimeStopError()
   }
 
-  return {
-    async start(record) {
-      // 1. Fail closed on limits, gVisor, and the quota proxy before anything is created.
-      try { await enforceLimits(runner, deps.probe, config.tools, config.limits, record.uid) }
-      catch (error) { throw error instanceof LimitsError ? new RuntimeStartError('limits') : error }
-      const gvisor = await runner.run(config.tools.runsc, ['--version'])
-      if (gvisor.code !== 0) throw new RuntimeStartError('gvisor-unavailable')
-      if (!await deps.quota.healthy().catch(() => false)) throw new RuntimeStartError('quota-unavailable')
-      await ensureImage(record)
-      // 2. Clear leftovers from a previous run so no stale token or socket can be published.
+  async function prepare(record: UserRecord): Promise<void> {
+    try { await enforceLimits(runner, deps.probe, config.tools, config.limits, record.uid) }
+    catch (error) { throw error instanceof LimitsError ? new RuntimeStartError('limits') : error }
+    const gvisor = await runner.run(config.tools.runsc, ['--version'])
+    if (gvisor.code !== 0) throw new RuntimeStartError('gvisor-unavailable')
+    if (!await deps.quota.healthy().catch(() => false)) throw new RuntimeStartError('quota-unavailable')
+    await ensureImage(record)
+  }
+  async function allocate(record: UserRecord, instanceId: InstanceId): Promise<{ webPort: number; quotaPort: number }> {
+    return allocationLock.run('ports', async () => {
       await teardown(record)
-      const instanceId = randomBytes(18).toString('base64url')
+      const webPort = await allocateSidecarPort()
+      reserved.set(record.userId, webPort)
+      await deps.acquired?.(record.userId, instanceId, 'network', { webPort })
+      const proxy = await deps.quota.open(record.userId, instanceId)
+      await deps.acquired?.(record.userId, instanceId, 'quota', { quotaPort: proxy.port })
+      if (proxy.port < config.ports.quota.min || proxy.port > config.ports.quota.max) throw new RuntimeStartError('quota-unavailable')
+      return { webPort, quotaPort: proxy.port }
+    })
+  }
+  return {
+    prepare, allocate,
+    async start(record, allocation) {
+      if (allocation === undefined) await prepare(record)
+      const instanceId = allocation?.instanceId ?? parseInstanceId(randomBytes(18).toString('base64url'))
       let failed = true
       try {
-        const sidecarPort = await allocateSidecarPort()
-        const proxy = await deps.quota.open(record.userId, instanceId)
-        // The firewall allows exactly this range; a proxy listening anywhere else would be unreachable or unsafe.
-        if (proxy.port < config.ports.quota.min || proxy.port > config.ports.quota.max) throw new RuntimeStartError('quota-unavailable')
+        const ports = allocation ?? await allocate(record, instanceId)
+        const sidecarPort = ports.webPort
+        const proxy = { port: ports.quotaPort }
         await writeCredential(record, instanceId)
         await writePrivate(record, join(record.layout.home, 'public-harness-web.patch.yml'),
           webPatch(config, deps.publicHost, proxy.port, 'platform-model'))
@@ -282,6 +309,7 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
         assertSafeRunArgv(argv, config, record)
         const started = await asAccount(record, argv)
         if (started.code !== 0) throw new RuntimeStartError('start-failed')
+        await deps.acquired?.(record.userId, instanceId, 'unit')
         const ready = await waitForReady(record.layout.ctl, record.uid, config.readyTimeoutMs, 100, sleep, deps.clock)
           .catch(() => { throw new RuntimeStartError('not-ready') })
         void ready
@@ -295,10 +323,11 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
         const timer = setInterval(() => { void writeCredential(record, instanceId).catch(() => {}) }, rotateMs)
         timer.unref()
         live.set(record.userId, { forwarder, timer, instanceId, port: hostPort })
+        await deps.acquired?.(record.userId, instanceId, 'forwarder')
         failed = false
         return { kind: 'unix', path: record.layout.socketPath }
       } finally {
-        if (failed) await teardown(record).catch(() => {})
+        if (failed) await teardown(record)
       }
     },
     stop: teardown,

@@ -41,7 +41,7 @@ systemd-sysusers && systemd-tmpfiles --create && nft -f /etc/nftables.d/dsh-publ
 
 把每个 `deploy/production/config/*.example.json` 去掉 `.example` 后复制到 `/etc/dsh-public/`，属主为 root 且其他用户不可写，并替换所有占位符：两个组 ID、authentik audience 和密钥文件、模型上游、实例镜像以及主机名。把平台模型密钥、令牌密钥和健康密钥作为属主为 `dsh-quota` 的 `0600` 文件放入 `/etc/dsh-public/secrets/`。将 `deploy/authentik/brand.yml` 和 `deploy/authentik/public-harness.yaml` 作为 authentik 蓝图导入，CAPTCHA 密钥放在 authentik 的环境变量中。用 `scripts/build-image.sh` 和 `scripts/build-assets.sh` 构建镜像和运行时资源发布版，把 `/opt/dsh-public/assets/current` 指向该发布版，用 `deploy/production-profile.ts` 生成三个配置，再启动 `dsh-public.target`。在出站表、限制和 gVisor 验证通过之前，配置服务拒绝启动任何实例。
 
-`scripts/build-image.sh` 还会导出 `imageArchive` 指定的镜像归档（默认 `/opt/dsh-public/image/dsh-instance.tar`，所有账号可读）。配置服务不共享镜像存储：每个账号有自己的无根存储，因此账号首次启动时会以该账号身份执行 `podman load` 加载归档（未配置归档时则 `podman pull` `image`），一次只处理一个账号；之后若配置的镜像引用仍不存在，则拒绝启动。首次启动会较慢，且每个账号保存一份镜像并计入该账号的磁盘配额，因此 `diskBytes` 要按镜像加用户数据来估算。
+`scripts/build-image.sh` 还会导出 `runtime.imageArchive` 指定的镜像归档（默认 `/opt/dsh-public/image/dsh-instance.tar`，所有账号可读）。配置服务不共享镜像存储：每个账号有自己的无根存储，因此账号首次启动时会以该账号身份执行 `podman load` 加载归档（未配置归档时则 `podman pull` `runtime.image`），一次只处理一个账号；之后若配置的镜像引用仍不存在，则拒绝启动。首次启动会较慢，且每个账号保存一份镜像并计入该账号的磁盘配额，因此 `diskBytes` 要按镜像加用户数据来估算。
 
 <a id="network-boundaries"></a>
 ## 网络边界

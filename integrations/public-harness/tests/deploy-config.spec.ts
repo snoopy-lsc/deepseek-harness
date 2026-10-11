@@ -8,6 +8,7 @@ import { collectConfigFacts } from '../deploy/release-check.ts'
 import { PRODUCTION_PROFILES, writeProductionProfile } from '../deploy/production-profile.ts'
 import { portRangesOverlap } from '../packages/contracts/src/ports.ts'
 import { parseReleaseManifest } from '../deploy/upgrade.ts'
+import { resolveContainerConfig } from '../packages/provisioner/src/config.ts'
 import { networkArgument } from '../packages/provisioner/src/limits.ts'
 import { parseProvisionerProfileConfig } from '../packages/production/src/provisioner-service.ts'
 import { parseQuotaProfileConfig } from '../packages/production/src/quota-service.ts'
@@ -33,7 +34,7 @@ describe('production configuration examples', () => {
   })
 
   it('loads the image archive that build-image.sh exports', async () => {
-    const provisioner = parseProvisionerProfileConfig(await json('deploy/production/config/provisioner.example.json')).provisioner
+    const provisioner = resolveContainerConfig(parseProvisionerProfileConfig(await json('deploy/production/config/provisioner.example.json')).provisioner)
     expect(provisioner.imageArchive).toBeDefined()
     const script = await text('deploy/production/scripts/build-image.sh')
     expect(script).toContain(`archive=\${3:-${provisioner.imageArchive}}`)
@@ -42,7 +43,7 @@ describe('production configuration examples', () => {
   })
 
   it('selects the pasta stack and leaves its options (--no-splice, host loopback) to the provisioner', async () => {
-    const provisioner = parseProvisionerProfileConfig(await json('deploy/production/config/provisioner.example.json')).provisioner
+    const provisioner = resolveContainerConfig(parseProvisionerProfileConfig(await json('deploy/production/config/provisioner.example.json')).provisioner)
     expect(provisioner.limits.network).toBe('pasta')
     expect(networkArgument(provisioner.limits.network, provisioner.quota.hostAddress)).toContain('--no-splice')
   })
@@ -64,7 +65,7 @@ describe('production configuration examples', () => {
     }
     const packages = (await readdir(join(root, 'packages'))).filter(name => name !== 'node_modules')
     expect(Object.keys(manifest.bundles).map(name => name.replace('@public-harness/', '')).sort()).toEqual(packages.sort())
-    expect(manifest.image).toBe((await json('deploy/production/config/provisioner.example.json') as { provisioner: { image: string } }).provisioner.image)
+    expect(manifest.image).toBe((await json('deploy/production/config/provisioner.example.json') as { provisioner: { runtime: { image: string } } }).provisioner.runtime.image)
   })
 })
 
@@ -208,7 +209,7 @@ describe('host artifacts', () => {
     const defined = /^define QUOTA_PORTS = (\d+)-(\d+)$/m.exec(file)
     expect(defined).not.toBeNull()
     const range = { min: Number(defined![1]), max: Number(defined![2]) }
-    const provisioner = parseProvisionerProfileConfig(await json('deploy/production/config/provisioner.example.json')).provisioner
+    const provisioner = resolveContainerConfig(parseProvisionerProfileConfig(await json('deploy/production/config/provisioner.example.json')).provisioner)
     const quota = parseQuotaProfileConfig(await json('deploy/production/config/quota.example.json')).service
     expect(quota.listenPorts).toEqual(range)
     expect(provisioner.ports.quota).toEqual(range)
@@ -251,6 +252,9 @@ describe('production profile generation', () => {
       const profile = await writeProductionProfile(home, name, { configFile: `/etc/dsh-public/${name}.json`, installRoot: '/opt/dsh-public/integration/' })
       expect(await writeProductionProfile(home, name, { configFile: `/etc/dsh-public/${name}.json`, installRoot: '/opt/dsh-public/integration/' })).toBe(profile)
       const patch = JSON.parse(await readFile(join(profile, 'cordis.patch.yml'), 'utf8')) as Array<{ insert: Array<{ name: string; config: { configFile: string } }> }>
+      if (name === 'provisioner') {
+        expect(patch[0]!.insert.map(row => row.name.split('/').at(-1))).toEqual(['container-runtime.js', 'provisioner-service.js'])
+      }
       expect(patch[0]!.insert[0]!.config.configFile).toBe(`/etc/dsh-public/${name}.json`)
       expect(patch[0]!.insert[0]!.name).toMatch(/^file:\/\/\/opt\/dsh-public\/integration\/packages\/production\/lib\/.+\.js$/)
     }

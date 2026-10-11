@@ -9,26 +9,55 @@
       "storageRoot": "/var/lib/dsh-public/storage",
       "stateDir": "/var/lib/dsh-public/state",
       "socketDir": "/run/dsh-public/instances",
-      "runtimeAssets": "/opt/dsh-public/assets/current",
       "quotaMount": "/var/lib/dsh-public/storage-quota-mount"
     },
     "tools": {
-      "getent": "/usr/bin/getent", "useradd": "/usr/sbin/useradd", "userdel": "/usr/sbin/userdel",
-      "loginctl": "/usr/bin/loginctl", "nologin": "/usr/sbin/nologin", "sharedGroup": "dsh-instances",
-      "setquota": "/usr/sbin/setquota", "nft": "/usr/sbin/nft", "quotaMount": "/var/lib/dsh-public/storage-quota-mount",
-      "runuser": "/usr/sbin/runuser", "podman": "/usr/bin/podman", "runsc": "/usr/local/bin/runsc",
-      "git": "/usr/bin/git", "env": "/usr/bin/env"
+      "getent": "/usr/bin/getent",
+      "useradd": "/usr/sbin/useradd",
+      "userdel": "/usr/sbin/userdel",
+      "nologin": "/usr/sbin/nologin"
     },
     "socketGid": 990,
     "maxActiveInstances": 40,
     "idleStopMs": 1800000,
     "deletionRecoveryMs": 2592000000,
-    "image": "localhost/dsh-instance:2026.10.0-rc2",
-    "imageArchive": "/opt/dsh-public/image/dsh-instance.tar",
-    "limits": { "cpus": 2, "memoryBytes": 4294967296, "pids": 2048, "openFiles": 8192, "diskBytes": 10737418240, "network": "pasta" },
+    "limits": {
+      "cpus": 2,
+      "memoryBytes": 4294967296,
+      "pids": 2048,
+      "openFiles": 8192,
+      "diskBytes": 10737418240
+    },
     "readyTimeoutMs": 120000,
     "stopTimeoutMs": 20000,
-    "quota": { "hostAddress": "10.0.2.2" },
-    "ports": { "quota": { "min": 20000, "max": 20199 }, "sidecar": { "min": 21000, "max": 21199 } }
+    "ports": {
+      "quota": {
+        "min": 20000,
+        "max": 20199
+      }
+    },
+    "runtime": {
+      "kind": "podman-gvisor",
+      "runtimeAssets": "/opt/dsh-public/assets/current",
+      "tools": {
+        "loginctl": "/usr/bin/loginctl",
+        "sharedGroup": "dsh-instances",
+        "setquota": "/usr/sbin/setquota",
+        "nft": "/usr/sbin/nft",
+        "runuser": "/usr/sbin/runuser",
+        "podman": "/usr/bin/podman",
+        "runsc": "/usr/local/bin/runsc",
+        "git": "/usr/bin/git",
+        "env": "/usr/bin/env"
+      },
+      "image": "localhost/dsh-instance:2026.10.0-rc2",
+      "imageArchive": "/opt/dsh-public/image/dsh-instance.tar",
+      "hostAddress": "10.0.2.2",
+      "network": "pasta",
+      "sidecar": {
+        "min": 21000,
+        "max": 21199
+      }
+    }
   }
 }

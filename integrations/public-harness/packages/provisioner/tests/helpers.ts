@@ -3,9 +3,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { localGit, parseUserId, type GitRunner } from '@public-harness/contracts'
 import type { AccountDirectory } from '../src/accounts.ts'
-import type { ProvisionerConfig } from '../src/config.ts'
+import type { ProvisionerConfig, ContainerRuntimeConfig } from '../src/config.ts'
 import type { CommandResult, CommandRunner } from '../src/system.ts'
 import { createFileStateStore, type StateStore } from '../src/state.ts'
+import { createContainerInstanceRuntime, type ContainerInstanceRuntime } from '../src/runtime-provider.ts'
 import { createUserProvisioner, type UserProvisioner } from '../src/users.ts'
 
 export const uid = process.getuid!()
@@ -39,22 +40,23 @@ export class FakeDirectory implements AccountDirectory {
   async remove(account: string): Promise<void> { this.removed.push(account); this.accounts.delete(account) }
 }
 
-export async function makeConfig(overrides: Partial<ProvisionerConfig> = {}): Promise<ProvisionerConfig> {
+export async function makeConfig(overrides: Partial<ProvisionerConfig> = {}): Promise<ProvisionerConfig & { runtime: ContainerRuntimeConfig }> {
   const base = await mkdtemp(join(tmpdir(), 'dsh-prov-'))
   const paths = { storageRoot: join(base, 'storage'), stateDir: join(base, 'state'), socketDir: join(base, 's'),
     runtimeAssets: join(base, 'assets'), quotaMount: join(base, 'mount') }
   for (const path of Object.values(paths)) await mkdir(path, { recursive: true, mode: 0o700 })
   const tool = (name: string): string => `/usr/bin/${name}`
   return {
-    paths, socketGid: gid, maxActiveInstances: 2, idleStopMs: 600_000, deletionRecoveryMs: 7 * 86_400_000,
-    image: 'localhost/dsh-instance:1', readyTimeoutMs: 5000, stopTimeoutMs: 5000,
-    quota: { hostAddress: '10.0.2.2' }, ports: { quota: { min: 29100, max: 29109 }, sidecar: { min: 29200, max: 29209 } },
-    limits: { cpus: 1, memoryBytes: 1 << 30, pids: 256, openFiles: 4096, diskBytes: 5 * 2 ** 30, network: 'pasta' },
-    tools: { getent: tool('getent'), useradd: tool('useradd'), userdel: tool('userdel'), loginctl: tool('loginctl'),
-      nologin: '/usr/sbin/nologin', sharedGroup: 'dsh-instances', setquota: '/usr/sbin/setquota', nft: '/usr/sbin/nft',
-      quotaMount: paths.quotaMount, runuser: '/usr/sbin/runuser', podman: tool('podman'), runsc: tool('runsc'),
-      git: tool('git'), env: tool('env') },
+    paths: { storageRoot: paths.storageRoot, stateDir: paths.stateDir, socketDir: paths.socketDir, quotaMount: paths.quotaMount },
+    socketGid: gid, maxActiveInstances: 2, idleStopMs: 600_000, deletionRecoveryMs: 7 * 86_400_000,
+    readyTimeoutMs: 5000, stopTimeoutMs: 5000, ports: { quota: { min: 29100, max: 29109 } },
+    limits: { cpus: 1, memoryBytes: 1 << 30, pids: 256, openFiles: 4096, diskBytes: 5 * 2 ** 30 },
+    tools: { getent: tool('getent'), useradd: tool('useradd'), userdel: tool('userdel'), nologin: '/usr/sbin/nologin' },
     ...overrides,
+    runtime: { kind: 'podman-gvisor', runtimeAssets: paths.runtimeAssets, image: 'localhost/dsh-instance:1',
+      hostAddress: '10.0.2.2', network: 'pasta', sidecar: { min: 29200, max: 29209 },
+      tools: { loginctl: tool('loginctl'), sharedGroup: 'dsh-instances', setquota: '/usr/sbin/setquota', nft: '/usr/sbin/nft',
+        runuser: '/usr/sbin/runuser', podman: tool('podman'), runsc: tool('runsc'), git: tool('git'), env: tool('env') } },
   }
 }
 
@@ -63,6 +65,7 @@ export interface Harness {
   directory: FakeDirectory
   runner: FakeRunner
   store: StateStore
+  runtime: ContainerInstanceRuntime
   users: UserProvisioner
   clock: { now: number }
   failStorageOnce: { value: boolean }
@@ -76,7 +79,11 @@ export async function makeHarness(overrides: Partial<ProvisionerConfig> = {}): P
   const clock = { now: 1_000_000 }
   const failStorageOnce = { value: false }
   const gitFor = (): GitRunner => localGit
-  const users = createUserProvisioner({ config, store, directory, runner, clock: () => clock.now, gitFor,
+  let port = config.ports.quota.min
+  const runtime = createContainerInstanceRuntime({ config, store, runner, publicHost: 'h.test', gitFor,
+    probe: { controllers: async () => ['cpu', 'cpuset', 'hugetlb', 'io', 'memory', 'pids'] }, portFree: async () => true,
+    quota: { healthy: async () => true, open: async () => ({ port: port++ }), issue: async () => ({ token: 'a.b', expiresAt: 1 }), close: async () => {} } })
+  const users = createUserProvisioner({ config, store, directory, runner, runtime, clock: () => clock.now,
     ownership: { chown: async () => { if (failStorageOnce.value) { failStorageOnce.value = false; throw new Error('simulated power loss') } } } })
-  return { config, directory, runner, store, users, clock, failStorageOnce }
+  return { config, directory, runner, store, users, runtime, clock, failStorageOnce }
 }

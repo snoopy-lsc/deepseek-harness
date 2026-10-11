@@ -10,6 +10,7 @@ import { readReady, waitForReady } from '../src/token-channel.ts'
 import type { CommandRunner } from '../src/system.ts'
 import type { UserRecord } from '../src/users.ts'
 import { FakeRunner, alice, gid, makeConfig, uid } from './helpers.ts'
+import { resolveContainerConfig } from '../src/config.ts'
 import { layoutFor } from '../src/storage.ts'
 import { connect, createServer } from 'node:net'
 
@@ -18,7 +19,9 @@ const controllers = { controllers: async () => ['cpuset', 'cpu', 'io', 'memory',
 
 async function setup(options: { quotaHealthy?: boolean; busyPorts?: number[]; imageArchive?: string } = {}) {
   const busyPorts = options.busyPorts
-  const config = await makeConfig(options.imageArchive === undefined ? {} : { imageArchive: options.imageArchive })
+  const common = await makeConfig()
+  if (options.imageArchive !== undefined) common.runtime = { ...common.runtime, imageArchive: options.imageArchive }
+  const config = resolveContainerConfig(common)
   const account = deriveNames(alice)
   const layout = layoutFor(config.paths, account.account)
   for (const dir of [layout.root, layout.home, layout.workspace, layout.ctl, layout.podman]) await mkdir(dir, { recursive: true, mode: 0o700 })
@@ -371,7 +374,7 @@ describe('stopping and inspecting containers', () => {
   })
 
   it('does not wait forever on a runner that never answers: the deadline escalates to kill', async () => {
-    const config = await makeConfig({ stopTimeoutMs: 20 })
+    const config = resolveContainerConfig(await makeConfig({ stopTimeoutMs: 20 }))
     const base = await setup()
     const calls: Array<{ command: string; args: string[] }> = []
     let hung = 0

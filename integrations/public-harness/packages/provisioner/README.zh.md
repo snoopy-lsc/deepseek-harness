@@ -9,7 +9,7 @@ kind: "package-library"
 
 ## Summary
 
-此包是权限范围很窄的 Linux 配置服务。它通过固定的 Unix socket 协议与路由器通信，为每个不透明用户 ID 创建一个主机账号和私有存储目录树，并在 gVisor 下的无根 Podman 容器中运行该用户的 Harness，且必须设置资源限制。它还负责暂停、空闲停止、需确认的删除，以及主机重启后的恢复。所有主机命令都经由注入的执行器，因此此包的测试无需 root。
+本包创建私有 Linux 账号和存储，在配置的容量内允许启动，并管理暂停、空闲停止、确认删除和重启恢复。显式挂载的运行时 provider 启动每个用户的 Harness。容器 provider 使用无根 Podman 和 gVisor；主机操作可注入，以便无特权测试。
 
 ## Table of Contents
 
@@ -23,12 +23,14 @@ kind: "package-library"
 <a id="use-this-package"></a>
 ## 使用此包
 
-`createProvisionerService` 接收已校验的 `ProvisionerConfig`、额度控制客户端和 cgroup 探测函数，返回路由器处理函数和生命周期操作。`startProvisionerServer` 在允许指定用户组连接的 socket 上提供处理函数；处理函数只接收带已校验用户 ID 的 `ensure`、`launch-grant`、`stop` 或 `status`，`ProvisionerClient` 提供对应方法。`startAdminServer` 在另一个仅 root 可访问的 socket 上为 `AdminClient` 提供 `suspend`、`reactivate`、`request-deletion`、`confirm-deletion`、`delete`、`reconcile`、`idle-stop` 和 `status`。路由器拒绝类型 `CapacityError` 与 `AccountSuspendedError` 以固定词语穿过 socket，其他任何失败都变为 `invalid request`。
+`createProvisionerService` 接收已校验的 `ProvisionerConfig` 和注入的 `InstanceRuntime`，返回路由器处理函数和生命周期操作。缺少 provider，或配置与持久化后端不匹配时，在主机变更之前拒绝。Cordis 入口 `@public-harness/provisioner/runtime-provider` 注册一个具有可释放所有权的容器运行时；重复 provider 会被拒绝。 `startProvisionerServer` 在允许指定用户组连接的 socket 上提供处理函数；处理函数只接收带已校验用户 ID 的 `ensure`、`launch-grant`、`stop` 或 `status`，`ProvisionerClient` 提供对应方法。`startAdminServer` 在另一个仅 root 可访问的 socket 上为 `AdminClient` 提供 `suspend`、`reactivate`、`request-deletion`、`confirm-deletion`、`delete`、`reconcile`、`idle-stop` 和 `status`。路由器拒绝类型 `CapacityError` 与 `AccountSuspendedError` 以固定词语穿过 socket，其他任何失败都变为 `invalid request`。
 
 <a id="understand-the-implementation"></a>
 ## 了解实现
 
-账号名和路径名由用户 ID 的哈希派生，从不使用显示名。配置在每用户锁下幂等，并能在中断后继续：账号、所有权和权限精确的私有存储、Git 工作区，以及持久状态记录。活动实例数已达上限时，新用户会在任何主机变更之前被拒绝。启动要求 gVisor、六个已委派的 cgroup 控制器、出站防火墙表、磁盘配额、额度代理，以及账号自有存储中的实例镜像（从 `imageArchive` 加载或拉取）都可用，否则拒绝；`assertSafeRunArgv` 会拒绝固定集合之外的任何 `podman` 参数。网络参数在此构造（`pasta` 加 `--map-host-loopback` 和 `--no-splice`），额度监听地址必须位于 `ports.quota`，sidecar 发布在另一段 `ports.sidecar` 的空闲端口上。容器的就绪令牌经私有文件传递，主机侧转发器把每个实例一个受限的 Unix socket 桥接到容器发布的本机端口。`status`、`ensure` 和 `reconcile` 会把记录的状态与容器引擎对照，因此被外部杀掉的实例会被释放并报告为 `stopped`；停止会从 `podman rm` 升级到 SIGKILL 和强制删除。`reconcile` 在重启后恢复或停止实例、清理过期 socket，且仅在删除已被请求、确认并过了恢复期后才清除账号。
+账号和运行时名称由用户 ID 的哈希派生。通用配置包含账号工具、存储路径、数值资源限制、额度端口和生命周期时间。`runtime.kind` 选择后端；仅容器使用的可执行文件、资源、镜像配置、网络模式、额度主机地址和 sidecar 端口归于 `podman-gvisor` 标签。容器启动验证 gVisor、已委派的 cgroup 控制器、出站防火墙表、磁盘配额、额度服务健康状况和镜像。私有就绪文件携带 Web 凭据，受限 Unix 转发器访问发布的 sidecar 端口。生命周期操作查询 provider，停止空闲或暂停的实例，并要求删除已确认且经过恢复期。
+
+记录以版本 2 写入，包含运行时引用、启动 ID、已分配端口和已获得资源。保留的 v1 解码器将旧记录解释为容器状态，读取时不重写文件。损坏或不支持的记录保持原样。中断的分配和清理失败会进入隔离状态，撤销路由并占用容量；只有 provider 清理成功后，对账才允许复用。后端转移需要操作员离线备份、完全停止和验证恢复；只修改 `runtime.kind` 会拒绝已有记录。
 
 <a id="further-exploration"></a>
 ## 延伸阅读

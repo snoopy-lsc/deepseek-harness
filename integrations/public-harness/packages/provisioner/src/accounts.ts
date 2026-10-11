@@ -1,17 +1,17 @@
 /** Derived host identities and the Linux account directory. */
 import { createHash } from 'node:crypto'
-import type { UserId } from '@public-harness/contracts'
+import { parseContainerName, parseUnitName, type ContainerName, type UnitName, type UserId } from '@public-harness/contracts'
 import { runChecked, type CommandRunner } from './system.ts'
 
 /** Account, container, and file names derived only from the opaque user ID. */
-export interface DerivedNames { readonly account: string; readonly container: string }
+export interface DerivedNames { readonly account: string; readonly container: ContainerName; readonly unit: UnitName }
 
 const ACCOUNT_PATTERN = /^dsh-[0-9a-f]{24}$/
 
 /** Derive stable, fixed-shape names; display names, emails, and raw IDs never reach the host. */
 export function deriveNames(userId: UserId): DerivedNames {
   const digest = createHash('sha256').update('public-harness/user/v1\0').update(userId).digest('hex').slice(0, 24)
-  return { account: `dsh-${digest}`, container: `dsh-${digest}` }
+  return { account: `dsh-${digest}`, container: parseContainerName(`dsh-${digest}`), unit: parseUnitName(`dsh-user-${digest}.service`) }
 }
 
 /** True only for names this module could have derived. */
@@ -49,7 +49,8 @@ function assertAccount(account: string): void {
 }
 
 /** Account directory backed by `getent`, `useradd`, `loginctl`, and `userdel` through an injected runner. */
-export function createAccountDirectory(runner: CommandRunner, tools: AccountToolchain): AccountDirectory {
+export function createAccountDirectory(runner: CommandRunner, tools: Pick<AccountToolchain, 'getent' | 'useradd' | 'userdel' | 'nologin'>,
+  runtime: { readonly kind: 'systemd' } | { readonly kind: 'podman-gvisor'; readonly tools: Pick<AccountToolchain, 'loginctl' | 'sharedGroup'> }): AccountDirectory {
   return {
     async lookup(account) {
       assertAccount(account)
@@ -65,13 +66,13 @@ export function createAccountDirectory(runner: CommandRunner, tools: AccountTool
     async create(account, home) {
       assertAccount(account)
       await runChecked(runner, tools.useradd, ['--user-group', '--no-create-home', '--home-dir', home,
-        '--shell', tools.nologin, '--groups', tools.sharedGroup, '--comment', 'public harness instance', account])
+        '--shell', tools.nologin, '--password', '!', ...(runtime.kind === 'podman-gvisor' ? ['--groups', runtime.tools.sharedGroup] : []), '--comment', 'public harness instance', account])
       // Rootless Podman needs a persistent user manager and runtime directory for the account.
-      await runChecked(runner, tools.loginctl, ['enable-linger', account])
+      if (runtime.kind === 'podman-gvisor') await runChecked(runner, runtime.tools.loginctl, ['enable-linger', account])
     },
     async remove(account) {
       assertAccount(account)
-      await runner.run(tools.loginctl, ['disable-linger', account])
+      if (runtime.kind === 'podman-gvisor') await runner.run(runtime.tools.loginctl, ['disable-linger', account])
       await runChecked(runner, tools.userdel, [account])
     },
   }
