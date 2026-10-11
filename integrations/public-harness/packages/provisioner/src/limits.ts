@@ -9,7 +9,7 @@ export interface Limits {
   readonly pids: number
   readonly openFiles: number
   readonly diskBytes: number
-  /** Podman network spec for the instance (for example `pasta`); host and shared namespaces are refused. */
+  /** Isolated user-space network stack: exactly `pasta` or `slirp4netns`. The provisioner builds the full podman argument. */
   readonly network: string
 }
 
@@ -33,11 +33,18 @@ export function validateLimits(value: unknown): Limits {
   if (Number(record.memoryBytes) < 64 << 20) throw new LimitsError('memoryBytes below 64 MiB')
   if (Number(record.pids) < 16) throw new LimitsError('pids below 16')
   const network = record.network
-  if (typeof network !== 'string' || !/^(pasta|slirp4netns)(:[A-Za-z0-9:,._=\/-]{0,120})?$/.test(network)) {
-    throw new LimitsError('network must be an isolated pasta or slirp4netns stack')
-  }
+  if (network !== 'pasta' && network !== 'slirp4netns') throw new LimitsError('network must be exactly pasta or slirp4netns')
   return { cpus: Number(record.cpus), memoryBytes: Number(record.memoryBytes), pids: Number(record.pids),
     openFiles: Number(record.openFiles), diskBytes: Number(record.diskBytes), network }
+}
+
+/**
+ * The `--network` argument for an instance. pasta must run with `--no-splice`: with the default splice path the published
+ * sidecar port answers with resets under gVisor (observed with passt 2025-05-03). `--map-host-loopback` is what lets the
+ * instance reach the quota proxy at `hostAddress`. Options are fixed here, never taken from configuration.
+ */
+export function networkArgument(network: Limits['network'], hostAddress: string): string {
+  return network === 'pasta' ? `pasta:--map-host-loopback,${hostAddress},--no-splice` : 'slirp4netns:allow_host_loopback=true'
 }
 
 /** Host facts the limits depend on, injected so tests need no cgroups or quotas. */

@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 import { collectConfigFacts } from '../deploy/release-check.ts'
 import { PRODUCTION_PROFILES, writeProductionProfile } from '../deploy/production-profile.ts'
 import { parseReleaseManifest } from '../deploy/upgrade.ts'
+import { networkArgument } from '../packages/provisioner/src/limits.ts'
 import { parseProvisionerProfileConfig } from '../packages/production/src/provisioner-service.ts'
 import { parseQuotaProfileConfig } from '../packages/production/src/quota-service.ts'
 import { parseTeamRouterConfig } from '../packages/production/src/team-router.ts'
@@ -28,6 +29,12 @@ describe('production configuration examples', () => {
     expect(parseTeamRouterConfig(await json('deploy/production/config/router.example.json')).routerSocket).toBe('/run/dsh-public/router/router.sock')
     expect(parseProvisionerProfileConfig(await json('deploy/production/config/provisioner.example.json')).provisioner.limits.pids).toBeGreaterThan(0)
     expect(parseQuotaProfileConfig(await json('deploy/production/config/quota.example.json')).service.siteDailyTokens).toBeGreaterThan(0)
+  })
+
+  it('selects the pasta stack and leaves its options (--no-splice, host loopback) to the provisioner', async () => {
+    const provisioner = parseProvisionerProfileConfig(await json('deploy/production/config/provisioner.example.json')).provisioner
+    expect(provisioner.limits.network).toBe('pasta')
+    expect(networkArgument(provisioner.limits.network, provisioner.quota.hostAddress)).toContain('--no-splice')
   })
 
   it('contain no secrets, public binds, or non-private addresses', async () => {

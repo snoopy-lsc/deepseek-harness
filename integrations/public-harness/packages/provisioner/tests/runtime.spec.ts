@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { deriveNames } from '../src/accounts.ts'
-import { LimitsError, enforceLimits, validateLimits } from '../src/limits.ts'
+import { LimitsError, enforceLimits, networkArgument, validateLimits } from '../src/limits.ts'
 import { CONTAINER, RuntimeStartError, SIDECAR_PORT, assertSafeRunArgv, buildRunArgv, createRuntime, type QuotaBridge } from '../src/runtime.ts'
 import { startSidecar } from '../src/sidecar.ts'
 import { readReady, waitForReady } from '../src/token-channel.ts'
@@ -56,7 +56,7 @@ describe('mandatory limits', () => {
   it.each([0, -1, Number.NaN])('rejects a non-positive limit %s', value => {
     expect(() => validateLimits({ ...good, pids: value })).toThrow(LimitsError)
   })
-  it.each(['host', 'none', 'container:other', 'ns:/proc/1/ns/net', 'bridge', 'pasta; rm', ''])('rejects network %j', network => {
+  it.each(['host', 'none', 'container:other', 'ns:/proc/1/ns/net', 'bridge', 'pasta; rm', 'pasta:--map-host-loopback,10.0.2.2', 'pasta:--splice', ''])('rejects network %j', network => {
     expect(() => validateLimits({ ...good, network })).toThrow(LimitsError)
   })
 
@@ -77,6 +77,11 @@ describe('mandatory limits', () => {
 })
 
 describe('confined container launch', () => {
+  it('always runs pasta with --no-splice and the quota host-loopback mapping', () => {
+    expect(networkArgument('pasta', '10.0.2.2')).toBe('pasta:--map-host-loopback,10.0.2.2,--no-splice')
+    expect(networkArgument('slirp4netns', '10.0.2.2')).toBe('slirp4netns:allow_host_loopback=true')
+  })
+
   it('uses exactly the planned argv: runsc, read-only root, no capabilities, four mounts, loopback-only publish', async () => {
     const { config, record } = await setup()
     const argv = buildRunArgv(config, record)
@@ -86,6 +91,7 @@ describe('confined container launch', () => {
       `${record.layout.ctl}:/run/harness-ctl:rw,Z`, `${config.paths.runtimeAssets}:/opt/public-harness:ro,Z`])
     expect(argv).toEqual(expect.arrayContaining(['--cap-drop', 'all', '--read-only', '--publish', `127.0.0.1::${SIDECAR_PORT}`,
       '--pids-limit', '256', '--memory', String(1 << 30), '--memory-swap', String(1 << 30), '--cpus', '1']))
+    expect(argv[argv.indexOf('--network') + 1]).toBe('pasta:--map-host-loopback,10.0.2.2,--no-splice')
     expect(argv.slice(-3)).toEqual([config.image, 'node', '/opt/public-harness/container-entry.js'])
     const text = argv.join(' ')
     for (const forbidden of ['privileged', 'docker.sock', 'podman.sock', '--network host', '--cap-add', 'ANTHROPIC', 'DEEPSEEK', 'API_KEY']) {
@@ -103,6 +109,7 @@ describe('confined container launch', () => {
     [['--userns', 'host']],
     [['--pid', 'host']],
     [['--network', 'host']],
+    [['--network', 'pasta:--map-host-loopback,10.0.2.2']],
     [['--publish', '0.0.0.0:80:80']],
     [['--mount', 'type=bind,src=/,dst=/h']],
     [['--add-host', 'x:10.0.0.1']],

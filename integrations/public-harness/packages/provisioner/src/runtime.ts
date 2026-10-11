@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import type { InstanceEndpoint, UserId } from '@public-harness/contracts'
 import type { ProvisionerConfig } from './config.ts'
 import { startUnixForwarder, type Forwarder } from './forwarder.ts'
-import { enforceLimits, LimitsError, type EnforcementProbe } from './limits.ts'
+import { enforceLimits, LimitsError, networkArgument, type EnforcementProbe } from './limits.ts'
 import { clearReady, readReady, waitForReady } from './token-channel.ts'
 import type { CommandRunner } from './system.ts'
 import type { UserRecord } from './users.ts'
@@ -66,7 +66,7 @@ export function buildRunArgv(config: ProvisionerConfig, record: UserRecord): str
   const env = (name: string, value: string): string[] => ['--env', `${name}=${value}`]
   return [
     '--runtime', tools.runsc, 'run', '--detach', '--replace', '--name', record.container,
-    '--network', limits.network, '--publish', `127.0.0.1::${SIDECAR_PORT}`,
+    '--network', networkArgument(limits.network, config.quota.hostAddress), '--publish', `127.0.0.1::${SIDECAR_PORT}`,
     '--cap-drop', 'all', '--security-opt', 'no-new-privileges', '--read-only',
     '--tmpfs', '/tmp:rw,nosuid,nodev,size=256m,mode=1777',
     '--pids-limit', String(limits.pids), '--memory', String(limits.memoryBytes), '--memory-swap', String(limits.memoryBytes),
@@ -97,7 +97,7 @@ export function assertSafeRunArgv(argv: readonly string[], config: ProvisionerCo
       if (!allowedVolumes.has(value) || seen.has(value)) throw new RuntimeStartError('unsafe-argv')
       seen.add(value); index += 1
     } else if (FORBIDDEN_FLAGS.test(arg)) throw new RuntimeStartError('unsafe-argv')
-    else if (arg === '--network' && !/^(pasta|slirp4netns)/.test(argv[index + 1] ?? '')) throw new RuntimeStartError('unsafe-argv')
+    else if (arg === '--network' && argv[index + 1] !== networkArgument(config.limits.network, config.quota.hostAddress)) throw new RuntimeStartError('unsafe-argv')
     else if (arg === '--publish' && !/^127\.0\.0\.1::\d+$/.test(argv[index + 1] ?? '')) throw new RuntimeStartError('unsafe-argv')
   }
   if (seen.size !== allowedVolumes.size) throw new RuntimeStartError('unsafe-argv')
