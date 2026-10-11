@@ -5,7 +5,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { AddressInfo, Socket } from 'node:net'
 import { QuotaAuthenticationError, QuotaRequestError, type AdmissionRequest, type AdmittedRequest } from './admission.ts'
 import type { FilesProxy } from './files.ts'
-import type { QuotaHealth } from './health.ts'
+import type { QuotaHealth, RejectionCategory, RejectionCounter } from './health.ts'
 import { QuotaExceededError, type Reservation } from './ledger.ts'
 import type { TokenIssuer } from './tokens.ts'
 
@@ -20,6 +20,8 @@ export interface QuotaHttpConfig {
   readonly maxBodyBytes: number
   readonly maxFileBodyBytes: number
   readonly health?: { readonly secret: string; inspect(): Promise<QuotaHealth> }
+  /** Optional refusal counters for the private health report. */
+  readonly rejections?: RejectionCounter
 }
 
 function privateSecretMatches(actual: string | undefined, expected: string): boolean {
@@ -64,6 +66,15 @@ async function send(response: ServerResponse, result: Response, signal: AbortSig
     signal.removeEventListener('abort', abort)
     try { if (!done || cancellation !== undefined) await cancel() } finally { reader.releaseLock() }
   }
+}
+
+function categorize(error: unknown): RejectionCategory {
+  if (error instanceof QuotaExceededError) {
+    return error.reason === 'personal daily' ? 'personal-daily' : error.reason === 'site daily' ? 'site-daily' : 'concurrency'
+  }
+  if (error instanceof QuotaAuthenticationError) return 'unauthenticated'
+  if (error instanceof QuotaRequestError) return 'invalid-request'
+  return 'unavailable'
 }
 
 function bearer(request: IncomingMessage): string | undefined {
@@ -119,6 +130,7 @@ export async function startQuotaHttpServer(config: QuotaHttpConfig): Promise<{ p
             headers, body: Uint8Array.from(bytes), signal: abort.signal })
           await send(response, await config.forwardMessages(forwarded, admitted.reservation), abort.signal)
         } catch (error) {
+          config.rejections?.record(categorize(error))
           if (response.headersSent) { response.destroy(); return }
           response.writeHead(error instanceof QuotaExceededError
             ? error.reason === 'personal daily' || error.reason === 'site daily' ? 402 : 429
