@@ -23,7 +23,7 @@ kind: "package-library"
 <a id="use-this-package"></a>
 ## 使用此包
 
-为 `createProductionIdentity` 配置可信公钥和账号状态查询，并在每次请求和升级时将 HTTP 请求头交给 `verify`。本机开发时，为 `createDevelopmentIdentity` 配置 `mode: team-dev`、`127.0.0.1` 主机、私有签名密钥和固定测试用户列表；`issue` 方法会为其中一名用户返回 Cookie。将经过验证的 ID 和原始请求路径传给 `createOwnerRouter().route`；它会检查账号状态和容量、合并同一用户的并发启动请求，并在实例尚未就绪时返回限时等待状态。
+为 `createProductionIdentity` 配置可信公钥和账号状态查询，并在每次请求和升级时将 HTTP 请求头交给 `verify`。本机开发时，为 `createDevelopmentIdentity` 配置 `mode: team-dev`、`127.0.0.1` 主机、私有签名密钥和固定测试用户列表；`issue` 方法会为其中一名用户返回 Cookie。将经过验证的 ID 和原始请求路径传给 `createOwnerRouter().route`；它会检查账号状态和容量、合并同一用户的并发启动请求，并在实例尚未就绪时返回限时等待状态。`createBrowserLaunch().open` 在内部向对应实例交换 Harness 启动令牌，检查预期的重定向和签名 Cookie，并将 Cookie 限定在 `/u/<id>/` 路径下。
 
 <a id="identity-sources"></a>
 ## 身份来源
@@ -38,4 +38,4 @@ kind: "package-library"
 <a id="dev-note"></a>
 ## 开发说明
 
-此包目前提供身份验证和归属路径选择。Cookie 交换及 HTTP/WebSocket 转发是独立的实现任务。正式环境的 authentik 和 Caddy 配置需要在 Linux 上验证后才能开放公众访问。
+此包目前提供身份验证、归属路径选择及 Harness Cookie 的内部交换。HTTP/WebSocket 转发是独立的实现任务。交换时保留浏览器请求的 Host，因为 Harness 会将 Cookie 签名绑定到该地址。正式环境的 authentik 和 Caddy 配置需要在 Linux 上验证后才能开放公众访问。
