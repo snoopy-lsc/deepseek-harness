@@ -10,7 +10,7 @@ const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url))
 const integrationRoot = fileURLToPath(new URL('../', import.meta.url))
 
 /** User-adjustable local user list and startup limits. */
-export type TeamDevSettings = Pick<TeamDevConfig, 'users' | 'startupTimeoutMs' | 'stopTimeoutMs' |
+export type TeamDevSettings = Pick<TeamDevConfig, 'users' | 'maxActiveInstances' | 'idleStopMs' | 'startupTimeoutMs' | 'stopTimeoutMs' |
   'routeWaitMs' | 'retryAfterSeconds' | 'launchExchangeMs' | 'socketLifetimeMs' | 'cookieLifetimeMs' | 'quota' | 'storageLock'>
 
 async function ownedFile(path: string, contents: string): Promise<void> {

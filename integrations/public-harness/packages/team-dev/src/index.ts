@@ -3,9 +3,10 @@ import { randomBytes } from 'node:crypto'
 import { isAbsolute } from 'node:path'
 import type { Context, Fiber } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { parseUserId, type UserId } from '@public-harness/contracts'
+import { MIN_IDLE_MS, parseUserId, startIdleReaper, validateIdleMs, type UserId } from '@public-harness/contracts'
 import { createDevInstanceManager, validateDevUsers } from '@public-harness/dev-runtime'
 import { createDevelopmentIdentity } from '@public-harness/router/dev-identity'
+import { createAdmission } from '@public-harness/router/admission'
 import { createOwnerRouter } from '@public-harness/router/routes'
 import { createBrowserLaunch } from '@public-harness/router/launch'
 import { startRouterServer } from '@public-harness/router/server'
@@ -19,6 +20,10 @@ export interface TeamDevConfig {
   readonly command: string
   readonly args: string[]
   readonly users: string[]
+  /** Most users that may hold a running instance at once; further first requests get the capacity page. */
+  readonly maxActiveInstances: number
+  /** A running instance with no routed request for this long is stopped and wakes on the next request. */
+  readonly idleStopMs: number
   readonly startupTimeoutMs: number
   readonly stopTimeoutMs: number
   readonly routeWaitMs: number
@@ -34,6 +39,8 @@ export interface TeamDevConfig {
 export const Config: z<TeamDevConfig> = z.object({
   host: z.string().required(), storageRoot: z.string().required(), webPatch: z.string().required(),
   command: z.string().required(), args: z.array(z.string()).required(), users: z.array(z.string()).required(),
+  maxActiveInstances: z.number().step(1).min(1).required(),
+  idleStopMs: z.number().step(1).min(MIN_IDLE_MS).required(),
   startupTimeoutMs: z.number().step(1).min(1).required(),
   stopTimeoutMs: z.number().step(1).min(1).required(),
   retryAfterSeconds: z.number().step(1).min(1).required(),
@@ -71,6 +78,9 @@ export function validateTeamDevConfig(config: TeamDevConfig): UserId[] {
   const users = config.users.map(parseUserId)
   validateDevUsers(users)
   validateStorageLockConfig(config.storageLock)
+  if (!Number.isSafeInteger(config.maxActiveInstances) || config.maxActiveInstances <= 0
+    || config.maxActiveInstances > users.length) throw new Error('active-instance cap must be between one and the number of users')
+  validateIdleMs(config.idleStopMs)
   for (const [name, value] of Object.entries(config).filter(([name]) => name.endsWith('Ms'))) {
     if (!Number.isSafeInteger(value) || Number(value) <= 0) throw new Error(`${name} must be positive`)
   }
@@ -94,41 +104,40 @@ export async function apply(ctx: Context, config: TeamDevConfig): Promise<void> 
   const users = validateTeamDevConfig(config)
   const quota = await startTeamDevQuota({ storageRoot: config.storageRoot,
     baseWebPatch: config.webPatch, users, config: config.quota, storageLock: config.storageLock })
-  const managers = new Map(users.map(userId => [userId, createDevInstanceManager({
+  const runtime = createDevInstanceManager({
     mode: 'development', host: '127.0.0.1', storageRoot: config.storageRoot,
-    webPatch: quota.patches.get(userId)!, command: config.command,
-    args: [...config.args], users: [userId], startupTimeoutMs: config.startupTimeoutMs,
-    stopTimeoutMs: config.stopTimeoutMs,
-  })]))
+    webPatch: userId => quota.patches.get(userId)!, command: config.command,
+    args: [...config.args], users, maxActive: config.maxActiveInstances,
+    startupTimeoutMs: config.startupTimeoutMs, stopTimeoutMs: config.stopTimeoutMs,
+  })
   const manager = {
-    ensure: (userId: UserId) => requireManager(userId).ensure(userId),
-    launchGrant: (userId: UserId) => requireManager(userId).launchGrant(userId),
-    stop: (userId: UserId) => requireManager(userId).stop(userId),
+    ensure: (userId: UserId) => runtime.ensure(userId),
+    launchGrant: (userId: UserId) => runtime.launchGrant(userId),
+    stop: (userId: UserId) => runtime.stop(userId),
     close: async () => {
-      const outcomes = await Promise.allSettled([...managers.values()].map(instance => instance.close()))
+      const outcomes = await Promise.allSettled([runtime.close()])
       await quota.close()
       const failures = outcomes.filter((item): item is PromiseRejectedResult => item.status === 'rejected')
       if (failures.length) throw new AggregateError(failures.map(item => item.reason), 'failed to stop development users')
     },
   }
-  function requireManager(userId: UserId) {
-    const instance = managers.get(userId)
-    if (instance === undefined) throw new Error('unknown development test user')
-    return instance
-  }
+  const admission = createAdmission({ maxActive: config.maxActiveInstances, active: () => runtime.active() })
+  const stopReaper = startIdleReaper({ tracker: runtime.tracker, running: () => runtime.active(), stop: userId => runtime.stop(userId),
+    idleMs: config.idleStopMs, intervalMs: Math.min(60_000, Math.max(1000, Math.floor(config.idleStopMs / 4))),
+    onError: () => { process.stderr.write('team-dev: idle stop failed\n') } })
   const identity = createDevelopmentIdentity({ mode: 'team-dev', host: '127.0.0.1',
     secret: randomBytes(32), testUsers: users, lifetimeMs: config.cookieLifetimeMs })
   let entry: Awaited<ReturnType<typeof startRouterServer>>
   try {
     entry = await startRouterServer({ retryAfterSeconds: config.retryAfterSeconds, host: config.host, identity,
       ownerRouter: createOwnerRouter({ instanceManager: manager,
-        isActive: async userId => users.includes(userId), hasCapacity: async () => true,
+        isActive: async userId => runtime.isActive(userId), hasCapacity: userId => admission.hasCapacity(userId),
         maxWaitMs: config.routeWaitMs }),
       launch: createBrowserLaunch({ instanceManager: manager, maxExchangeMs: config.launchExchangeMs }),
       maxSocketLifetimeMs: config.socketLifetimeMs,
       developmentSelector: { users, issue: userId => identity.issue(userId) } })
-  } catch (error) { await manager.close(); throw error }
+  } catch (error) { stopReaper(); await manager.close(); throw error }
   const lifecycle = ctx as Context & Pick<Fiber, 'effect'>
-  lifecycle.effect(() => async () => { await entry.close(); await manager.close() }, 'public-harness.team-dev')
+  lifecycle.effect(() => async () => { stopReaper(); await entry.close(); await manager.close() }, 'public-harness.team-dev')
   process.stdout.write(`team-dev: http://127.0.0.1:${entry.port}/dev\n`)
 }

@@ -3,7 +3,8 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { chmod, lstat, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { InstanceEndpoint, UserId } from '@public-harness/contracts'
-import type { DevRuntimeConfig } from './config.ts'
+import { ensureGitWorkspace } from '@public-harness/contracts'
+import { webPatchFor, type DevRuntimeConfig } from './config.ts'
 
 /** Live child values known only after the Web token plugin publishes readiness. */
 export interface RunningWeb {
@@ -49,7 +50,8 @@ export async function startWebProcess(config: DevRuntimeConfig, userId: UserId):
   for (const path of [config.storageRoot, join(config.storageRoot, 'users'), root, home, workspace, agentsHome]) {
     await privateDirectory(path)
   }
-  const args = [...config.args, '--profile', 'web', '--patch', config.webPatch,
+  await ensureGitWorkspace(workspace)
+  const args = [...config.args, '--profile', 'web', '--patch', webPatchFor(config, userId),
     '--host', '127.0.0.1', '--port', '0', '--no-open']
   const child: ChildProcess = spawn(config.command, args, {
     cwd: workspace,

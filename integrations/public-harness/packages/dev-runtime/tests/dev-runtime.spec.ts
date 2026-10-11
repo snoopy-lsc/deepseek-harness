@@ -1,9 +1,10 @@
+import { execFileSync } from 'node:child_process'
 import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
-import { parseUserId } from '../../contracts/src/index.ts'
+import { AccountSuspendedError, CapacityError, createActivityTracker, parseUserId } from '@public-harness/contracts'
 import { createDevInstanceManager } from '../src/index.ts'
 
 const fixture = fileURLToPath(new URL('./fixtures/web-child.mjs', import.meta.url))
@@ -78,5 +79,76 @@ describe('development instance manager', () => {
     } finally {
       await manager.close()
     }
+  })
+
+  it('gives each user a real private Git workspace that survives restarts', async () => {
+    const manager = createDevInstanceManager(await config())
+    const alice = parseUserId('alice')
+    try {
+      await manager.ensure(alice)
+      const workspace = join(manager.storageRoot, 'users', 'alice', 'workspace')
+      const git = (...args: string[]) => execFileSync('git', args, { cwd: workspace, encoding: 'utf8' }).trim()
+      expect(git('rev-parse', '--is-inside-work-tree')).toBe('true')
+      expect(git('log', '--format=%s')).toBe('Initialize private workspace')
+      await manager.stop(alice)
+      await manager.ensure(alice)
+      expect(git('rev-list', '--count', 'HEAD')).toBe('1')
+    } finally { await manager.close() }
+  })
+
+  it('admits at most the configured number of active users and frees a slot on stop', async () => {
+    const manager = createDevInstanceManager({ ...(await config()), maxActive: 1 })
+    const [alice, bob] = [parseUserId('alice'), parseUserId('bob')]
+    try {
+      const results = await Promise.allSettled([manager.ensure(alice), manager.ensure(bob)])
+      expect(results.map(result => result.status)).toEqual(['fulfilled', 'rejected'])
+      expect((results[1] as PromiseRejectedResult).reason).toBeInstanceOf(CapacityError)
+      expect(manager.active()).toEqual([alice])
+      await manager.ensure(alice)
+      await manager.stop(alice)
+      await manager.ensure(bob)
+      expect(manager.active()).toEqual([bob])
+    } finally { await manager.close() }
+  })
+
+  it('suspends and reactivates accounts and rejects non-positive caps', async () => {
+    const base = await config()
+    expect(() => createDevInstanceManager({ ...base, maxActive: 0 })).toThrow(/cap/)
+    const manager = createDevInstanceManager(base)
+    const alice = parseUserId('alice')
+    try {
+      await manager.ensure(alice)
+      await manager.suspend(alice)
+      expect(manager.active()).toEqual([])
+      expect(manager.isActive(alice)).toBe(false)
+      expect(manager.isActive(parseUserId('charlie'))).toBe(false)
+      await expect(manager.ensure(alice)).rejects.toBeInstanceOf(AccountSuspendedError)
+      manager.reactivate(alice)
+      expect(manager.isActive(alice)).toBe(true)
+      await manager.ensure(alice)
+    } finally { await manager.close() }
+  })
+
+  it('stops only the instances that were idle and wakes them on the next request', async () => {
+    let now = 1_000_000
+    const manager = createDevInstanceManager(await config(), createActivityTracker(() => now))
+    const [alice, bob] = [parseUserId('alice'), parseUserId('bob')]
+    try {
+      await manager.ensure(alice)
+      now += 200_000
+      await manager.ensure(bob)
+      now += 50_000
+      expect(await manager.stopIdle(120_000)).toEqual([alice])
+      expect(manager.active()).toEqual([bob])
+      await manager.ensure(alice)
+      expect(manager.active().sort()).toEqual([alice, bob])
+    } finally { await manager.close() }
+  })
+
+  it('resolves a per-user Web patch', async () => {
+    const base = await config()
+    const seen: string[] = []
+    const manager = createDevInstanceManager({ ...base, webPatch: userId => { seen.push(userId); return join(base.storageRoot, `${userId}.patch.yml`) } })
+    try { await manager.ensure(parseUserId('bob')); expect(seen).toEqual(['bob']) } finally { await manager.close() }
   })
 })

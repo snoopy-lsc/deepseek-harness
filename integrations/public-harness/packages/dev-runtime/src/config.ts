@@ -10,7 +10,10 @@ export interface DevRuntimeConfig {
   users: readonly UserId[]
   command: string
   args: readonly string[]
-  webPatch: string
+  /** One patch for every user, or a resolver returning each user's absolute patch path. */
+  webPatch: string | ((userId: UserId) => string)
+  /** Most users that may hold a starting or running Web child at once; defaults to the number of users. */
+  maxActive?: number
   startupTimeoutMs: number
   stopTimeoutMs: number
 }
@@ -19,10 +22,14 @@ export interface DevRuntimeConfig {
 export function validateDevRuntimeConfig(config: DevRuntimeConfig): void {
   if (config.mode !== 'development') throw new Error('development runtime requires development mode')
   if (config.host !== '127.0.0.1') throw new Error('development runtime requires a loopback bind')
-  if (!isAbsolute(config.storageRoot) || !isAbsolute(config.command) || !isAbsolute(config.webPatch)) {
+  if (!isAbsolute(config.storageRoot) || !isAbsolute(config.command)
+    || (typeof config.webPatch === 'string' && !isAbsolute(config.webPatch))) {
     throw new Error('development runtime paths must be absolute')
   }
   validateDevUsers(config.users)
+  if (config.maxActive !== undefined && (!Number.isSafeInteger(config.maxActive) || config.maxActive <= 0)) {
+    throw new Error('development runtime active-instance cap must be positive')
+  }
   for (const value of [config.startupTimeoutMs, config.stopTimeoutMs]) {
     if (!Number.isInteger(value) || value <= 0) throw new Error('development runtime timeouts must be positive')
   }
@@ -36,4 +43,11 @@ export function validateDevUsers(users: readonly UserId[]): void {
     || users.some(user => /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(user))) {
     throw new Error('development runtime requires distinct fixed test users')
   }
+}
+
+/** Resolve and re-validate one user's Web patch path. */
+export function webPatchFor(config: DevRuntimeConfig, userId: UserId): string {
+  const path = typeof config.webPatch === 'string' ? config.webPatch : config.webPatch(userId)
+  if (!isAbsolute(path) || path.includes('\0')) throw new Error('development runtime paths must be absolute')
+  return path
 }

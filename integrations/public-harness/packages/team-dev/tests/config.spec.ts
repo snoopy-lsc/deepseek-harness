@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { validateTeamDevConfig } from '../src/index.ts'
 
 const config = { host: '127.0.0.1', storageRoot: '/tmp/team-dev', webPatch: '/tmp/web.patch.yml',
-  command: '/usr/bin/node', args: ['/tmp/dsh.js'], users: ['alice', 'bob'],
+  command: '/usr/bin/node', args: ['/tmp/dsh.js'], users: ['alice', 'bob'], maxActiveInstances: 2, idleStopMs: 1_800_000,
   startupTimeoutMs: 90_000, stopTimeoutMs: 15_000, routeWaitMs: 90_000, retryAfterSeconds: 2,
   launchExchangeMs: 10_000, socketLifetimeMs: 60_000, cookieLifetimeMs: 60_000,
   storageLock: { staleMs: 120_000, updateMs: 10_000 },
@@ -27,6 +27,9 @@ describe('team-dev profile configuration', () => {
     [{ ...config, storageLock: { staleMs: 5000, updateMs: 3000 } }, 'lock'],
     [{ ...config, socketLifetimeMs: 60_001 }, 'socket'],
     [{ ...config, routeWaitMs: 0 }, 'positive'],
+    [{ ...config, maxActiveInstances: 0 }, 'active-instance cap'],
+    [{ ...config, maxActiveInstances: 3 }, 'active-instance cap'],
+    [{ ...config, idleStopMs: 60_000 }, 'idle timeout'],
     [{ ...config, quota: { ...config.quota, personalDailyTokens: 100 } }, 'quota budget'],
     [{ ...config, quota: { ...config.quota, credentialRotateMs: 600_000 } }, 'rotation'],
   ])('rejects an unsafe local profile', (value, message) => {

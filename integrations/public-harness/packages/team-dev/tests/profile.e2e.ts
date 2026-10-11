@@ -11,7 +11,7 @@ describe('team-dev dsh profile', () => {
   it('starts the local selector and routes two real Web users', async () => {
     const home = await mkdtemp(join(tmpdir(), 'dsh-team-dev-'))
     const settings = {
-      users: ['alice', 'bob'], startupTimeoutMs: 90_000, stopTimeoutMs: 15_000,
+      users: ['alice', 'bob'], maxActiveInstances: 2, idleStopMs: 1_800_000, startupTimeoutMs: 90_000, stopTimeoutMs: 15_000,
       routeWaitMs: 90_000, retryAfterSeconds: 2, launchExchangeMs: 10_000,
       socketLifetimeMs: 60_000, cookieLifetimeMs: 60_000,
       storageLock: { staleMs: 120_000, updateMs: 10_000 },
