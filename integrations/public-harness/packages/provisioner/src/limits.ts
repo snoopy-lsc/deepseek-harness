@@ -1,0 +1,66 @@
+/** Mandatory per-instance resource limits; every missing or unenforceable limit refuses the start. */
+import { isAbsolute } from 'node:path'
+import { runChecked, type CommandRunner } from './system.ts'
+
+/** All limits are required and positive; there are no defaults that silently mean "unlimited". */
+export interface Limits {
+  readonly cpus: number
+  readonly memoryBytes: number
+  readonly pids: number
+  readonly openFiles: number
+  readonly diskBytes: number
+  /** Podman network spec for the instance (for example `pasta`); host and shared namespaces are refused. */
+  readonly network: string
+}
+
+/** A mandatory limit is absent, malformed, or the host cannot enforce it. */
+export class LimitsError extends Error {
+  override readonly name = 'LimitsError'
+  constructor(reason: string) { super(`resource limits: ${reason}`) }
+}
+
+const REQUIRED = ['cpus', 'memoryBytes', 'pids', 'openFiles', 'diskBytes'] as const
+
+/** Validate configuration shape before touching the host. */
+export function validateLimits(value: unknown): Limits {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new LimitsError('missing')
+  const record = value as Record<string, unknown>
+  for (const key of REQUIRED) {
+    const field = record[key]
+    if (typeof field !== 'number' || !Number.isFinite(field) || field <= 0) throw new LimitsError(`${key} must be positive`)
+    if (key !== 'cpus' && !Number.isSafeInteger(field)) throw new LimitsError(`${key} must be an integer`)
+  }
+  if (Number(record.memoryBytes) < 64 << 20) throw new LimitsError('memoryBytes below 64 MiB')
+  if (Number(record.pids) < 16) throw new LimitsError('pids below 16')
+  const network = record.network
+  if (typeof network !== 'string' || !/^(pasta|slirp4netns)(:[A-Za-z0-9:,._=\/-]{0,120})?$/.test(network)) {
+    throw new LimitsError('network must be an isolated pasta or slirp4netns stack')
+  }
+  return { cpus: Number(record.cpus), memoryBytes: Number(record.memoryBytes), pids: Number(record.pids),
+    openFiles: Number(record.openFiles), diskBytes: Number(record.diskBytes), network }
+}
+
+/** Host facts the limits depend on, injected so tests need no cgroups or quotas. */
+export interface EnforcementProbe {
+  /** Delegated cgroup v2 controllers for the account's user manager. */
+  controllers(uid: number): Promise<readonly string[]>
+}
+
+/** Tools used to apply and verify limits. */
+export interface LimitTools { readonly setquota: string; readonly nft: string; readonly quotaMount: string }
+
+/** Verify the host can enforce every limit for this account, then apply the disk quota. Fails closed. */
+export async function enforceLimits(runner: CommandRunner, probe: EnforcementProbe, tools: LimitTools,
+  limits: Limits, uid: number): Promise<void> {
+  if (!isAbsolute(tools.quotaMount)) throw new LimitsError('quota mount must be absolute')
+  const controllers = await probe.controllers(uid).catch(() => [] as string[])
+  for (const required of ['cpu', 'memory', 'pids']) {
+    if (!controllers.includes(required)) throw new LimitsError(`cgroup controller ${required} is not delegated`)
+  }
+  const firewall = await runner.run(tools.nft, ['list', 'table', 'inet', 'dsh_instances'])
+  if (firewall.code !== 0) throw new LimitsError('egress firewall table dsh_instances is not loaded')
+  try {
+    const blocks = Math.ceil(limits.diskBytes / 1024)
+    await runChecked(runner, tools.setquota, ['-u', String(uid), '0', String(blocks), '0', '0', tools.quotaMount])
+  } catch { throw new LimitsError('disk quota could not be applied') }
+}

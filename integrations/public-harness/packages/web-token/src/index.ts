@@ -4,6 +4,7 @@ import type {} from '@deepseek-ai/cordis-plugin-loader'
 import type {} from '@deepseek-ai/dsh-client-connection'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-cmdline'
+import { chmodSync, renameSync, writeFileSync } from 'node:fs'
 
 /** One IPC message containing the bound loopback port and startup credential. */
 export interface ReadyMessage { kind: 'public-harness/web-ready'; port: number; token: string }
@@ -30,9 +31,24 @@ export const name = 'public-harness-web-token'
 /** A development Web child requires both services before it can publish readiness. */
 export const inject = ['connection', 'webServer']
 
+/** Environment variable naming the private readiness file used inside a confined container (no IPC channel exists there). */
+export const READY_FILE_ENV = 'PUBLIC_HARNESS_READY_FILE'
+
+/** Atomically publish the readiness message to a private 0600 file. */
+export function writeReadyFile(path: string, message: ReadyMessage): void {
+  if (!path.startsWith('/') || path.includes('\0')) throw new Error('readiness file path must be absolute')
+  const temporary = `${path}.${process.pid}.tmp`
+  writeFileSync(temporary, `${JSON.stringify(message)}\n`, { flag: 'w', mode: 0o600 })
+  chmodSync(temporary, 0o600)
+  renameSync(temporary, path)
+}
+
 /** Register private readiness and graceful supervisor shutdown. */
 export function apply(ctx: Context): void {
-  if (process.send === undefined) throw new Error('Web token publisher requires a private IPC channel')
+  const readyFile = process.env[READY_FILE_ENV]
+  if (process.send === undefined && readyFile === undefined) {
+    throw new Error('Web token publisher requires a private IPC channel or readiness file')
+  }
   // The released Cordis type package omits the fiber's Context augmentation.
   const lifecycle = ctx as Context & Pick<Fiber, 'effect'>
   lifecycle.effect(() => {
@@ -47,7 +63,9 @@ export function apply(ctx: Context): void {
   const settled = ctx.loader?.await()
   if (settled === undefined) throw new Error('Web token publisher requires a Loader profile')
   void settled.then(() => {
-    process.send?.(createReadyMessage(ctx.connection, ctx.webServer.port))
+    const message = createReadyMessage(ctx.connection, ctx.webServer.port)
+    if (process.send !== undefined) process.send(message)
+    else writeReadyFile(readyFile!, message)
   }).catch(() => {
     // Profile boot reports its own failure and no startup credential is published.
   })
