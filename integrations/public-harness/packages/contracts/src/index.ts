@@ -42,3 +42,7 @@ declare module '@deepseek-ai/cordis' {
     instanceManager: InstanceManager
   }
 }
+
+export * from './errors.ts'
+export * from './git-workspace.ts'
+export * from './idle.ts'
