@@ -46,3 +46,4 @@ declare module '@deepseek-ai/cordis' {
 export * from './errors.ts'
 export * from './git-workspace.ts'
 export * from './idle.ts'
+export * from './line-protocol.ts'
