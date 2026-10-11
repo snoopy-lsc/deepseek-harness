@@ -28,7 +28,7 @@ Call `parseUserId` for an external identity before using it as an `InstanceManag
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 
-`ensure` returns one private endpoint, `launchGrant` returns the current Web startup credential, and `stop` ends the process while retaining user data. The provider owns lifecycle and storage; this library performs no I/O.
+`ensure` returns one private endpoint, `launchGrant` returns the current Web startup credential (not one-use: it stays valid, and repeated calls return the same value, until the instance restarts, and only the router ever sees it), and `stop` ends the process while retaining user data. The provider owns lifecycle and storage; this library performs no I/O.
 
 <a id="further-exploration"></a>
 ## Further Exploration

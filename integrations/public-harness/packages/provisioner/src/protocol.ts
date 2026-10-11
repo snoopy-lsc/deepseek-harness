@@ -40,7 +40,11 @@ export class ProvisionerClient {
     return parseInstanceEndpoint(await this.requestRaw({ op: 'ensure', userId }))
   }
 
-  /** Fetch the current one-use Web launch grant without logging it. */
+  /**
+   * Fetch the instance's Web launch grant without logging it. The grant is not one-use: it is the instance's own launch
+   * token, so it stays valid and repeated calls return the same value until the instance stops or restarts (a restart
+   * issues a new one). It never reaches a browser; the router exchanges it for a session cookie.
+   */
   async launchGrant(userId: UserId): Promise<string> {
     const result = await this.requestRaw({ op: 'launch-grant', userId })
     if (typeof result !== 'string' || !result) throw new Error('invalid launch grant')

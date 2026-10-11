@@ -33,6 +33,7 @@ export function parseInstanceEndpoint(value: unknown): InstanceEndpoint {
 /** Instance lifecycle capability consumed by the router. */
 export interface InstanceManager {
   ensure(userId: UserId): Promise<InstanceEndpoint>
+  /** The instance's current Web launch grant: reusable until the instance restarts, and never sent to a browser. */
   launchGrant(userId: UserId): Promise<string>
   stop(userId: UserId): Promise<void>
 }

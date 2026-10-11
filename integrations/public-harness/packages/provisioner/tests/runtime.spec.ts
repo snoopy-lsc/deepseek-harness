@@ -274,6 +274,25 @@ describe('confined container launch', () => {
     expect(await runtime.launchGrant(record)).toBe(TOKEN)
   })
 
+  it('the launch grant is reusable until the instance restarts, then a new one replaces it', async () => {
+    const { runner, runtime, record, layout } = await setup()
+    await runtime.start(record)
+    expect(await runtime.launchGrant(record)).toBe(TOKEN)
+    expect(await runtime.launchGrant(record)).toBe(TOKEN)
+    const inner = runner.handler
+    runner.handler = async (command, args) => {
+      if (args.includes('run')) {
+        await writeFile(join(layout.ctl, 'ready.json'), JSON.stringify({ kind: 'public-harness/web-ready', port: 8080, token: 'second-launch-token' }), { mode: 0o600 })
+        return { code: 0, stdout: 'abcdef\n', stderr: '' }
+      }
+      return inner(command, args)
+    }
+    await runtime.start(record)
+    expect(await runtime.launchGrant(record)).toBe('second-launch-token')
+    await runtime.stop(record)
+    await expect(runtime.launchGrant(record)).rejects.toThrow(/unavailable/)
+  })
+
   it('stop removes the container, closes the forwarder, and clears the token file', async () => {
     const { runner, runtime, record, closed } = await setup()
     await runtime.start(record)

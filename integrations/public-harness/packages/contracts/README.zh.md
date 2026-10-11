@@ -28,7 +28,7 @@ kind: "package-library"
 <a id="understand-the-implementation"></a>
 ## 了解实现
 
-`ensure` 返回私有地址，`launchGrant` 返回当前 Web 启动凭据，`stop` 结束进程但保留用户数据。provider 负责生命周期和存储；本库不执行 I/O。
+`ensure` 返回私有地址，`launchGrant` 返回当前 Web 启动凭据（并非一次性：在实例重启之前它一直有效，重复调用返回同一值，且只有路由器会接触到它），`stop` 结束进程但保留用户数据。provider 负责生命周期和存储；本库不执行 I/O。
 
 <a id="further-exploration"></a>
 ## 延伸阅读
