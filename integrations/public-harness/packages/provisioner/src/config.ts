@@ -36,6 +36,12 @@ export interface ProvisionerConfig {
   readonly idleStopMs: number
   readonly deletionRecoveryMs: number
   readonly image: string
+  /**
+   * Root-owned, world-readable image archive (`podman save`) that every account loads into its own rootless store the
+   * first time it starts. When absent, each account pulls `image` from its registry instead. There is one store per
+   * account, so the image is stored once per account and counts against that account's disk quota.
+   */
+  readonly imageArchive?: string
   readonly limits: Limits
   readonly readyTimeoutMs: number
   readonly stopTimeoutMs: number
@@ -64,6 +70,8 @@ export function validateProvisionerConfig(config: ProvisionerConfig): Provisione
     if (!Number.isSafeInteger(config[name]) || config[name] <= 0) throw new Error(`${name} must be positive`)
   }
   validateIdleMs(config.idleStopMs)
+  if (config.imageArchive !== undefined && (typeof config.imageArchive !== 'string' || !isAbsolute(config.imageArchive)
+    || config.imageArchive.includes('\0') || config.imageArchive.startsWith('-'))) throw new Error('imageArchive must be an absolute path')
   if (!/^[A-Za-z0-9][A-Za-z0-9._\/:@-]{0,255}$/.test(config.image) || /^(localhost\/)?$/.test(config.image)) throw new Error('image is invalid')
   if (!/^[0-9]{1,3}(\.[0-9]{1,3}){3}$/.test(config.quota.hostAddress)) throw new Error('quota.hostAddress must be an IPv4 address')
   const quotaPorts = validatePortRange(config.ports?.quota, 'ports.quota', config.maxActiveInstances)

@@ -32,6 +32,15 @@ describe('production configuration examples', () => {
     expect(parseQuotaProfileConfig(await json('deploy/production/config/quota.example.json')).service.siteDailyTokens).toBeGreaterThan(0)
   })
 
+  it('loads the image archive that build-image.sh exports', async () => {
+    const provisioner = parseProvisionerProfileConfig(await json('deploy/production/config/provisioner.example.json')).provisioner
+    expect(provisioner.imageArchive).toBeDefined()
+    const script = await text('deploy/production/scripts/build-image.sh')
+    expect(script).toContain(`archive=\${3:-${provisioner.imageArchive}}`)
+    expect(script).toMatch(/podman save --format docker-archive/)
+    expect(script).toMatch(/chmod 0644/)
+  })
+
   it('selects the pasta stack and leaves its options (--no-splice, host loopback) to the provisioner', async () => {
     const provisioner = parseProvisionerProfileConfig(await json('deploy/production/config/provisioner.example.json')).provisioner
     expect(provisioner.limits.network).toBe('pasta')

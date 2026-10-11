@@ -9,7 +9,7 @@ import type { ProvisionerConfig } from './config.ts'
 import { startUnixForwarder, type Forwarder } from './forwarder.ts'
 import { enforceLimits, LimitsError, networkArgument, type EnforcementProbe } from './limits.ts'
 import { clearReady, readReady, waitForReady } from './token-channel.ts'
-import type { CommandRunner } from './system.ts'
+import { KeyedLock, type CommandRunner } from './system.ts'
 import type { UserRecord } from './users.ts'
 
 /** Port the in-container Web CLI binds on its private loopback. */
@@ -31,7 +31,7 @@ export interface QuotaBridge {
 /** Ordered failures a start can report; messages never include paths, argv, or token material. */
 export class RuntimeStartError extends Error {
   override readonly name = 'RuntimeStartError'
-  constructor(readonly reason: 'gvisor-unavailable' | 'limits' | 'quota-unavailable' | 'start-failed' | 'not-ready' | 'unsafe-argv' | 'no-port') {
+  constructor(readonly reason: 'gvisor-unavailable' | 'limits' | 'quota-unavailable' | 'start-failed' | 'not-ready' | 'unsafe-argv' | 'no-port' | 'image-unavailable') {
     super(`runtime start refused: ${reason}`)
   }
 }
@@ -172,6 +172,7 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
   const probeHealth = deps.healthProbe ?? httpHealthProbe
   const rotateMs = deps.credentialRotateMs ?? 480_000
   const portFree = deps.portFree ?? loopbackPortFree
+  const imageLock = new KeyedLock()
   const live = new Map<UserId, { forwarder: Forwarder; timer: NodeJS.Timeout; instanceId: string; port: number }>()
   let cursor = 0
 
@@ -200,6 +201,23 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
       `XDG_RUNTIME_DIR=/run/user/${record.uid}`, `HOME=${record.layout.podman}`, 'PATH=/usr/bin:/bin',
       config.tools.podman, ...args], { timeoutMs })
     return Promise.race([result, deadline]).finally(() => clearTimeout(timer))
+  }
+
+  /**
+   * Make sure this account's own rootless store holds the instance image. Loading or pulling is serialized across
+   * accounts so a start storm does not decompress the same archive many times at once.
+   */
+  async function ensureImage(record: UserRecord): Promise<void> {
+    const has = async (): Promise<boolean> => (await asAccount(record, ['image', 'exists', config.image], 30_000)).code === 0
+    if (await has()) return
+    await imageLock.run('image', async () => {
+      if (await has()) return
+      const fetched = config.imageArchive === undefined
+        ? await asAccount(record, ['pull', '--quiet', config.image], 900_000)
+        : await asAccount(record, ['load', '--quiet', '--input', config.imageArchive], 900_000)
+      // A load that succeeds but does not provide the configured reference is as unusable as a failed one.
+      if (fetched.code !== 0 || !await has()) throw new RuntimeStartError('image-unavailable')
+    })
   }
 
   async function containerState(record: UserRecord): Promise<ContainerState> {
@@ -247,6 +265,7 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
       const gvisor = await runner.run(config.tools.runsc, ['--version'])
       if (gvisor.code !== 0) throw new RuntimeStartError('gvisor-unavailable')
       if (!await deps.quota.healthy().catch(() => false)) throw new RuntimeStartError('quota-unavailable')
+      await ensureImage(record)
       // 2. Clear leftovers from a previous run so no stale token or socket can be published.
       await teardown(record)
       const instanceId = randomBytes(18).toString('base64url')

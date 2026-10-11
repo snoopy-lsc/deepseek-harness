@@ -16,9 +16,9 @@ import { connect, createServer } from 'node:net'
 const TOKEN = 'launch-token-SECRET-123'
 const controllers = { controllers: async () => ['cpuset', 'cpu', 'io', 'memory', 'hugetlb', 'pids'] }
 
-async function setup(options: { quotaHealthy?: boolean; busyPorts?: number[] } = {}) {
+async function setup(options: { quotaHealthy?: boolean; busyPorts?: number[]; imageArchive?: string } = {}) {
   const busyPorts = options.busyPorts
-  const config = await makeConfig()
+  const config = await makeConfig(options.imageArchive === undefined ? {} : { imageArchive: options.imageArchive })
   const account = deriveNames(alice)
   const layout = layoutFor(config.paths, account.account)
   for (const dir of [layout.root, layout.home, layout.workspace, layout.ctl, layout.podman]) await mkdir(dir, { recursive: true, mode: 0o700 })
@@ -161,6 +161,82 @@ describe('confined container launch', () => {
       issue: async () => ({ token: 'a.b', expiresAt: 1 }), close: async () => {} }, probe: controllers, publicHost: 'h.test', portFree: async () => true })
     await expect(runtime.start(record)).rejects.toMatchObject({ reason: 'quota-unavailable' })
     expect(runner.calls.some(call => call.args.includes('run'))).toBe(false)
+  })
+
+  describe('instance image in the account store', () => {
+    const podman = (runner: FakeRunner): string[][] => runner.calls.map(call => call.args.slice(call.args.indexOf('/usr/bin/podman') + 1))
+      .filter(args => args[0] === 'image' || args[0] === 'load' || args[0] === 'pull')
+
+    it('does nothing when the account already has the image', async () => {
+      const { runner, runtime, record } = await setup()
+      await runtime.start(record)
+      expect(podman(runner)).toEqual([['image', 'exists', 'localhost/dsh-instance:1']])
+    })
+
+    it('loads the archive into the account store before the first start, then verifies the reference', async () => {
+      const { runner, runtime, record, config } = await setup({ imageArchive: '/opt/dsh-public/image/dsh-instance.tar' })
+      let loaded = false
+      const inner = runner.handler
+      runner.handler = (command, args) => {
+        if (args.includes('exists')) return { code: loaded ? 0 : 1, stdout: '', stderr: '' }
+        if (args.includes('load')) { loaded = true; return { code: 0, stdout: '', stderr: '' } }
+        return inner(command, args)
+      }
+      await runtime.start(record)
+      expect(podman(runner)).toEqual([['image', 'exists', config.image], ['image', 'exists', config.image],
+        ['load', '--quiet', '--input', '/opt/dsh-public/image/dsh-instance.tar'], ['image', 'exists', config.image]])
+      // Every podman call for the load ran as the account, never as root.
+      const load = runner.calls.find(call => call.args.includes('load'))!
+      expect(load.args.slice(0, 3)).toEqual(['-u', record.account, '--'])
+      expect(runner.calls.findIndex(call => call.args.includes('load'))).toBeLessThan(runner.calls.findIndex(call => call.args.includes('run')))
+    })
+
+    it('pulls from the registry when no archive is configured', async () => {
+      const { runner, runtime, record } = await setup()
+      let pulled = false
+      const inner = runner.handler
+      runner.handler = (command, args) => {
+        if (args.includes('exists')) return { code: pulled ? 0 : 1, stdout: '', stderr: '' }
+        if (args.includes('pull')) { pulled = true; return { code: 0, stdout: '', stderr: '' } }
+        return inner(command, args)
+      }
+      await runtime.start(record)
+      expect(podman(runner).some(args => args[0] === 'pull' && args.includes('localhost/dsh-instance:1'))).toBe(true)
+    })
+
+    it.each([['the load fails', 1, false], ['the archive does not provide the configured reference', 0, false]])('refuses to start and creates nothing when %s', async (_name, code, present) => {
+      const { runner, runtime, record } = await setup({ imageArchive: '/opt/dsh-public/image/dsh-instance.tar' })
+      runner.handler = (_command, args) => args.includes('exists') ? { code: present ? 0 : 1, stdout: '', stderr: '' }
+        : args.includes('load') ? { code, stdout: '', stderr: 'secret detail' } : undefined
+      const error = await runtime.start(record).catch((e: unknown) => e)
+      expect(error).toMatchObject({ reason: 'image-unavailable' })
+      expect(String((error as Error).message)).not.toContain('secret')
+      expect(runner.calls.some(call => call.args.includes('run'))).toBe(false)
+    })
+
+    it('loads for one account at a time', async () => {
+      const { runtime, record, config } = await setup({ imageArchive: '/opt/dsh-public/image/dsh-instance.tar' })
+      let active = 0
+      let peak = 0
+      const loaded = new Set<string>()
+      const runner: CommandRunner = { run: async (_command, args) => {
+        const account = args[1]!
+        if (args.includes('exists')) return { code: loaded.has(account) ? 0 : 1, stdout: '', stderr: '' }
+        if (args.includes('load')) {
+          active += 1; peak = Math.max(peak, active)
+          await new Promise(resolve => setTimeout(resolve, 20))
+          active -= 1; loaded.add(account)
+        }
+        // Host tools succeed; the container start fails so each start ends right after its image step.
+        return { code: args.includes('run') ? 1 : 0, stdout: '', stderr: '' }
+      } }
+      const shared = createRuntime({ config, runner, quota: { healthy: async () => true, open: async () => ({ port: 29100 }),
+        issue: async () => ({ token: 'a.b', expiresAt: 1 }), close: async () => {} }, probe: controllers, publicHost: 'h.test', portFree: async () => true })
+      const others = ['a1', 'a2', 'a3'].map(account => ({ ...record, account }))
+      await Promise.all(others.map(other => shared.start(other).catch(() => {})))
+      expect(loaded.size).toBe(3)
+      expect(peak).toBe(1)
+    })
   })
 
   it('refuses to start without gVisor and creates nothing', async () => {
