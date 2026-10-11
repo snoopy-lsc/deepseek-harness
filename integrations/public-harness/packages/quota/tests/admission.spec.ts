@@ -87,4 +87,22 @@ describe('model request admission', () => {
       ledger: { reserve: vi.fn(), settle: vi.fn(), close: vi.fn() } })).toThrow(/context/i)
     expect(reservations).toEqual([])
   })
+
+  it('accepts only file-referenced images owned by the token user', async () => {
+    const { issuer, request, reservations } = setup()
+    const owned = vi.fn((userId, fileId) => userId === alice && fileId === 'file_owned')
+    const ledger: QuotaLedger = { async reserve(userId, maximumTokens) {
+      reservations.push({ userId, maximumTokens })
+      return { id: 'file-reservation' as ReservationId, userId, day: '2026-10-11', maximumTokens }
+    }, async settle() {}, close() {} }
+    const admission = createAdmission({ config, issuer, ledger, ownsFile: owned })
+    const image = (fileId: string) => body({ messages: [{ role: 'user', content: [{
+      type: 'image', source: { type: 'file', file_id: fileId },
+    }] }] })
+    await expect(admission.admit(request({ body: image('file_forged') }))).rejects.toThrow(/ownership/i)
+    expect(reservations).toEqual([])
+    await admission.admit(request({ body: image('file_owned') }))
+    expect(owned).toHaveBeenCalledWith(alice, 'file_owned')
+    expect(reservations).toHaveLength(1)
+  })
 })

@@ -28,8 +28,9 @@ function positive(name: string, value: number): void {
   if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${name} must be a positive safe integer`)
 }
 
-function imagesWithinLimits(body: unknown, config: AdmissionConfig): void {
+function imagesWithinLimits(body: unknown, config: AdmissionConfig): string[] {
   const pending: unknown[] = [body]
+  const fileIds: string[] = []
   let count = 0
   let inlineBytes = 0
   while (pending.length) {
@@ -43,13 +44,17 @@ function imagesWithinLimits(body: unknown, config: AdmissionConfig): void {
       const source = record.source
       if (typeof source !== 'object' || source === null || Array.isArray(source)) throw new Error('invalid request image')
       const image = source as Record<string, unknown>
-      if (image.type !== 'base64' || typeof image.data !== 'string'
-        || !/^[A-Za-z0-9+/]*={0,2}$/.test(image.data)) throw new Error('unsupported request image')
-      inlineBytes += Math.ceil(image.data.length * 3 / 4)
-      if (inlineBytes > config.maxInlineImageBytes) throw new Error('request image bytes exceed limit')
+      if (image.type === 'file' && typeof image.file_id === 'string'
+        && /^[A-Za-z0-9_-]{1,128}$/.test(image.file_id)) fileIds.push(image.file_id)
+      else if (image.type === 'base64' && typeof image.data === 'string'
+        && /^[A-Za-z0-9+/]*={0,2}$/.test(image.data)) {
+        inlineBytes += Math.ceil(image.data.length * 3 / 4)
+        if (inlineBytes > config.maxInlineImageBytes) throw new Error('request image bytes exceed limit')
+      } else throw new Error('unsupported request image')
     }
     pending.push(...Object.values(record))
   }
+  return fileIds
 }
 
 /** Construct a fail-closed Messages admission service. */
@@ -57,6 +62,7 @@ export function createAdmission(dependencies: {
   readonly config: AdmissionConfig
   readonly issuer: TokenIssuer
   readonly ledger: QuotaLedger
+  readonly ownsFile?: (userId: UserId, fileId: string) => boolean
 }): { admit(request: AdmissionRequest): Promise<AdmittedRequest> } {
   const { config, issuer, ledger } = dependencies
   positive('maxBodyBytes', config.maxBodyBytes)
@@ -85,7 +91,10 @@ export function createAdmission(dependencies: {
       if (context === undefined) throw new Error('model context window is missing')
       if (!Number.isSafeInteger(data.max_tokens) || Number(data.max_tokens) <= 0) throw new Error('max_tokens is required')
       if (!Array.isArray(data.messages)) throw new Error('request messages are required')
-      imagesWithinLimits(data, config)
+      const fileIds = imagesWithinLimits(data, config)
+      for (const fileId of fileIds) {
+        if (dependencies.ownsFile?.(userId, fileId) !== true) throw new Error('request image file ownership denied')
+      }
       const maximumTokens = context + Number(data.max_tokens)
       if (!Number.isSafeInteger(maximumTokens)) throw new Error('request has no safe token bound')
       return { userId, reservation: await ledger.reserve(userId, maximumTokens) }

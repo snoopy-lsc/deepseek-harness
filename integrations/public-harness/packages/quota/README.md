@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This package stores model token reservations in SQLite and checks signed, instance-bound requests before admission. It checks each user's daily allowance, the site's daily allowance, and both in-flight request limits in one transaction before a model call can start.
+This package stores model token reservations in SQLite and checks signed, instance-bound requests before admission. It checks each user's daily allowance, the site's daily allowance, and both in-flight request limits in one transaction before a model call can start. It also forwards Messages streams and keeps Files metadata scoped to the user who uploaded each file.
 
 ## Table of Contents
 
@@ -38,4 +38,4 @@ See the [shared user ID](../contracts/README.md) and the [quota implementation p
 <a id="dev-note"></a>
 ## Dev Note
 
-The ledger is an admission component. The quota proxy must still validate request bounds, forward only supported operations, and settle every accepted request. Run one quota service per database; startup reconciles unfinished calls from the previous service process.
+The development HTTP ingress binds one loopback listener per instance. The production control socket and runtime transport remain separate deployment work. Run one quota service per database; startup reconciles unfinished calls from the previous service process.
