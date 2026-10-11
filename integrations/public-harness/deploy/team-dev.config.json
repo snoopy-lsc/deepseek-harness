@@ -1,0 +1,1 @@
+{"users":["alice","bob"],"startupTimeoutMs":90000,"stopTimeoutMs":15000,"routeWaitMs":90000,"launchExchangeMs":10000,"socketLifetimeMs":60000,"cookieLifetimeMs":3600000}

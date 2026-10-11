@@ -5,6 +5,8 @@ import type { Duplex } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { parseUserId, type InstanceEndpoint } from '../../contracts/src/index.ts'
 import { createOwnerRouter } from '../src/routes.ts'
+import { createDevelopmentIdentity } from '../src/dev-identity.ts'
+import { randomBytes } from 'node:crypto'
 import { startRouterServer } from '../src/server.ts'
 
 const servers: Server[] = []
@@ -118,6 +120,26 @@ describe('owner-only HTTP and upgrade forwarding', () => {
           else reject(new Error('upgrade closed before acceptance'))
         })
       })
+    } finally { await entry.close() }
+  })
+
+  it('selects only fixed local test users on the loopback entry', async () => {
+    const alice = await backend('alice')
+    const identity = createDevelopmentIdentity({ mode: 'team-dev', host: '127.0.0.1',
+      secret: randomBytes(32), testUsers: ['alice'], lifetimeMs: 60_000 })
+    const entry = await startRouterServer({ host: '127.0.0.1', maxSocketLifetimeMs: 1000,
+      identity, developmentSelector: { users: [parseUserId('alice')], issue: identity.issue },
+      ownerRouter: createOwnerRouter({ instanceManager: { ensure: async () => alice,
+        async launchGrant() { return '' }, async stop() {} },
+      isActive: async () => true, hasCapacity: async () => true, maxWaitMs: 1000 }),
+      launch: { async open() { return { location: '/u/alice/', setCookie: 'dsh-auth=x; Path=/u/alice/' } } } })
+    try {
+      const base = `http://127.0.0.1:${entry.port}`
+      expect((await fetch(`${base}/dev`)).status).toBe(200)
+      const selected = await fetch(`${base}/dev/select/alice`, { redirect: 'manual' })
+      expect(selected.status).toBe(303)
+      expect(selected.headers.get('set-cookie')).toMatch(/team_dev=.*; Path=\/; HttpOnly; SameSite=Strict/)
+      expect((await fetch(`${base}/dev/select/bob`, { redirect: 'manual' })).status).toBe(404)
     } finally { await entry.close() }
   })
 })

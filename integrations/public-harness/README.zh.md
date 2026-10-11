@@ -9,7 +9,7 @@ kind: "package-library"
 
 ## Summary
 
-本项目包含面向公开 Harness 部署、独立版本管理的 Cordis 包。它使用单独的 pnpm 工作区，以便与兼容版本的 Harness 一起安装插件。它包含共享实例接口、私有 Linux 配置服务协议、本机开发运行环境和模型额度账本；尚未启动公开的多用户服务器。
+本项目包含面向公开 Harness 部署、独立版本管理的 Cordis 包。它使用单独的 pnpm 工作区，以便与兼容版本的 Harness 一起安装插件。`team-dev` 配置可在本机运行双用户 Web 服务。公开注册和 Linux 隔离需要另行部署生产环境。
 
 ## Table of Contents
 
@@ -23,12 +23,12 @@ kind: "package-library"
 <a id="use-this-project"></a>
 ## 使用本项目
 
-在此目录运行 `pnpm install`、`pnpm test` 和 `pnpm typecheck`。`pnpm run build` 生成普通 JavaScript 包。本机运行环境要求先构建 Harness CLI 和 Web 前端；集成尚无公开入口。
+先构建仓库中的 Harness CLI 和 Web 前端，再在此目录运行 `pnpm install` 和 `pnpm dev`。打开输出的本机地址，选择 Alice 或 Bob，即可进入各自独立的 Harness Web 实例。首次启动前可编辑 `deploy/team-dev.config.json` 修改固定测试用户和超时设置；用 `PUBLIC_HARNESS_DEV_HOME` 指定私有数据目录。生成的配置默认保存在 `.local/`。运行 `pnpm test` 和 `pnpm typecheck` 检查集成。此开发配置尚无公开注册或模型提供方。
 
 <a id="understand-the-implementation"></a>
 ## 了解实现
 
-contracts 包负责规范化的不透明用户 ID 和私有实例地址。provisioner 包定义后续 Linux 运行环境所用的固定 Unix socket 操作。macOS 和 Windows 开发运行环境为每位固定测试用户启动一个本机 Web 进程，并通过 Web token bundle 的私有 IPC 发布启动凭据。quota 包将个人和全站 token 预留记录保存在 SQLite 中；其 Web provider 在每次模型操作时读取轮换后的私有凭据。
+contracts 包负责规范化的不透明用户 ID 和私有实例地址。provisioner 包定义 Linux 运行环境所用的固定 Unix socket 操作。macOS 和 Windows 开发运行环境为每位固定测试用户启动一个本机 Web 进程，并通过 Web token bundle 的私有 IPC 发布启动凭据。router 在每次请求时验证签名测试用户 cookie，只转发到该用户的进程。quota 包将个人和全站 token 预留记录保存在 SQLite 中；其 Web provider 在每次模型操作时读取轮换后的私有凭据。
 
 <a id="further-exploration"></a>
 ## 延伸阅读
