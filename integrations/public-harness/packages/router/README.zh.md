@@ -9,7 +9,7 @@ kind: "package-library"
 
 ## Summary
 
-此包在选择每位用户的 Harness 实例之前，为每个浏览器请求和 WebSocket 升级验证单个用户身份。正式环境会检查本地配置的 RSA 签名密钥、签发者、受众、有效期、UID 一致性和当前账号状态。开发环境只在本机 `team-dev` 配置中接受固定测试用户的签名 Cookie。
+此包在选择每位用户的 Harness 实例之前，为每个浏览器请求和 WebSocket 升级验证单个用户身份。正式环境会检查本地配置的 RSA 签名密钥、签发者、受众、有效期、UID 一致性和当前账号状态。开发环境只在本机 `team-dev` 配置中接受固定测试用户的签名 Cookie。归属路由只接受经过认证的用户自己的 `/u/<id>/` 前缀。
 
 ## Table of Contents
 
@@ -23,7 +23,7 @@ kind: "package-library"
 <a id="use-this-package"></a>
 ## 使用此包
 
-为 `createProductionIdentity` 配置可信公钥和账号状态查询，并在每次请求和升级时将 HTTP 请求头交给 `verify`。本机开发时，为 `createDevelopmentIdentity` 配置 `mode: team-dev`、`127.0.0.1` 主机、私有签名密钥和固定测试用户列表；`issue` 方法会为其中一名用户返回 Cookie。
+为 `createProductionIdentity` 配置可信公钥和账号状态查询，并在每次请求和升级时将 HTTP 请求头交给 `verify`。本机开发时，为 `createDevelopmentIdentity` 配置 `mode: team-dev`、`127.0.0.1` 主机、私有签名密钥和固定测试用户列表；`issue` 方法会为其中一名用户返回 Cookie。将经过验证的 ID 和原始请求路径传给 `createOwnerRouter().route`；它会检查账号状态和容量、合并同一用户的并发启动请求，并在实例尚未就绪时返回限时等待状态。
 
 <a id="identity-sources"></a>
 ## 身份来源
@@ -38,4 +38,4 @@ kind: "package-library"
 <a id="dev-note"></a>
 ## 开发说明
 
-此包目前提供身份验证。归属路由、Cookie 交换及 HTTP/WebSocket 转发是独立的实现任务。正式环境的 authentik 和 Caddy 配置需要在 Linux 上验证后才能开放公众访问。
+此包目前提供身份验证和归属路径选择。Cookie 交换及 HTTP/WebSocket 转发是独立的实现任务。正式环境的 authentik 和 Caddy 配置需要在 Linux 上验证后才能开放公众访问。

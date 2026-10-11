@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This package verifies one platform user for every browser request and WebSocket upgrade before any per-user Harness instance is selected. Production verification checks a locally configured RSA signing key, issuer, audience, expiry, UID agreement, and current account status. The development verifier accepts signed cookies only for fixed test users in the loopback `team-dev` profile.
+This package verifies one platform user for every browser request and WebSocket upgrade before any per-user Harness instance is selected. Production verification checks a locally configured RSA signing key, issuer, audience, expiry, UID agreement, and current account status. The development verifier accepts signed cookies only for fixed test users in the loopback `team-dev` profile. The owner router accepts only the authenticated user's exact `/u/<id>/` prefix.
 
 ## Table of Contents
 
@@ -23,7 +23,7 @@ This package verifies one platform user for every browser request and WebSocket 
 <a id="use-this-package"></a>
 ## Use this package
 
-Configure `createProductionIdentity` with trusted public keys and an account-status lookup. Pass the HTTP request headers to `verify` on every request and upgrade. In local development, configure `createDevelopmentIdentity` with `mode: team-dev`, host `127.0.0.1`, a private signer, and a fixed test-user list; its `issue` method returns a cookie for one listed user.
+Configure `createProductionIdentity` with trusted public keys and an account-status lookup. Pass the HTTP request headers to `verify` on every request and upgrade. In local development, configure `createDevelopmentIdentity` with `mode: team-dev`, host `127.0.0.1`, a private signer, and a fixed test-user list; its `issue` method returns a cookie for one listed user. Pass the verified ID and raw request path to `createOwnerRouter().route`; it checks account status and capacity, joins simultaneous startup for that user, and returns a bounded starting response while the instance is not ready.
 
 <a id="identity-sources"></a>
 ## Identity sources
@@ -38,4 +38,4 @@ See the [shared user ID](../contracts/README.md) and the [router implementation 
 <a id="dev-note"></a>
 ## Dev Note
 
-This package currently supplies identity verification. Owner routing, cookie exchange, and HTTP/WebSocket forwarding are separate implementation tasks. The production authentik and Caddy configuration requires validation on Linux before public access is enabled.
+This package currently supplies identity verification and owner-path selection. Cookie exchange and HTTP/WebSocket forwarding are separate implementation tasks. The production authentik and Caddy configuration requires validation on Linux before public access is enabled.
