@@ -21,8 +21,8 @@ export class LimitsError extends Error {
 
 /**
  * Smallest accepted limits. Under gVisor the pids limit counts the sandbox's own host threads (about 45 idle, roughly
- * 2-3 more per guest process), not guest processes, and hitting the memory or pids limit kills the whole sandbox
- * instead of one process. Values below these leave no room for the Harness itself.
+ * 2-3 more per guest process), not guest processes, and exhausting the pids limit killed the whole sandbox in lab
+ * runs (exceeding memory did so in one run but not another). Values below these leave no room for the Harness itself.
  */
 export const MIN_PIDS = 256
 export const MIN_MEMORY_BYTES = 512 << 20

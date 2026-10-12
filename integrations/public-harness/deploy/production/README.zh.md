@@ -56,12 +56,12 @@ Caddy 的管理 API 只监听 `unix//run/caddy/admin.sock`（权限 0600），�
 <a id="resource-limits"></a>
 ## 资源限制
 
-在 gVisor 下，触及内存或 pids 限制会杀掉整个沙箱而不是单个进程，并且 pids 限制统计的是沙箱的主机线程（空闲时约 45 个，每个来宾进程再加两三个），而不是来宾进程；实验室中限制为 128 时只允许约 35 个来宾进程。因此配置服务拒绝少于 256 个 pids 或不足 512 MiB 的设置，示例使用 2048 个 pids 和 4 GiB。被杀掉的实例会由 `status`（每个用户至多每五秒检查一次）和 `reconcile` 报告为 `stopped`，其 socket 和额度监听地址随之释放，下一次请求会再次启动；未保存的内存中工作会丢失，主目录和工作区文件保留。停止有时限：先在 `stopTimeoutMs` 内执行 `podman rm`，再发送 SIGKILL 并强制删除；若容器仍然存在，停止会失败，由 `reconcile` 重试。
+在 gVisor 下，耗尽 pids 限制在两次实验室运行中都杀掉了整个沙箱而不是单个进程；超出内存限制在第一次运行中杀掉了整个沙箱，在第二次运行中（四次尝试）却只杀掉一个进程，所以结果取决于内核、gVisor 构建和 cgroup 配置：请按可能丢失整个沙箱来规划，但不要依赖这一点。pids 限制统计的是沙箱的主机线程（空闲时约 45 个，每个来宾进程再加两三个），而不是来宾进程；实验室中限制为 128 时只允许约 35 个来宾进程。因此配置服务拒绝少于 256 个 pids 或不足 512 MiB 的设置，示例使用 2048 个 pids 和 4 GiB。被杀掉的实例（演练时可耗尽 pids 或杀掉 `runsc-sandbox`，因为耗尽内存并不总会杀掉沙箱）会由 `status`（每个用户至多每五秒检查一次）和 `reconcile` 报告为 `stopped`，其 socket 和额度监听地址随之释放，下一次请求会再次启动；未保存的内存中工作会丢失，主目录和工作区文件保留。停止有时限：先在 `stopTimeoutMs` 内执行 `podman rm`，再发送 SIGKILL 并强制删除；若容器仍然存在，停止会失败，由 `reconcile` 重试。
 
 <a id="process-visibility"></a>
 ## 进程可见性
 
-没有 `hidepid` 时，任何账号都能用 `ps` 读取其他账号的进程命令行，从而暴露其他用户 Podman 和 gVisor 进程的容器 ID 和存储路径。`scripts/enable-hidepid.sh`（以 root 运行，在 `systemd-sysusers` 之后）通过 `/etc/fstab` 和即时重新挂载，以 `hidepid=2,gid=<dsh-procview>` 挂载 `/proc`，使账号只能看到自己的进程。除 root 外，唯一的豁免对象是 `sysusers.conf` 创建的 `dsh-procview` 组：`logind-dropin/dsh-public.conf` 把它加给 `systemd-logind`，会话因此保持正常，你也可以把监控账号加入该组。切勿加入实例账号、路由器或额度服务。脚本会保留 `/etc/fstab.dsh-backup`。`scripts/verify-hidepid.sh [account ...]` 检查挂载选项，并对每个实例账号检查：以该账号运行的 `ps` 看不到其他用户的进程，且该账号不在豁免组中；失败时以 `FAIL` 行和退出码 1 关闭，其结果即 `process-visibility` 发布证据。这只隐藏命令行和 `/proc` 条目，并不能阻止账号猜测路径或端口。
+没有 `hidepid` 时，任何账号都能用 `ps` 读取其他账号的进程命令行，从而暴露其他用户 Podman 和 gVisor 进程的容器 ID 和存储路径。`scripts/enable-hidepid.sh`（以 root 运行，在 `systemd-sysusers` 之后）通过 `/etc/fstab` 和即时重新挂载，以 `hidepid=2,gid=<dsh-procview>` 挂载 `/proc`，使账号只能看到自己的进程。除 root 外，唯一的豁免对象是 `sysusers.conf` 创建的 `dsh-procview` 组：`logind-dropin/dsh-public.conf` 把它加给 `systemd-logind`，会话因此保持正常，你也可以把监控账号加入该组。切勿加入实例账号、路由器或额度服务。首次运行会把原始 `/etc/fstab` 保存为 `/etc/fstab.dsh-backup`，之后的运行从不覆盖该备份。`scripts/verify-hidepid.sh [account ...]` 检查挂载选项，并对每个实例账号检查：以该账号运行的 `ps` 看不到其他用户的进程，且该账号不在豁免组中。该账号自己的无根沙箱进程运行在它的 subuid 范围内，不算外来进程（脚本读取该账号在 `/etc/subuid` 中的条目），而其他账号的范围和 uid 仍然算外来，因此正在运行实例的账号也可以通过验证；失败时以 `FAIL` 行和退出码 1 关闭，其结果即 `process-visibility` 发布证据。这只隐藏命令行和 `/proc` 条目，并不能阻止账号猜测路径或端口。
 
 <a id="upgrade-and-roll-back"></a>
 ## 升级与回滚
