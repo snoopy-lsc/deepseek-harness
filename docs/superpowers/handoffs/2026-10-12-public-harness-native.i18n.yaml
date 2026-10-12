@@ -1,0 +1,28 @@
+# Bilingual-pair consistency record for 2026-10-12-public-harness-native.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/superpowers/handoffs/2026-10-12-public-harness-native.md
+/native-public-harness-handoff:
+  en: c5870dd4acd20488
+  zh: a70be50e6dc754c7
+/native-public-harness-handoff/summary:
+  en: 55f5a4d16f709088
+  zh: 074aed97b0e51df7
+/native-public-harness-handoff/contents:
+  en: 98b8027e42f10e00
+  zh: 7a2da0b7f1ba66c0
+/native-public-harness-handoff/workspace-and-authorities:
+  en: ac4adc6c0da1ee5d
+  zh: d480adc2933245c0
+/native-public-harness-handoff/progress-and-checks:
+  en: fbeec719af563701
+  zh: 98173ebcf9a24ceb
+/native-public-harness-handoff/open-concerns-and-next-work:
+  en: d7ed3abdc978de32
+  zh: 982d6274854ba2fc
+/native-public-harness-handoff/controller-decisions:
+  en: a228485c48974e21
+  zh: 7427aeee27a72d6e
+/native-public-harness-handoff/local-recovery-artifacts:
+  en: 1d5ff174ba2a7e29
+  zh: 91158dc54d11beb0
