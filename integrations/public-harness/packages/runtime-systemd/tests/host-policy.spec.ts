@@ -75,6 +75,11 @@ describe('native host policy', () => {
     expect(() => parseSystemdConfig({ common, native: { ...native, web: common.ports.quota } })).toThrow()
     expect(() => parseSystemdConfig({ common, native: { ...native, paths: { ...native.paths, release: '/opt/dsh/release\nExecStart=/bin/sh' } } })).toThrow()
     expect(() => parseSystemdConfig({ common, native: { ...native, paths: { ...native.paths, release: '/srv/dsh/data/release' } } })).toThrow()
+    for (const hidden of ['/home/dsh', '/root/dsh', '/run/user/0/dsh']) {
+      expect(() => parseSystemdConfig({ common, native: { ...native, paths: { ...native.paths, toolchain: hidden } } })).toThrow()
+      expect(() => parseSystemdConfig({ common: { ...common, paths: { ...common.paths, storageRoot: `${hidden}/data`, quotaMount: hidden } }, native }))
+        .toThrow(expect.objectContaining({ operation: 'hidden-path' }))
+    }
   })
 })
 
