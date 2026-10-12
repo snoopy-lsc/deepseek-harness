@@ -26,7 +26,7 @@ kind: "package-library"
 
 `parseSystemdConfig({ common, native })` 将已校验的通用配置服务设置与严格的原生选项组合。通用 `runtime` 标签要求 `kind: systemd` 和指向原生配套 JSON 的绝对 `configFile` 路径。位于 `/home`、`/root`、`/run/user`、`/run/systemd` 或 `/run/dbus` 下的存储、发布和工具链路径会被拒绝，因为生成的单元会隐藏这些目录树。通用设置统一决定数据/状态/socket/配额路径、账号工具、CPU/内存/PID/文件描述符/字节限制、额度端口与就绪/停止超时。原生选项提供不可变发布/工具链资源、Node 和主机强制执行工具、具名 profile 及启动补丁、inode/共享内存限制、Web 端口、解析器/公共出站规则与操作超时。未知字段、重叠范围或路径、不安全路径语法和无效限制会在产生副作用前被拒绝。精确字段见[解析器](src/config.ts)。
 
-在注册运行时服务前调用 `validateNativeAssets`，避免依赖的配置流程调用未经校验的主机程序。发布和工具链目录树及其祖先必须由 root 拥有，且组和其他用户无写权限。不可变链接只能解析到声明的不可变根目录中；悬空、循环、逃逸或可写目标均拒绝。操作系统命令链接只能解析到受信任的系统工具根目录下。root 写入的数据/控制路径使用不跟随链接的目录描述符，遇到链接直接拒绝。
+在注册运行时服务前调用 `validateNativeAssets`，避免依赖的配置流程调用未经校验的主机程序。发布、工具链和浏览器目录树及其祖先必须由 root 拥有，且组和其他用户无写权限。不可变链接只能解析到声明的不可变根目录中；悬空、循环、逃逸或可写目标均拒绝。操作系统命令链接只能解析到受信任的系统工具根目录下。完整目录树遍历在每个进程中按 `paths.releaseManifest`（位于发布目录树内）的 SHA-256 只执行一次；之后的调用只重新检查配置的条目及其祖先，因此安装发布版本时必须同时安装新的清单。主机上的 `/etc/resolv.conf` 必须是 root 拥有的普通文件，而不是 Ubuntu 的 stub 符号链接，因为 unit 会把生成的解析器文件绑定到它上面。`paths.browser` 是位于 `paths.browserRoot` 内的固定版本 Chrome for Testing 可执行文件；使用 [install-browser.sh](../../deploy/production/scripts/install-browser.sh) 安装和校验，它会检查 [browser.pin](../../deploy/production/browser.pin) 中的 SHA-256。原生限制必须至少允许 512 个任务和 1 GiB 内存。root 写入的数据/控制路径使用不跟随链接的目录描述符，遇到链接直接拒绝。当某个账户自己的 `home`、`workspace`、`cache` 或 `tmp` 目录的属主或权限被改动时，`TenantDirectoryError` 会指出该账户、目录和观察到的权限；其他账户不受影响，root 也不会修复该目录树。
 
 `ensureNativeAccount` 使用锁定密码、nologin shell 和私有主用户组，不启用用户管理器 linger。已有原生账号必须保留密码锁定，且没有补充用户组。`prepareHost` 校验资源、应用 XFS 字节/inode 硬限制、准备存储并写入生成的 unit/策略文本。它不加载 AppArmor，也不启动系统 unit。调用方必须在任何用户代码执行前完成网络策略和实际强制执行检查，包括工作区初始化。
 
@@ -40,7 +40,7 @@ kind: "package-library"
 
 导出的准备阶段 `validateNativeAssets`、`applyDiskLimits`、`prepareNativeStorage` 和 `writeControlFile` 允许生命周期 provider 在副作用之间记录各项已获得资源。拒绝的操作可能留下部分目录、配额设置或文件；应保留分配、拒绝路由，并在重试前对账。写入中断后保留独占暂存文件。`NativeHostError` 提供稳定失败代码和失败操作，同时保留原因。确认删除数据还要求已验证 UID/cgroup 完全停止，并满足通用恢复期。
 
-生成的 unit 使用空能力集、禁止新增特权、只读系统、受保护的其他用户进程、不委派 cgroup 和整个 cgroup 终止。AppArmor 为开发工具和私有程序授予继承执行权限，允许同一 profile 内发送信号/检查进程、读取选定系统文件及写入私有数据。它不授予不受限 profile 转换或管理 socket 访问权限。unit 保留 JIT 执行和用户命名空间，profile 授予 PTY 访问。编译器和浏览器兼容性要求真实 Linux 测试。网络目的地和公共入站由 unit 渲染器之外的机制强制执行。
+生成的 unit 使用空能力集、禁止新增特权、只读系统、受保护的其他用户进程、不委派 cgroup 和整个 cgroup 终止。它把 root 写入的 `<controlDir>/resolv.conf`（内容为 `nameserver <resolver>`）只读绑定到 `/etc/resolv.conf`，并以 `PUBLIC_HARNESS_BROWSER` 导出浏览器路径。AppArmor 为开发工具和私有程序授予继承执行权限，允许同一 profile 内发送信号/检查进程、读取选定系统文件及写入私有数据。它不授予不受限 profile 转换或管理 socket 访问权限。主 profile 没有 `userns` 规则。只有确切的 `paths.browser` 可执行文件会切换到子 profile `<account>//chromium`，该 profile 可以创建用户命名空间，持有命名空间内的 `sys_admin`、`sys_chroot`、`setuid` 和 `setgid` 能力，并写入自身的 `uid_map`、`gid_map` 和 `setgroups`；它只能执行浏览器目录树，不能执行用户目录中的文件。unit 保留 JIT 执行，profile 授予 PTY 访问。网络目的地和公共入站由 unit 渲染器之外的机制强制执行。
 
 </details>
 
@@ -58,7 +58,7 @@ kind: "package-library"
 
 - 锁定密码和 nologin shell 还需要 SSH 入站策略：部署必须在 sshd 拒绝受管理账号名称，或验证没有 SSH 服务，并覆盖公钥认证与转发尝试。出站 Git SSH 属于独立的出站选择。
 
-- 浏览器验收尚未通过：Chromium 需要写入自身命名空间的 UID/GID 映射，并执行本 AppArmor profile 尚未授予的额外命名空间能力操作。必须经过审查并在 Linux 上调整策略；禁用浏览器沙箱或切换到不受限 profile 均不是可接受的回退方案。
+- 浏览器策略已生成但尚未验证：必须在专用 Ubuntu 24.04 主机上证明 Chromium 的命名空间沙箱能在子 profile 中启动、主 profile 无法创建用户命名空间，以及解析器绑定在其源文件位于隐藏状态目录树中时仍能生效。禁用浏览器沙箱或切换到不受限 profile 均不是可接受的回退方案。
 
 <a id="dev-note"></a>
 ## 开发说明

@@ -1,34 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { parseInstanceId, parseUserId, type RuntimeInstance } from '@public-harness/contracts'
-import { deriveNames } from '@public-harness/provisioner/accounts'
 import type { CommandRunner } from '@public-harness/provisioner/system'
 import { parseSystemdConfig } from '../src/config.ts'
 import { ensureNativeAccount } from '../src/accounts.ts'
-import { renderUnit } from '../src/units.ts'
+import { renderResolvConf, renderUnit } from '../src/units.ts'
 import { renderAppArmor } from '../src/apparmor.ts'
 
-export const common = {
-  paths: { storageRoot: '/srv/dsh/data', stateDir: '/srv/dsh/state', socketDir: '/run/dsh/sockets', quotaMount: '/srv/dsh' },
-  tools: { getent: '/usr/bin/getent', useradd: '/usr/sbin/useradd', userdel: '/usr/sbin/userdel', nologin: '/usr/sbin/nologin' },
-  runtime: { kind: 'systemd', configFile: '/etc/dsh/native.json' }, socketGid: 100, maxActiveInstances: 4, idleStopMs: 600000, deletionRecoveryMs: 86400000,
-  limits: { cpus: 2, memoryBytes: 1073741824, pids: 256, openFiles: 4096, diskBytes: 5368709120 },
-  readyTimeoutMs: 30000, stopTimeoutMs: 15000, ports: { quota: { min: 29100, max: 29109 } },
-}
-export const native = {
-  paths: { release: '/opt/dsh/release', toolchain: '/opt/dsh/toolchain',
-    dsh: '/opt/dsh/release/dsh.mjs', launchPatch: '/opt/dsh/release/native.yml' },
-  tools: { node: '/opt/dsh/toolchain/node', systemctl: '/usr/bin/systemctl', apparmorParser: '/usr/sbin/apparmor_parser',
-    xfsQuota: '/usr/sbin/xfs_quota', nft: '/usr/sbin/nft' },
-  profile: 'public-user', diskInodes: 100000, shmBytes: 67108864, shmInodes: 4096, operationTimeoutMs: 10000,
-  web: { min: 29200, max: 29209 }, resolver: '1.1.1.1', publicEgress: { tcp: [80, 443], udp: [] },
-}
-export const config = () => parseSystemdConfig({ common, native })
-export function instance(): RuntimeInstance {
-  const userId = parseUserId('native-alice'), names = deriveNames(userId), root = `${common.paths.storageRoot}/users/${names.account}`
-  return { userId, instanceId: parseInstanceId('native_1'), runtime: { kind: 'systemd', unit: names.unit }, account: names.account,
-    uid: 1201, gid: 1201, home: `${root}/home`, workspace: `${root}/workspace`, cache: `${root}/cache`, tmp: `${root}/tmp`,
-    controlDir: `${common.paths.stateDir}/runtime/${names.account}`, webPort: 29200, quotaPort: 29100 }
-}
+import { common, config, instance, native } from './fixture.ts'
 
 describe('native host policy', () => {
   it('account_requires_no_linger', async () => {
@@ -67,7 +44,57 @@ describe('native host policy', () => {
     expect(policy).toContain(`signal (send, receive) peer=${i.account},`)
     expect(policy).toContain(`ptrace (read, readby, trace, tracedby) peer=${i.account},`)
     expect(policy).toContain('owner /proc/[0-9]*/** r,')
-    expect(policy).not.toMatch(/\b[puPUcC]x\b|change_profile|flags=\(complain\)|^\s*\/\*\* rw/m)
+    expect(policy).not.toMatch(/\b[puPU]x\b|change_profile|flags=\(complain\)|^\s*\/\*\* rw/m)
+  })
+  it('main profile cannot create user namespaces; only the pinned browser binary enters the child profile', () => {
+    const i = instance(), policy = renderAppArmor(i, config())
+    const childStart = policy.indexOf('  profile chromium flags=(mediate_deleted) {')
+    expect(childStart).toBeGreaterThan(0)
+    const main = policy.slice(0, childStart), child = policy.slice(childStart)
+    expect(main).not.toMatch(/^\s*userns\b/m)
+    expect(main).not.toMatch(/^\s*capability\b/m)
+    expect(main).not.toMatch(/uid_map|gid_map|setgroups/)
+    // Exactly one transition rule, naming the exact pinned executable.
+    expect(policy.match(/\bCx\b/g)).toEqual(['Cx'])
+    expect(main).toContain(`  ${native.paths.browser} Cx -> chromium,\n`)
+    expect(policy).not.toMatch(/[*?{[][^\n]*\bCx\b/)
+    for (const rule of ['userns,', 'capability sys_admin,', 'capability sys_chroot,', 'capability setuid,', 'capability setgid,',
+      'owner /proc/[0-9]*/{uid_map,gid_map,setgroups} w,']) expect(child).toContain(`    ${rule}\n`)
+    expect(child.match(/capability \w+/g)).toEqual(['capability sys_admin', 'capability sys_chroot', 'capability setuid', 'capability setgid'])
+    // The child may execute only the browser tree; user directories are not executable there.
+    expect(child.match(/^.*\bi?x,$/gm)?.map(line => line.trim())).toEqual([`${native.paths.browser} ix,`, '/opt/dsh/browser/**/chrome_crashpad_handler ix,'])
+    expect(child).toContain(`    ${i.workspace}/** rwkm,\n`)
+    expect(child).toContain('    deny /run/** rwklx,\n')
+    expect(child).toContain(`signal (receive) peer=${i.account},`)
+    expect(policy).not.toMatch(/unconfined\b(?!,)|flags=\([^)]*(unconfined|complain|kill)|\bux\b|\bUx\b|\bpix\b|\bPix\b|change_profile|change_hat|\^/)
+    expect(policy.trimEnd().endsWith('  }\n}')).toBe(true)
+  })
+  it('binds a generated resolver file over /etc/resolv.conf', () => {
+    const i = instance(), unit = renderUnit(i, config())
+    expect(unit).toContain(`BindReadOnlyPaths=${i.controlDir}/resolv.conf:/etc/resolv.conf\n`)
+    expect(unit).toContain(`Environment=PUBLIC_HARNESS_BROWSER=${native.paths.browser}\n`)
+    expect(renderResolvConf(config())).toBe('# Generated by the public Harness provisioner; edits are replaced.\nnameserver 1.1.1.1\noptions edns0\n')
+    expect(renderResolvConf(parseSystemdConfig({ common, native: { ...native, resolver: '2606:4700:4700::1111' } }))).toContain('nameserver 2606:4700:4700::1111\n')
+    for (const resolver of ['dns.example', '1.1.1.1\nnameserver 6.6.6.6', '1.1.1.1 ', '']) {
+      expect(() => parseSystemdConfig({ common, native: { ...native, resolver } })).toThrow(expect.objectContaining({ operation: 'resolver' }))
+    }
+  })
+  it('requires native floors of 512 tasks and 1 GiB', () => {
+    expect(() => parseSystemdConfig({ common: { ...common, limits: { ...common.limits, pids: 511 } }, native }))
+      .toThrow(expect.objectContaining({ operation: 'native-limit-floor' }))
+    expect(() => parseSystemdConfig({ common: { ...common, limits: { ...common.limits, memoryBytes: 1073741823 } }, native }))
+      .toThrow(expect.objectContaining({ operation: 'native-limit-floor' }))
+    expect(renderUnit(instance(), config())).toContain('TasksMax=512\n')
+  })
+  it('keeps the browser inside its own isolated root', () => {
+    const paths = (extra: Record<string, string>) => ({ common, native: { ...native, paths: { ...native.paths, ...extra } } })
+    expect(() => parseSystemdConfig(paths({ browser: '/opt/dsh/release/chrome' }))).toThrow(expect.objectContaining({ operation: 'asset-layout' }))
+    expect(() => parseSystemdConfig(paths({ browser: '/opt/dsh/browser' }))).toThrow(expect.objectContaining({ operation: 'asset-layout' }))
+    expect(() => parseSystemdConfig(paths({ browserRoot: '/opt/dsh/release/browser', browser: '/opt/dsh/release/browser/chrome' })))
+      .toThrow(expect.objectContaining({ operation: 'overlapping-paths' }))
+    expect(() => parseSystemdConfig(paths({ browserRoot: '/home/browser', browser: '/home/browser/chrome' })))
+      .toThrow(expect.objectContaining({ operation: 'hidden-path' }))
+    expect(() => parseSystemdConfig(paths({ releaseManifest: '/opt/dsh/manifest.json' }))).toThrow(expect.objectContaining({ operation: 'asset-layout' }))
   })
   it('rejects unknown fields, unsafe policy paths, and overlapping ports', () => {
     expect(() => parseSystemdConfig({ common, native, unknown: true })).toThrow()

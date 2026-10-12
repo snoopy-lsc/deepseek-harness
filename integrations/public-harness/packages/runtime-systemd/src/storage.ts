@@ -1,6 +1,7 @@
 /** Native root writes use held directory descriptors; user trees are never traversed for ownership changes. */
+import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
-import { lstat, mkdir, open, readdir, realpath, rename, type FileHandle } from 'node:fs/promises'
+import { lstat, mkdir, open, readFile, readdir, realpath, rename, type FileHandle } from 'node:fs/promises'
 import { dirname, join, relative } from 'node:path'
 import type { RuntimeInstance } from '@public-harness/contracts'
 import type { AccountIdentity } from '@public-harness/provisioner/accounts'
@@ -9,7 +10,7 @@ import { NativeHostError, type SystemdConfig } from './config.ts'
 import { ensureNativeAccount } from './accounts.ts'
 import { applyDiskLimits } from './limits.ts'
 import { renderAppArmor } from './apparmor.ts'
-import { renderUnit } from './units.ts'
+import { RESOLV_CONF, renderResolvConf, renderUnit } from './units.ts'
 
 /** Open the exact directory entry without following its final component.
  * @param path Path anchored by a trusted parent; production callers retain the parent handle.
@@ -58,7 +59,10 @@ export async function ensureDirectoryAt(parent: FileHandle, name: string, identi
   try {
     const s = await child.stat()
     if (created) { await child.chown(identity.uid, identity.gid); await child.chmod(mode) }
-    else if (s.uid !== identity.uid || s.gid !== identity.gid || (s.mode & 0o777) !== mode) throw new NativeHostError('unsafe-path', 'directory-owner-or-mode')
+    else if (s.uid !== identity.uid || s.gid !== identity.gid || (s.mode & 0o777) !== mode) {
+      throw new NativeHostError('unsafe-path', 'directory-owner-or-mode',
+        new Error(`found ${s.uid}:${s.gid} mode ${(s.mode & 0o777).toString(8).padStart(4, '0')}, expected ${identity.uid}:${identity.gid} mode ${mode.toString(8).padStart(4, '0')}`))
+    }
     return child
   } catch (cause) { await child.close(); throw cause }
 }
@@ -120,14 +124,65 @@ export async function validateRootAssets(paths: readonly string[], roots: readon
   }
 }
 
+/** One account's own top-level directory changed owner or mode, typically by the tenant (`chmod 755 ~`).
+ * Only this account's preparation is refused; root never repairs it by traversing tenant-controlled trees.
+ */
+export class TenantDirectoryError extends NativeHostError {
+  /** @param account Native account whose directory is affected. @param directory home, workspace, cache or tmp. @param cause Observed owner and mode. */
+  constructor(readonly account: string, readonly directory: string, cause: unknown) {
+    super('unsafe-path', 'tenant-directory-mode', cause)
+    const found = cause instanceof NativeHostError && cause.cause instanceof Error ? `: ${cause.cause.message}` : ''
+    this.message = `native account ${account} has a changed ${directory} directory${found}; only this account is refused until it is restored to the expected owner and mode`
+  }
+}
+
+/** The host resolver file must be a plain file so the unit's read-only bind replaces it rather than a symlink target.
+ * @param path Host resolver path; injectable for tests.
+ * @returns Resolves when the file is a regular root-owned, non-writable file.
+ */
+export async function validateHostResolvConf(path = '/etc/resolv.conf'): Promise<void> {
+  let info
+  try { info = await lstat(path) } catch (cause) { throw new NativeHostError('unsafe-path', 'host-resolv-conf', cause) }
+  if (!info.isFile() || info.uid !== 0 || (info.mode & 0o022) !== 0) throw new NativeHostError('unsafe-path', 'host-resolv-conf')
+}
+
+async function checkEntry(path: string): Promise<void> {
+  await validateOriginalAncestors(path)
+  const info = await lstat(path)
+  if (info.uid !== 0 || (!info.isSymbolicLink() && (info.mode & 0o022) !== 0)) throw new NativeHostError('unsafe-path', 'asset-owner-or-mode')
+  await validateAncestors(await realpath(path))
+}
+
+/** Release-manifest digests whose complete asset walk already passed in this process. */
+export type AssetValidationCache = Set<string>
+const processAssetCache: AssetValidationCache = new Set()
+
 /** Check configured commands and release assets before the first native account or storage effect.
+ * The complete tree walk runs once per release-manifest digest and asset layout; later calls re-check each
+ * configured entry and its ancestors. Root-owned trees can only change through root, which installs a new manifest.
  * @param config Resolved deployment values.
+ * @param cache Digests of completed walks; defaults to one per process.
  * @returns Resolves after read-only checks; startup must reject on failure.
  */
-export async function validateNativeAssets(config: SystemdConfig): Promise<void> {
-  await validateRootAssets([config.paths.release, config.paths.toolchain])
-  await validateRootAssets(Object.values(config.tools), [config.paths.toolchain, '/usr', '/bin', '/sbin'])
-  await validateRootAssets([config.paths.dsh, config.paths.launchPatch], [config.paths.release])
+export async function validateNativeAssets(config: SystemdConfig, cache: AssetValidationCache = processAssetCache): Promise<void> {
+  const { paths } = config
+  const entries = [paths.release, paths.toolchain, paths.browserRoot, paths.releaseManifest, paths.dsh, paths.launchPatch, paths.browser,
+    ...Object.values(config.tools)]
+  try { for (const path of entries) await checkEntry(path) }
+  catch (cause) { throw cause instanceof NativeHostError ? cause : new NativeHostError('unsafe-path', 'immutable-assets', cause) }
+  let manifest: Buffer
+  try { manifest = await readFile(paths.releaseManifest, { flag: constants.O_RDONLY | constants.O_NOFOLLOW }) }
+  catch (cause) { throw new NativeHostError('unsafe-path', 'release-manifest', cause) }
+  const key = createHash('sha256').update(manifest).update('\0').update(JSON.stringify(entries)).digest('hex')
+  await validateHostResolvConf()
+  if (cache.has(key)) return
+  await validateRootAssets([paths.release, paths.toolchain, paths.browserRoot])
+  await validateRootAssets(Object.values(config.tools), [paths.toolchain, '/usr', '/bin', '/sbin'])
+  await validateRootAssets([paths.dsh, paths.launchPatch, paths.releaseManifest], [paths.release])
+  await validateRootAssets([paths.browser], [paths.browserRoot])
+  const browser = await lstat(await realpath(paths.browser))
+  if (!browser.isFile() || (browser.mode & 0o111) === 0) throw new NativeHostError('unsafe-path', 'browser-executable')
+  cache.add(key)
 }
 
 /** Prepare root management directories and quota-backed user directories without entering user trees.
@@ -149,7 +204,11 @@ export async function prepareNativeStorage(instance: RuntimeInstance, config: Sy
       try {
         for (const path of [instance.home, instance.workspace, instance.cache, instance.tmp]) {
           const name = relative(`${config.paths.storageRoot}/users/${instance.account}`, path)
-          const child = await ensureDirectoryAt(root, name, instance, 0o700)
+          let child: FileHandle
+          try { child = await ensureDirectoryAt(root, name, instance, 0o700) }
+          catch (cause) {
+            throw cause instanceof NativeHostError && cause.operation === 'directory-owner-or-mode' ? new TenantDirectoryError(instance.account, name, cause) : cause
+          }
           try { if ((await child.stat()).dev !== (await storage.stat()).dev) throw new NativeHostError('unsafe-path', 'user-filesystem') }
           finally { await child.close() }
         }
@@ -165,14 +224,15 @@ export async function prepareNativeStorage(instance: RuntimeInstance, config: Sy
  * @param directory Root-owned control directory with trusted ancestors.
  * @param name Server-derived single file name.
  * @param text Generated text; never tenant input.
+ * @param mode File mode; 0600 unless the file is bind-mounted into the account's view.
  * @returns Resolves after syncing and replacement; stale exclusive staging files reject for reconciliation.
  */
-export async function writeControlFile(directory: string, name: string, text: string): Promise<void> {
+export async function writeControlFile(directory: string, name: string, text: string, mode = 0o600): Promise<void> {
   const parent = await openRootDirectory(directory)
   try {
     const pending = entry(parent, `${name}.pending`), target = entry(parent, name)
-    const file = await open(pending, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
-    try { await file.writeFile(text); await file.sync() } finally { await file.close() }
+    const file = await open(pending, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, mode)
+    try { await file.writeFile(text); await file.chmod(mode); await file.sync() } finally { await file.close() }
     await rename(pending, target); await parent.sync()
   } catch (cause) { throw new NativeHostError('unsafe-path', 'control-file', cause) }
   finally { await parent.close() }
@@ -191,6 +251,8 @@ export async function prepareHost(instance: RuntimeInstance, config: SystemdConf
   if (identity.uid !== instance.uid || identity.gid !== instance.gid) throw new NativeHostError('account-conflict', 'allocated-identity')
   await applyDiskLimits(instance, config, runner)
   await prepareNativeStorage(instance, config)
+  // Bind-mounted read-only as the instance's /etc/resolv.conf, so the account must be able to read it.
+  await writeControlFile(instance.controlDir, RESOLV_CONF, renderResolvConf(config), 0o644)
   await writeControlFile(instance.controlDir, instance.runtime.unit, renderUnit(instance, config))
   await writeControlFile(instance.controlDir, `${instance.account}.apparmor`, renderAppArmor(instance, config))
 }
