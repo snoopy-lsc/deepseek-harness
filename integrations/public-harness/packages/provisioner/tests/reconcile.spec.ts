@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { AccountSuspendedError, CapacityError, type InstanceEndpoint, type InstanceRuntime, type RuntimeInstance } from '@public-harness/contracts'
 import { deriveNames } from '../src/accounts.ts'
 import { DeletionNotAllowedError, sweepSockets } from '../src/reconcile.ts'
+import { RuntimeStartError } from '../src/runtime.ts'
 import { createProvisionerService } from '../src/service.ts'
 import { createUserProvisioner } from '../src/users.ts'
 import { alice, bob, makeHarness } from './helpers.ts'
@@ -216,6 +217,18 @@ describe.skipIf(process.platform === 'win32')('stop and external kill', () => {
     runtime.state = async () => 'running'
     await call('ensure')
     expect(runtime.started).toHaveLength(2)
+  })
+
+  it('returns to stopped, not starting, when the instance dies during start, and a later ensure can retry', async () => {
+    const { runtime, call } = await service()
+    const realStart = runtime.start.bind(runtime)
+    runtime.start = async () => { throw new RuntimeStartError('container-exited') }
+    await expect(call('ensure')).rejects.toMatchObject({ reason: 'container-exited' })
+    expect(await call('status')).toBe('stopped')
+    await expect(call('launch-grant')).rejects.toThrow(/not running/)
+    runtime.start = realStart
+    await call('ensure')
+    expect(await call('status')).toBe('running')
   })
 
   it('treats an inspect that cannot answer as alive', async () => {

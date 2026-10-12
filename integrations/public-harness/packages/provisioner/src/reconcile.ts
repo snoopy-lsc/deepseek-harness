@@ -41,8 +41,8 @@ export interface Lifecycle {
   deleteUser(userId: UserId): Promise<void>
   idleStop(): Promise<UserId[]>
   /**
-   * If the user is routable but its process is gone or stopped (killed out of band, for example by the gVisor memory
-   * or pids limit), release its socket, forwarder, and quota listener and mark it stopped. Returns true when it did.
+   * If the user is routable but its process is gone or stopped (killed out of band, for example when the gVisor pids
+   * limit is exhausted), release its socket, forwarder, and quota listener and mark it stopped. Returns true when it did.
    * Successful checks are cached for `livenessTtlMs`; an inspect that cannot tell leaves everything unchanged.
    */
   reapIfDead(userId: UserId): Promise<boolean>

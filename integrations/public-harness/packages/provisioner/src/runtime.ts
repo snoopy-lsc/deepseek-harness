@@ -8,7 +8,7 @@ import { parseInstanceId, portsFrom, type InstanceEndpoint, type InstanceId, typ
 import type { ContainerConfig } from './config.ts'
 import { startUnixForwarder, type Forwarder } from './forwarder.ts'
 import { enforceLimits, LimitsError, networkArgument, type EnforcementProbe } from './limits.ts'
-import { clearReady, readReady, waitForReady } from './token-channel.ts'
+import { clearReady, ContainerExitedError, readReady, waitForReady } from './token-channel.ts'
 import { KeyedLock, type CommandRunner } from './system.ts'
 import type { UserRecord } from './users.ts'
 
@@ -18,6 +18,15 @@ export const WEB_PORT = 8080
 export const SIDECAR_PORT = 8081
 /** Mount points inside the container. */
 export const CONTAINER = { home: '/home/harness', workspace: '/workspace', ctl: '/run/harness-ctl', assets: '/opt/public-harness' } as const
+
+/**
+ * The unprivileged user the image runs as (`useradd --uid 10001` in the Containerfile; a test keeps them equal).
+ * Rootless Podman would map that uid to a subuid that cannot write the account-owned control directory, so the
+ * container is started with exactly `--userns keep-id:uid=10001,gid=10001`, which maps the host account onto it.
+ */
+export const INSTANCE_USER = { uid: 10001, gid: 10001 } as const
+/** The only `--userns` value an instance may be started with. */
+export const INSTANCE_USERNS = `keep-id:uid=${INSTANCE_USER.uid},gid=${INSTANCE_USER.gid}`
 
 /** The model quota proxy as seen by the provisioner (its control channel is private to the provisioner). */
 export interface QuotaBridge {
@@ -31,7 +40,7 @@ export interface QuotaBridge {
 /** Ordered failures a start can report; messages never include paths, argv, or token material. */
 export class RuntimeStartError extends Error {
   override readonly name = 'RuntimeStartError'
-  constructor(readonly reason: 'gvisor-unavailable' | 'limits' | 'quota-unavailable' | 'start-failed' | 'not-ready' | 'unsafe-argv' | 'no-port' | 'image-unavailable') {
+  constructor(readonly reason: 'gvisor-unavailable' | 'limits' | 'quota-unavailable' | 'start-failed' | 'not-ready' | 'unsafe-argv' | 'no-port' | 'image-unavailable' | 'container-exited') {
     super(`runtime start refused: ${reason}`)
   }
 }
@@ -80,6 +89,20 @@ export interface RuntimeDeps {
   readonly stopGraceMs?: number
   /** Margin after a command's own timeout before the provisioner stops waiting for the runner (default 1 s). */
   readonly deadlineSlackMs?: number
+  /** How often the readiness wait asks the engine whether the container is still there (default 1 s). */
+  readonly livenessEveryMs?: number
+  /** One-line diagnostics for the operator (default: stderr). Never receives paths, argv, or token material. */
+  readonly log?: (line: string) => void
+}
+
+/**
+ * Make a container log tail safe to log: control characters removed, long token-like strings and absolute paths
+ * replaced, at most ten lines and 600 characters, keeping the end.
+ */
+export function redactLogTail(text: string): string {
+  const lines = text.replace(/[^\x09\x0a\x20-\x7e]/g, '?').split('\n').map(line => line.trimEnd()).filter(line => line !== '').slice(-10)
+  const cleaned = lines.join(' | ').replace(/\/[^\s|:'"]+/g, '<path>').replace(/[A-Za-z0-9_+=.-]{20,}/g, '<redacted>')
+  return cleaned.length > 600 ? `...${cleaned.slice(-600)}` : cleaned
 }
 
 /** The exact argv for `podman` (after the executable) that starts one instance. */
@@ -89,7 +112,8 @@ export function buildRunArgv(config: ContainerConfig, record: UserRecord, sideca
   const env = (name: string, value: string): string[] => ['--env', `${name}=${value}`]
   return [
     '--runtime', tools.runsc, 'run', '--detach', '--replace', '--name', record.container,
-    '--network', networkArgument(limits.network, config.quota.hostAddress), '--publish', `127.0.0.1:${sidecarPort}:${SIDECAR_PORT}`,
+    '--network', networkArgument(limits.network, config.quota.hostAddress), '--userns', INSTANCE_USERNS,
+    '--publish', `127.0.0.1:${sidecarPort}:${SIDECAR_PORT}`,
     '--cap-drop', 'all', '--security-opt', 'no-new-privileges', '--read-only',
     '--tmpfs', '/tmp:rw,nosuid,nodev,size=256m,mode=1777',
     '--pids-limit', String(limits.pids), '--memory', String(limits.memoryBytes), '--memory-swap', String(limits.memoryBytes),
@@ -130,17 +154,22 @@ export function assertSafeRunArgv(argv: readonly string[], config: ContainerConf
     `${record.layout.home}:${CONTAINER.home}:rw,Z`, `${record.layout.workspace}:${CONTAINER.workspace}:rw,Z`,
     `${record.layout.ctl}:${CONTAINER.ctl}:rw,Z`, `${config.paths.runtimeAssets}:${CONTAINER.assets}:ro,Z`])
   const seen = new Set<string>()
+  let userns = 0
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]!
     if (arg === '--volume') {
       const value = argv[index + 1] ?? ''
       if (!allowedVolumes.has(value) || seen.has(value)) throw new RuntimeStartError('unsafe-argv')
       seen.add(value); index += 1
+    } else if (arg === '--userns') {
+      // Precise allowlist: one exact value, never host, auto, a bare keep-id, other ids, or an option variant.
+      if (argv[index + 1] !== INSTANCE_USERNS || ++userns > 1) throw new RuntimeStartError('unsafe-argv')
+      index += 1
     } else if (FORBIDDEN_FLAGS.test(arg)) throw new RuntimeStartError('unsafe-argv')
     else if (arg === '--network' && argv[index + 1] !== networkArgument(config.limits.network, config.quota.hostAddress)) throw new RuntimeStartError('unsafe-argv')
     else if (arg === '--publish' && !publishedInRange(argv[index + 1] ?? '', config)) throw new RuntimeStartError('unsafe-argv')
   }
-  if (seen.size !== allowedVolumes.size) throw new RuntimeStartError('unsafe-argv')
+  if (seen.size !== allowedVolumes.size || userns !== 1) throw new RuntimeStartError('unsafe-argv')
   if (!argv.includes('--read-only') || argv[argv.indexOf('--cap-drop') + 1] !== 'all') throw new RuntimeStartError('unsafe-argv')
 }
 
@@ -177,6 +206,7 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
   const probeHealth = deps.healthProbe ?? httpHealthProbe
   const rotateMs = deps.credentialRotateMs ?? 480_000
   const portFree = deps.portFree ?? loopbackPortFree
+  const log = deps.log ?? ((line: string) => { process.stderr.write(`provisioner: ${line}\n`) })
   const imageLock = new KeyedLock()
   const live = new Map<UserId, { forwarder: Forwarder; timer: NodeJS.Timeout; instanceId: InstanceId; port: number }>()
   const reserved = new Map<UserId, number>()
@@ -262,6 +292,14 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     live.delete(record.userId); reserved.delete(record.userId)
   }
 
+  /** The container died while we waited for it: fail now, and send a redacted log tail to the operator log only. */
+  async function exitedDuringStart(record: UserRecord): Promise<RuntimeStartError> {
+    const tail = await asAccount(record, ['logs', '--tail', '20', record.container], 15_000).catch(() => undefined)
+    const detail = tail === undefined ? '' : redactLogTail(`${tail.stdout}\n${tail.stderr}`)
+    log(`instance ${record.account} exited during start${detail === '' ? '' : `: ${detail}`}`)
+    return new RuntimeStartError('container-exited')
+  }
+
   /** Polite stop within the configured time, then SIGKILL, then a forced remove; fails loudly if it is still there. */
   async function removeContainer(record: UserRecord): Promise<void> {
     const polite = await asAccount(record, ['rm', '--force', '--ignore', '--time', String(Math.ceil(config.stopTimeoutMs / 1000)), record.container],
@@ -310,13 +348,21 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
         const started = await asAccount(record, argv)
         if (started.code !== 0) throw new RuntimeStartError('start-failed')
         await deps.acquired?.(record.userId, instanceId, 'unit')
-        const ready = await waitForReady(record.layout.ctl, record.uid, config.readyTimeoutMs, 100, sleep, deps.clock)
-          .catch(() => { throw new RuntimeStartError('not-ready') })
-        void ready
+        await waitForReady(record.layout.ctl, record.uid, config.readyTimeoutMs, 100, sleep, deps.clock,
+          { check: () => containerState(record), everyMs: deps.livenessEveryMs ?? 1000 })
+          .catch(async (error: unknown) => {
+            throw error instanceof ContainerExitedError ? await exitedDuringStart(record) : new RuntimeStartError('not-ready')
+          })
         const hostPort = sidecarPort
         const deadline = (deps.clock ?? Date.now)() + config.readyTimeoutMs
+        let lastCheck = (deps.clock ?? Date.now)()
         while (!await probeHealth(hostPort)) {
-          if ((deps.clock ?? Date.now)() >= deadline) throw new RuntimeStartError('not-ready')
+          const at = (deps.clock ?? Date.now)()
+          if (at >= deadline) throw new RuntimeStartError('not-ready')
+          if (at - lastCheck >= (deps.livenessEveryMs ?? 1000)) {
+            lastCheck = at
+            if (await containerState(record) === 'stopped') throw await exitedDuringStart(record)
+          }
           await sleep(200)
         }
         const forwarder = await forward({ socketPath: record.layout.socketPath, port: hostPort, gid: config.socketGid })

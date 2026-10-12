@@ -28,7 +28,7 @@ Call `parseUserId` for an external identity before using it as an `InstanceManag
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 
-`InstanceRuntime.allocate` reserves real Web and quota ports for one server-assigned launch ID. `prepare` establishes mandatory protections before `initializeWorkspace` executes user code; `start` returns an endpoint after readiness. `releaseAllocation` cleans up incomplete allocations, while `stop` cleans up complete instances. Cleanup rejects when resources may remain, and `state` distinguishes unknown outcomes from stopped processes. The provisioner retains partial allocation evidence until verified cleanup. `InstanceManager` keeps its router operations unchanged; this library performs no I/O.
+`InstanceRuntime.allocate` reserves real Web and quota ports for one server-assigned launch ID. `prepare` establishes mandatory protections before `initializeWorkspace` executes user code; `start` returns an endpoint after readiness. `releaseAllocation` cleans up incomplete allocations, while `stop` cleans up complete instances. Cleanup rejects when resources may remain, and `state` distinguishes unknown outcomes from stopped processes. The provisioner retains partial allocation evidence until verified cleanup. `InstanceManager` keeps its router operations unchanged; its `launchGrant` returns the current Web startup credential, which is not one-use: it stays valid, and repeated calls return the same value, until the instance restarts, and only the router ever sees it; this library performs no I/O.
 
 <a id="further-exploration"></a>
 ## Further Exploration
