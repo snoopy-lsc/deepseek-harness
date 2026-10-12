@@ -40,19 +40,27 @@ export class CdpPipe {
   /** Whether the browser side has ended. */
   get closed(): boolean { return this.#closed }
 
-  /** Send one JSON message; NUL inside a message would split it and is refused. */
+  /** Send one JSON message; NUL inside a message would split it and is refused.
+   * @param message Serialized CDP message.
+   */
   send(message: string): void {
     if (this.#closed) throw new Error('CDP pipe is closed')
     if (message.includes('\0')) throw new Error('CDP message contains NUL')
     this.toBrowser.write(`${message}\0`)
   }
 
-  /** Subscribe to complete messages; returns the unsubscribe function. */
+  /** Subscribe to complete messages.
+   * @param listener Receives each complete message.
+   * @returns The unsubscribe function.
+   */
   onMessage(listener: (message: string) => void): () => void {
     this.#listeners.add(listener); return () => { this.#listeners.delete(listener) }
   }
 
-  /** Subscribe to browser-side close; called at most once. */
+  /** Subscribe to browser-side close; called at most once.
+   * @param listener Called when the browser side ends.
+   * @returns The unsubscribe function.
+   */
   onClose(listener: () => void): () => void {
     if (this.#closed) { queueMicrotask(listener); return () => {} }
     this.#closeListeners.add(listener); return () => { this.#closeListeners.delete(listener) }
