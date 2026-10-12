@@ -16,6 +16,8 @@ describe('development model service', () => {
   it('validates the optional real upstream and reads its key only from the named environment variable', () => {
     const env = { DSH_TEAM_DEV_UPSTREAM_KEY: 'k'.repeat(16) }
     expect(resolveTeamDevUpstream(undefined, env)).toBeUndefined()
+    expect(resolveTeamDevUpstream({ root: '', keyEnv: '' }, env)).toBeUndefined()
+    expect(() => resolveTeamDevUpstream({ root: '', keyEnv: 'DSH_TEAM_DEV_UPSTREAM_KEY' }, env)).toThrow('HTTPS URL')
     expect(resolveTeamDevUpstream({ root: 'https://upstream.example.test/anthropic/v1', keyEnv: 'DSH_TEAM_DEV_UPSTREAM_KEY' }, env))
       .toEqual({ url: 'https://upstream.example.test/anthropic/v1/messages', key: 'k'.repeat(16) })
     for (const root of ['http://upstream.example.test/v1', 'https://upstream.example.test/v2', 'https://u:p@upstream.example.test/v1',

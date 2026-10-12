@@ -65,7 +65,8 @@ export interface TeamDevUpstreamConfig {
 /** Validate the upstream and read its key from the environment; nothing is returned when no upstream is configured. */
 export function resolveTeamDevUpstream(upstream: TeamDevUpstreamConfig | undefined,
   env: Readonly<Record<string, string | undefined>> = process.env): { url: string; key: string } | undefined {
-  if (upstream === undefined) return undefined
+  // The config schema fills an omitted object with empty fields; both empty means no upstream.
+  if (upstream === undefined || (!upstream.root && !upstream.keyEnv)) return undefined
   let url: URL
   try { url = new URL(upstream.root) } catch { throw new Error('team-dev upstream root must be an HTTPS URL ending in /v1') }
   if (url.protocol !== 'https:' || !url.pathname.endsWith('/v1') || url.search || url.hash || url.username || url.password) {
