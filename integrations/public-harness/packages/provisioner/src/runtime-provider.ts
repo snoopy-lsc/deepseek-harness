@@ -17,7 +17,7 @@ export interface ContainerProviderOptions extends Omit<RuntimeDeps, 'config' | '
 }
 /** Adapter with an awaited shutdown for its owning Cordis effect. */
 export interface ContainerInstanceRuntime extends InstanceRuntime {
-  /** Withdraw fresh and resumed allocations owned before their host effects.
+  /** Withdraw fresh and resumed allocations owned before their host effects; observations cannot replace launch ownership.
    * @returns Resolves after verified cleanup; failed resources remain recorded.
    */
   close(): Promise<void>
@@ -38,6 +38,8 @@ export function createContainerInstanceRuntime(options: ContainerProviderOptions
   }
   const own = (instance: Omit<RuntimeInstance, 'webPort' | 'quotaPort'>): UserRecord => {
     const record = recordOf(instance)
+    const current = allocations.get(instance.userId)
+    if (current !== undefined && current.instanceId !== instance.instanceId) throw new Error('instance does not match owned launch')
     allocations.set(instance.userId, instance)
     return record
   }
@@ -61,7 +63,8 @@ export function createContainerInstanceRuntime(options: ContainerProviderOptions
     const state = await store.get(request.userId)
     const id = state?.pending?.instanceId ?? state?.instance?.instanceId
     if (id !== undefined && id !== request.instanceId) throw new Error('cleanup does not match durable launch')
-    await runtime.stop(own(request)); allocations.delete(request.userId)
+    await runtime.stop(own(request))
+    if (allocations.get(request.userId)?.instanceId === request.instanceId) allocations.delete(request.userId)
   }
   return {
     kind: 'podman-gvisor',
@@ -73,9 +76,9 @@ export function createContainerInstanceRuntime(options: ContainerProviderOptions
     prepare: instance => runtime.prepare(own(instance)),
     initializeWorkspace: instance => { own(instance); return ensureGitWorkspace(instance.workspace, gitFor(instance.account)) },
     start: instance => runtime.start(own(instance), instance),
-    launchGrant: instance => runtime.launchGrant(own(instance)),
+    launchGrant: instance => runtime.launchGrant(recordOf(instance)),
     stop: releaseAllocation, releaseAllocation,
-    state: instance => runtime.state(own(instance)),
+    state: instance => runtime.state(recordOf(instance)),
     async close() {
       const results = await Promise.allSettled([...allocations.values()].map(releaseAllocation))
       const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected')

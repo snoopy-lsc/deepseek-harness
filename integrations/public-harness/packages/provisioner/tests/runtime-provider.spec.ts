@@ -156,3 +156,97 @@ it.skipIf(process.platform === 'win32')('owns a resumed complete launch before e
     await h.runtime.close()
   }
 })
+
+
+async function ownershipAcrossRestarts() {
+  const h = await makeHarness()
+  let forwarderCloses = 0, quotaCloses = 0
+  let pausedRead: { entered(): void; released: Promise<void> } | undefined
+  const store = { ...h.store, get: async (userId: Parameters<typeof h.store.get>[0]) => {
+    const snapshot = await h.store.get(userId)
+    const pause = pausedRead
+    if (pause !== undefined) { pausedRead = undefined; pause.entered(); await pause.released }
+    return snapshot
+  } }
+  const runtime = createContainerInstanceRuntime({ config: h.config, store, runner: h.runner, publicHost: 'h.test',
+    portFree: async () => true, healthProbe: async () => true, gitFor: () => localGit, chownFile: async () => {},
+    startForwarder: async () => ({ close: async () => { forwarderCloses += 1 } }),
+    probe: { controllers: async () => ['cpu', 'cpuset', 'hugetlb', 'io', 'memory', 'pids'] },
+    quota: { healthy: async () => true, open: async () => ({ port: 29100 }),
+      issue: async () => ({ token: 'grant', expiresAt: 1 }), close: async () => { quotaCloses += 1 } } })
+  const users = createUserProvisioner({ config: h.config, store: h.store, directory: h.directory, runner: h.runner, runtime,
+    ownership: { chown: async () => {} } })
+  const service = createProvisionerService({ config: h.config, store: h.store, directory: h.directory, runner: h.runner, runtime, users })
+  h.runner.handler = async (_command, args) => {
+    if (args.includes('run')) {
+      const instance = users.instanceOf((await h.store.get(alice))!)
+      await writeFile(join(instance.controlDir, 'ready.json'),
+        JSON.stringify({ kind: 'public-harness/web-ready', port: 8080, token: instance.instanceId }), { mode: 0o600 })
+    }
+    return undefined
+  }
+  return { h, users, service, runtime, closes: () => ({ forwarder: forwarderCloses, quota: quotaCloses }),
+    pauseRead: () => {
+      let entered!: () => void, release!: () => void
+      const reached = new Promise<void>(resolve => { entered = resolve })
+      const released = new Promise<void>(resolve => { release = resolve })
+      pausedRead = { entered, released }
+      return { reached, release }
+    } }
+}
+
+it.skipIf(process.platform === 'win32').each(['state', 'launchGrant'] as const)(
+  'keeps current shutdown ownership after a delayed stale %s observation', async method => {
+    const { h, users, service, runtime, closes } = await ownershipAcrossRestarts()
+    let release!: () => void
+    const released = new Promise<void>(resolve => { release = resolve })
+    let observation: Promise<unknown> | undefined
+    try {
+      await service.handler({ op: 'ensure', userId: alice })
+      const old = users.instanceOf((await h.store.get(alice))!)
+      observation = released.then(() => runtime[method](old))
+      await service.handler({ op: 'stop', userId: alice })
+      await service.handler({ op: 'ensure', userId: alice })
+      const current = users.instanceOf((await h.store.get(alice))!)
+      expect(current.instanceId).not.toBe(old.instanceId)
+      release()
+      await observation
+      const before = closes()
+      await expect(runtime.close()).resolves.toBeUndefined()
+      expect(closes()).toEqual({ forwarder: before.forwarder + 1, quota: before.quota + 1 })
+    } finally {
+      release()
+      if (observation !== undefined) await Promise.allSettled([observation])
+      const current = (await h.store.get(alice))?.instance
+      if (current !== undefined && current !== null) await runtime.stop(current)
+      await runtime.close()
+    }
+  })
+
+it.skipIf(process.platform === 'win32')('rejects delayed stale cleanup without discarding the current launch owner', async () => {
+  const { h, users, service, runtime, closes, pauseRead } = await ownershipAcrossRestarts()
+  let pause: ReturnType<typeof pauseRead> | undefined
+  let cleanup: Promise<unknown> | undefined
+  try {
+    await service.handler({ op: 'ensure', userId: alice })
+    const old = users.instanceOf((await h.store.get(alice))!)
+    pause = pauseRead()
+    cleanup = runtime.stop(old).then(() => undefined, error => error)
+    await pause.reached
+    await service.handler({ op: 'stop', userId: alice })
+    await service.handler({ op: 'ensure', userId: alice })
+    expect(users.instanceOf((await h.store.get(alice))!).instanceId).not.toBe(old.instanceId)
+    const before = closes()
+    pause.release()
+    expect(await cleanup).toBeInstanceOf(Error)
+    expect(closes()).toEqual(before)
+    await expect(runtime.close()).resolves.toBeUndefined()
+    expect(closes()).toEqual({ forwarder: before.forwarder + 1, quota: before.quota + 1 })
+  } finally {
+    pause?.release()
+    if (cleanup !== undefined) await Promise.allSettled([cleanup])
+    const current = (await h.store.get(alice))?.instance
+    if (current !== undefined && current !== null) await runtime.stop(current)
+    await runtime.close()
+  }
+})
