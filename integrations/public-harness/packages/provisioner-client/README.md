@@ -22,7 +22,7 @@ This package gives the router the `InstanceManager` it consumes in production by
 <a id="use-this-package"></a>
 ## Use this package
 
-`connectProvisioner(path)` returns the `InstanceManager`, an `isActive` lookup, and the underlying `ProvisionerClient`. `createLinuxInstanceManager` and `createAccountStatusLookup` accept any object with the matching methods, which lets callers substitute a fake in tests.
+`connectProvisioner(path, options)` returns the `InstanceManager`, an `isActive` lookup, and the underlying `ProvisionerClient`. `ensure` waits up to `options.ensureTimeoutMs` (default `DEFAULT_ENSURE_TIMEOUT_MS`, 20 minutes) because a cold start may first load the image archive into the account's store; `launchGrant`, `stop`, and `status` keep the 10-second request limit. The router still answers the browser with its starting page after `routeWaitMs` and joins later requests for the same user to the start in flight; if `ensure` fails or times out, that request gets a 503 and the next request asks again, which the provisioner attaches to the start it still holds under the user's lock, so a retry never starts a second instance. `createLinuxInstanceManager` and `createAccountStatusLookup` accept any object with the matching methods, which lets callers substitute a fake in tests.
 
 <a id="understand-the-implementation"></a>
 ## Understand the implementation

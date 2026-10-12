@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { parseUserId } from '@public-harness/contracts'
-import { ProvisionerClient, startProvisionerServer } from '../src/protocol.ts'
+import { requestLine } from '@public-harness/contracts'
+import { DEFAULT_ENSURE_TIMEOUT_MS, ProvisionerClient, startProvisionerServer } from '../src/protocol.ts'
 
 describe.skipIf(process.platform === 'win32')('fixed provisioner protocol', () => {
   it('round trips allowed operations over a private socket', async () => {
@@ -65,6 +66,27 @@ describe.skipIf(process.platform === 'win32')('fixed provisioner protocol', () =
       await expect(started).rejects.toThrow(/private|owner/i)
     } finally {
       await (await started.catch(() => undefined))?.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('lets ensure wait for a slow start while the quick operations keep the short default', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'dsh-protocol-'))
+    await chmod(dir, 0o700)
+    const path = join(dir, 'control.sock')
+    const server = await startProvisionerServer(path, async request => {
+      if (request.op === 'ensure') { await new Promise(resolve => setTimeout(resolve, 300)); return { kind: 'tcp', host: '127.0.0.1', port: 4123 } }
+      return 'running'
+    })
+    try {
+      expect(new ProvisionerClient(path).ensureTimeoutMs).toBe(DEFAULT_ENSURE_TIMEOUT_MS)
+      expect(DEFAULT_ENSURE_TIMEOUT_MS).toBeGreaterThan(900_000)
+      await expect(new ProvisionerClient(path, { ensureTimeoutMs: 100 }).ensure(parseUserId('alice'))).rejects.toThrow('request timed out')
+      expect(await new ProvisionerClient(path, { ensureTimeoutMs: 2_000 }).ensure(parseUserId('alice'))).toEqual({ kind: 'tcp', host: '127.0.0.1', port: 4123 })
+      expect(() => new ProvisionerClient(path, { ensureTimeoutMs: 0 })).toThrow(/positive/)
+      await expect(requestLine(path, { op: 'status', userId: 'alice' }, 0)).rejects.toThrow(/positive/)
+    } finally {
+      await server.close()
       await rm(dir, { recursive: true, force: true })
     }
   })

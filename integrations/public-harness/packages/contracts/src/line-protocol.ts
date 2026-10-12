@@ -6,10 +6,11 @@ import { fromWireError, toWireError } from './errors.ts'
 
 /** Largest request or response, in bytes. */
 export const MAX_MESSAGE_BYTES = 65_536
-const REQUEST_TIMEOUT_MS = 10_000
+/** Default idle limit for one request or response; operations that legitimately take longer pass their own. */
+export const REQUEST_TIMEOUT_MS = 10_000
 
 /** Read exactly one newline-terminated JSON message. */
-export function readLine(socket: Socket): Promise<unknown> {
+export function readLine(socket: Socket, timeoutMs = REQUEST_TIMEOUT_MS): Promise<unknown> {
   return new Promise((resolve, reject) => {
     let pending = Buffer.alloc(0)
     const cleanup = (): void => {
@@ -36,7 +37,7 @@ export function readLine(socket: Socket): Promise<unknown> {
     socket.once('error', onError)
     socket.once('end', onEnd)
     socket.once('timeout', onTimeout)
-    socket.setTimeout(REQUEST_TIMEOUT_MS)
+    socket.setTimeout(timeoutMs)
   })
 }
 
@@ -94,8 +95,12 @@ export async function startLineServer(path: string, handle: (raw: unknown) => Pr
   }
 }
 
-/** Send one request over a Unix socket and return the `result` field, throwing typed errors for failures. */
-export async function requestLine(path: string, request: unknown): Promise<unknown> {
+/**
+ * Send one request over a Unix socket and return the `result` field, throwing typed errors for failures.
+ * `timeoutMs` bounds how long the reply may take (default `REQUEST_TIMEOUT_MS`).
+ */
+export async function requestLine(path: string, request: unknown, timeoutMs = REQUEST_TIMEOUT_MS): Promise<unknown> {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw new Error('request timeout must be a positive integer')
   const encoded = Buffer.from(`${JSON.stringify(request)}\n`)
   if (encoded.byteLength > MAX_MESSAGE_BYTES) throw new Error('request too large')
   const socket = createConnection(path)
@@ -105,7 +110,7 @@ export async function requestLine(path: string, request: unknown): Promise<unkno
       socket.once('error', reject)
     })
     socket.write(encoded)
-    const response = await readLine(socket)
+    const response = await readLine(socket, timeoutMs)
     if (typeof response !== 'object' || response === null || Array.isArray(response)) throw new Error('invalid response')
     const record = response as Record<string, unknown>
     if (record.ok === false && typeof record.error === 'string') throw fromWireError(record.error)

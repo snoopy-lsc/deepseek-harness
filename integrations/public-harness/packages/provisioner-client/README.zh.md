@@ -22,7 +22,7 @@ kind: "package-library"
 <a id="use-this-package"></a>
 ## 使用此包
 
-`connectProvisioner(path)` 返回 `InstanceManager`、`isActive` 查询和底层的 `ProvisionerClient`。`createLinuxInstanceManager` 与 `createAccountStatusLookup` 接受任何带有对应方法的对象，因此测试中可以替换为伪造对象。
+`connectProvisioner(path, options)` 返回 `InstanceManager`、`isActive` 查询和底层的 `ProvisionerClient`。`ensure` 最多等待 `options.ensureTimeoutMs`（默认 `DEFAULT_ENSURE_TIMEOUT_MS`，即 20 分钟），因为冷启动可能先要把镜像归档加载到该账号的存储中；`launchGrant`、`stop` 和 `status` 仍使用 10 秒请求上限。路由器在 `routeWaitMs` 之后仍向浏览器返回启动中页面，并把同一用户的后续请求合并到进行中的启动；若 `ensure` 失败或超时，该请求得到 503，下一个请求会重新询问，配置服务在该用户的锁下把它挂到仍在进行的启动上，因此重试不会启动第二个实例。`createLinuxInstanceManager` 与 `createAccountStatusLookup` 接受任何带有对应方法的对象，因此测试中可以替换为伪造对象。
 
 <a id="understand-the-implementation"></a>
 ## 了解实现

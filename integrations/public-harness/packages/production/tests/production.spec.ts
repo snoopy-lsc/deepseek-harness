@@ -26,7 +26,7 @@ function routerConfig(dir: string, overrides: Partial<TeamRouterConfig> = {}): T
   return { publicAuthority: 'harness.example.test', routerSocket: join(dir, 'router.sock'), routerSocketGid: process.getgid!(),
     healthSocket: join(dir, 'private', 'health.sock'), provisionerSocket: join(dir, 'private', 'prov.sock'),
     identity: { issuer: 'https://login.example.test/', audience: 'public-harness', publicKeyFiles: { current: join(dir, 'authentik.pem') } },
-    routeWaitMs: 2000, retryAfterSeconds: 2, launchExchangeMs: 2000, socketLifetimeMs: 60_000, maxRequestBodyBytes: 1_000_000, maxHeaderBytes: 16_384, ...overrides }
+    routeWaitMs: 2000, provisionerEnsureTimeoutMs: 5000, retryAfterSeconds: 2, launchExchangeMs: 2000, socketLifetimeMs: 60_000, maxRequestBodyBytes: 1_000_000, maxHeaderBytes: 16_384, ...overrides }
 }
 
 function send(socketPath: string, headers: Record<string, string>, path = '/u/alice/x'): Promise<{ status: number; body: string }> {
@@ -104,7 +104,7 @@ describe('strict production configuration files', () => {
   const dir = '/etc/dsh-public'
   const router = { publicAuthority: 'harness.example.test', routerSocket: `${dir}/r.sock`, routerSocketGid: 990, healthSocket: `${dir}/h.sock`,
     provisionerSocket: `${dir}/p.sock`, identity: { issuer: 'https://login.example.test/', audience: 'public-harness', publicKeyFiles: { current: `${dir}/a.pem` } },
-    routeWaitMs: 90000, retryAfterSeconds: 2, launchExchangeMs: 10000, socketLifetimeMs: 60000, maxRequestBodyBytes: 33554432, maxHeaderBytes: 16384 }
+    routeWaitMs: 90000, provisionerEnsureTimeoutMs: 1200000, retryAfterSeconds: 2, launchExchangeMs: 10000, socketLifetimeMs: 60000, maxRequestBodyBytes: 33554432, maxHeaderBytes: 16384 }
 
   it('accepts the complete router file and rejects unknown, missing, or unsafe values', () => {
     expect(parseTeamRouterConfig(router).publicAuthority).toBe('harness.example.test')
@@ -112,6 +112,9 @@ describe('strict production configuration files', () => {
     const { identity: _identity, ...withoutIdentity } = router
     expect(() => parseTeamRouterConfig(withoutIdentity)).toThrow(/exactly/)
     expect(() => parseTeamRouterConfig({ ...router, socketLifetimeMs: 61_000 })).toThrow(/at most/)
+    expect(parseTeamRouterConfig(router).provisionerEnsureTimeoutMs).toBe(1_200_000)
+    expect(() => parseTeamRouterConfig({ ...router, provisionerEnsureTimeoutMs: 60_000 })).toThrow(/at least routeWaitMs/)
+    expect(() => parseTeamRouterConfig({ ...router, provisionerEnsureTimeoutMs: 3_600_001 })).toThrow(/at most/)
     expect(() => parseTeamRouterConfig({ ...router, routerSocket: 'router.sock' })).toThrow(/absolute/)
     expect(() => parseTeamRouterConfig({ ...router, identity: { ...router.identity, issuer: 'http://login.example.test/' } })).toThrow(/HTTPS/)
     expect(() => parseTeamRouterConfig({ ...router, identity: { ...router.identity, publicKeyFiles: {} } })).toThrow()

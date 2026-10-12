@@ -28,16 +28,30 @@ export async function startProvisionerServer(path: string, handler: ProvisionerH
   return startLineServer(path, async raw => handler(parseRequest(raw)), access)
 }
 
+/**
+ * Default wait for `ensure`. A cold start can load the image archive into the account's store (the provisioner allows
+ * that up to 15 minutes) and then wait twice `readyTimeoutMs`, so the client must not give up after the 10 s used for
+ * the quick operations; the router keeps its own short `routeWaitMs` page bound on top of this.
+ */
+export const DEFAULT_ENSURE_TIMEOUT_MS = 1_200_000
+
+/** Client options; only `ensure` waits for a start, every other operation keeps the short default. */
+export interface ProvisionerClientOptions { readonly ensureTimeoutMs?: number }
+
 /** Client for the four provisioner operations. */
 export class ProvisionerClient {
-  constructor(readonly path: string) {}
+  readonly ensureTimeoutMs: number
+  constructor(readonly path: string, options: ProvisionerClientOptions = {}) {
+    this.ensureTimeoutMs = options.ensureTimeoutMs ?? DEFAULT_ENSURE_TIMEOUT_MS
+    if (!Number.isSafeInteger(this.ensureTimeoutMs) || this.ensureTimeoutMs <= 0) throw new Error('ensure timeout must be a positive integer')
+  }
 
   /** Send one raw request; the server still rejects unknown fields and tags. */
-  requestRaw(request: unknown): Promise<unknown> { return requestLine(this.path, request) }
+  requestRaw(request: unknown, timeoutMs?: number): Promise<unknown> { return requestLine(this.path, request, timeoutMs) }
 
-  /** Ensure one user runtime exists and return its private address. */
+  /** Ensure one user runtime exists and return its private address; waits up to `ensureTimeoutMs` for a start. */
   async ensure(userId: UserId): Promise<InstanceEndpoint> {
-    return parseInstanceEndpoint(await this.requestRaw({ op: 'ensure', userId }))
+    return parseInstanceEndpoint(await this.requestRaw({ op: 'ensure', userId }, this.ensureTimeoutMs))
   }
 
   /**

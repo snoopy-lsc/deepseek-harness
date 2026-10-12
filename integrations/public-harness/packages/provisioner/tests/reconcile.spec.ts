@@ -18,8 +18,10 @@ class FakeRuntime implements InstanceRuntime {
   async releaseAllocation(record: { account: string }): Promise<void> { await this.stop(record) }
   readonly started: string[] = []
   readonly stopped: string[] = []
+  gate: Promise<void> | undefined
   async start(record: RuntimeInstance): Promise<InstanceEndpoint> {
     this.started.push(record.account)
+    await this.gate
     return { kind: 'unix', path: `${record.controlDir}/instance.sock` }
   }
   async stop(record: { account: string }): Promise<void> { this.stopped.push(record.account) }
@@ -47,6 +49,22 @@ describe.skipIf(process.platform === 'win32')('suspend, restart, and recovery', 
     expect(runtime.started).toHaveLength(1)
     expect(await call('status')).toBe('running')
     expect(await call('launch-grant')).toBe('grant')
+  })
+
+  it('attaches a retried ensure to the start still in flight instead of starting twice', async () => {
+    const { runtime, call } = await service()
+    let release!: () => void
+    runtime.gate = new Promise<void>(resolve => { release = resolve })
+    const first = call('ensure')
+    await new Promise(resolve => setTimeout(resolve, 20))
+    // The router's client gave up on `first` and asks again while the image is still loading.
+    const retry = call('ensure')
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(runtime.started).toHaveLength(1)
+    release()
+    expect(await retry).toEqual(await first)
+    expect(runtime.started).toHaveLength(1)
+    expect(await call('status')).toBe('running')
   })
 
   it('reports capacity as a typed refusal and creates nothing for the second user', async () => {

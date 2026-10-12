@@ -5,7 +5,7 @@ import { createOwnerRouter } from '../src/routes.ts'
 const alice = parseUserId('alice')
 const endpoint: InstanceEndpoint = { kind: 'tcp', host: '127.0.0.1', port: 4321 }
 const setup = () => {
-  const ensure = vi.fn(async () => endpoint)
+  const ensure = vi.fn(async (): Promise<InstanceEndpoint> => endpoint)
   const isActive = vi.fn(async () => true)
   const hasCapacity = vi.fn(async () => true)
   const router = createOwnerRouter({ instanceManager: { ensure, async launchGrant() { return '' }, async stop() {} },
@@ -55,5 +55,26 @@ describe('owner-only instance routing', () => {
       isActive: async () => true, hasCapacity: async () => true, maxWaitMs: 10 })
     expect(await slow.route('/u/alice/', alice)).toEqual({ kind: 'starting' })
     expect(await router.route('/u/alice/', alice)).toMatchObject({ kind: 'ready' })
+  })
+
+  it('joins a slow start across requests and starts it again only after it failed', async () => {
+    const { router, ensure } = setup()
+    let finish!: (value: InstanceEndpoint) => void
+    let fail!: (error: Error) => void
+    ensure.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    expect(await router.route('/u/alice/', alice)).toEqual({ kind: 'starting' })
+    expect(await router.route('/u/alice/', alice)).toEqual({ kind: 'starting' })
+    expect(ensure).toHaveBeenCalledTimes(1)
+    finish(endpoint)
+    expect(await router.route('/u/alice/', alice)).toMatchObject({ kind: 'ready', endpoint })
+    // A provisioner request that gives up (for example the client's ensure timeout) is a service error, not a hang,
+    // and the next request asks again; the provisioner joins that ask to the start it still has in flight.
+    ensure.mockImplementationOnce(() => new Promise((_, reject) => { fail = reject }))
+    const waiting = router.route('/u/alice/', alice)
+    await vi.waitFor(() => expect(fail).toBeTypeOf('function'))
+    fail(new Error('request timed out'))
+    expect(await waiting).toEqual({ kind: 'rejected', status: 503, reason: 'service' })
+    expect(await router.route('/u/alice/', alice)).toMatchObject({ kind: 'ready' })
+    expect(ensure).toHaveBeenCalledTimes(4)
   })
 })

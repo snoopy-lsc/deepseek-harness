@@ -10,6 +10,7 @@
     "publicKeyFiles": { "authentik-2026-10": "/etc/dsh-public/authentik-signing-key.pub.pem" }
   },
   "routeWaitMs": 90000,
+  "provisionerEnsureTimeoutMs": 1200000,
   "retryAfterSeconds": 2,
   "launchExchangeMs": 10000,
   "socketLifetimeMs": 60000,

@@ -1,8 +1,8 @@
 /** Linux `InstanceManager` provider: the router's view of the privileged provisioner. */
 import { type InstanceManager, type UserId } from '@public-harness/contracts'
-import { ProvisionerClient } from '@public-harness/provisioner'
+import { ProvisionerClient, type ProvisionerClientOptions } from '@public-harness/provisioner'
 
-export { ProvisionerClient } from '@public-harness/provisioner'
+export { DEFAULT_ENSURE_TIMEOUT_MS, ProvisionerClient, type ProvisionerClientOptions } from '@public-harness/provisioner'
 
 /** The four fixed provisioner operations the router may use. */
 export interface ProvisionerOperations {
@@ -33,7 +33,9 @@ export function createAccountStatusLookup(client: Pick<ProvisionerOperations, 's
 }
 
 /** A provisioner client for a socket path, with the router-side adapters. */
-export function connectProvisioner(path: string): { manager: InstanceManager; isActive: (userId: UserId) => Promise<boolean>; client: ProvisionerClient } {
-  const client = new ProvisionerClient(path)
+export function connectProvisioner(path: string, options: ProvisionerClientOptions = {}): {
+  manager: InstanceManager; isActive: (userId: UserId) => Promise<boolean>; client: ProvisionerClient
+} {
+  const client = new ProvisionerClient(path, options)
   return { client, manager: createLinuxInstanceManager(client), isActive: createAccountStatusLookup(client) }
 }

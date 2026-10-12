@@ -20,6 +20,8 @@ export interface TeamRouterConfig {
   readonly routerSocketGid: number
   readonly healthSocket: string
   readonly provisionerSocket: string
+  /** How long one provisioner `ensure` may take (a cold start may load the image archive); at least `routeWaitMs`. */
+  readonly provisionerEnsureTimeoutMs: number
   readonly identity: { readonly issuer: string; readonly audience: string; readonly publicKeyFiles: Readonly<Record<string, string>> }
   readonly routeWaitMs: number
   readonly retryAfterSeconds: number
@@ -31,7 +33,7 @@ export interface TeamRouterConfig {
 
 /** Parse and validate the production router file strictly: unknown or missing keys are errors. */
 export function parseTeamRouterConfig(value: unknown): TeamRouterConfig {
-  const record = exactRecord(value, ['publicAuthority', 'routerSocket', 'routerSocketGid', 'healthSocket', 'provisionerSocket', 'identity',
+  const record = exactRecord(value, ['publicAuthority', 'routerSocket', 'routerSocketGid', 'healthSocket', 'provisionerSocket', 'provisionerEnsureTimeoutMs', 'identity',
     'routeWaitMs', 'retryAfterSeconds', 'launchExchangeMs', 'socketLifetimeMs', 'maxRequestBodyBytes', 'maxHeaderBytes'], 'team-router configuration')
   const identity = exactRecord(record.identity, ['issuer', 'audience', 'publicKeyFiles'], 'identity')
   const files = exactRecord(identity.publicKeyFiles, Object.keys(identity.publicKeyFiles as object), 'publicKeyFiles')
@@ -50,11 +52,17 @@ export function parseTeamRouterConfig(value: unknown): TeamRouterConfig {
   const gid = record.routerSocketGid
   if (typeof gid !== 'number' || !Number.isSafeInteger(gid) || gid < 0) throw new Error('routerSocketGid must be a group id')
   const socketLifetimeMs = positiveInt(record.socketLifetimeMs, 'socketLifetimeMs')
+  const routeWaitMs = positiveInt(record.routeWaitMs, 'routeWaitMs')
+  const provisionerEnsureTimeoutMs = positiveInt(record.provisionerEnsureTimeoutMs, 'provisionerEnsureTimeoutMs')
+  // A shorter ensure would fail a start the router page is still waiting for, turning "starting" into a service error.
+  if (provisionerEnsureTimeoutMs < routeWaitMs) throw new Error('provisionerEnsureTimeoutMs must be at least routeWaitMs')
+  if (provisionerEnsureTimeoutMs > 3_600_000) throw new Error('provisionerEnsureTimeoutMs must be at most 3600000')
   if (socketLifetimeMs > 60_000) throw new Error('socketLifetimeMs must be at most 60000')
   return { publicAuthority: record.publicAuthority, routerSocket: absolutePath(record.routerSocket, 'routerSocket'), routerSocketGid: gid,
     healthSocket: absolutePath(record.healthSocket, 'healthSocket'), provisionerSocket: absolutePath(record.provisionerSocket, 'provisionerSocket'),
+    provisionerEnsureTimeoutMs,
     identity: { issuer: identity.issuer, audience: identity.audience, publicKeyFiles: files as Record<string, string> },
-    routeWaitMs: positiveInt(record.routeWaitMs, 'routeWaitMs'), retryAfterSeconds: positiveInt(record.retryAfterSeconds, 'retryAfterSeconds'),
+    routeWaitMs, retryAfterSeconds: positiveInt(record.retryAfterSeconds, 'retryAfterSeconds'),
     launchExchangeMs: positiveInt(record.launchExchangeMs, 'launchExchangeMs'), socketLifetimeMs,
     maxRequestBodyBytes: positiveInt(record.maxRequestBodyBytes, 'maxRequestBodyBytes'), maxHeaderBytes: positiveInt(record.maxHeaderBytes, 'maxHeaderBytes') }
 }
@@ -69,7 +77,7 @@ export interface TeamRouterDeps {
 
 /** Compose the production router configuration: signed identity, provisioner-backed routing, Secure cookies, Unix ingress. */
 export async function buildTeamRouterServerConfig(config: TeamRouterConfig, deps: TeamRouterDeps = {}): Promise<RouterServerConfig> {
-  const connected = deps.manager === undefined || deps.isActive === undefined ? connectProvisioner(config.provisionerSocket) : undefined
+  const connected = deps.manager === undefined || deps.isActive === undefined ? connectProvisioner(config.provisionerSocket, { ensureTimeoutMs: config.provisionerEnsureTimeoutMs }) : undefined
   const manager = deps.manager ?? connected!.manager
   const isActive = deps.isActive ?? connected!.isActive
   const read = deps.readKey ?? (path => readFile(path, 'utf8'))
