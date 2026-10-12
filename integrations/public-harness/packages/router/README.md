@@ -30,6 +30,8 @@ Configure `createProductionIdentity` with trusted public keys and an account-sta
 
 Production verification consumes `x-authentik-jwt` and `x-authentik-uid` after the protected forward-auth hop. The proxy must discard client-supplied values and replace both headers from a successful authentication result. Signing keys come from local configuration; request fields cannot select a new key source. Development cookies do not authenticate to production.
 
+`createNativeIdentity` is the Better Auth alternative. It sends only the identity session cookie to the [identity service](../identity/README.md) over its private socket on every request and upgrade, then checks the provisioner's account status. A lookup timeout, socket failure or invalid response raises `IdentityUnavailableError`, which the server answers with 503; no earlier positive result is reused. With `sessionRecheckMs`, open HTTP streams and WebSockets are re-verified at that interval and closed when the session is revoked or the lookup becomes unavailable. The production profile selects it with `identity.kind: better-auth` and strips the session cookie before forwarding.
+
 <a id="further-exploration"></a>
 ## Further Exploration
 

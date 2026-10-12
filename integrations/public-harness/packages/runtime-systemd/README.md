@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Prepare locked Linux accounts, private data directories, hard disk limits and per-account systemd/AppArmor files for a native Harness deployment. Generated services launch Node through a named `dsh` profile and retain account and cgroup restrictions across descendants. These preparation functions do not start workloads or establish enforcement evidence. Public admission requires a separate provider lifecycle and dedicated Linux validation.
+Prepare locked Linux accounts, private data directories, hard disk limits and per-account systemd/AppArmor files for a native Harness deployment. Generated services launch Node through a named `dsh` profile and retain account and cgroup restrictions across descendants. The lifecycle provider starts each account as a system unit only after its policy, network rules and observed enforcement checks are in place. Local tests use a fake command adapter; public admission still requires dedicated Linux validation.
 
 ## Table of Contents
 

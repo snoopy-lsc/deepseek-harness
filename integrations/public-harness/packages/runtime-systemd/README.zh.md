@@ -9,7 +9,7 @@ kind: "package-library"
 
 ## Summary
 
-为原生 Harness 部署准备锁定的 Linux 账号、私有数据目录、磁盘硬限制和每个账号的 systemd/AppArmor 文件。生成的服务通过具名 `dsh` profile 启动 Node，并在后代进程中保留账号和 cgroup 限制。这些准备函数不启动工作负载，也不提供强制执行证据。公共准入要求另行实现 provider 生命周期并完成专用 Linux 验证。
+为原生 Harness 部署准备锁定的 Linux 账号、私有数据目录、磁盘硬限制和每个账号的 systemd/AppArmor 文件。生成的服务通过具名 `dsh` profile 启动 Node，并在后代进程中保留账号和 cgroup 限制。生命周期 provider 只有在策略、网络规则和实际强制执行检查就绪后，才以 system unit 启动每个账号。本地测试使用模拟命令适配器；公共准入仍需完成专用 Linux 验证。
 
 ## Table of Contents
 

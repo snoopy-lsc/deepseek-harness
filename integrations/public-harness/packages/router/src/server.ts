@@ -5,7 +5,7 @@ import type { AddressInfo, Socket } from 'node:net'
 import { dirname } from 'node:path'
 import type { UserId } from '@public-harness/contracts'
 import { renderSelectorPage, renderStatusPage, type TeamLocale } from '@public-harness/ui'
-import type { IdentityVerifier } from './config.ts'
+import { IdentityUnavailableError, type IdentityVerifier } from './config.ts'
 import type { OwnerRoute } from './routes.ts'
 import { DEFAULT_MAX_BODY_BYTES, forwardHttp, forwardUpgrade, type BrowserLaunch } from './proxy.ts'
 
@@ -29,6 +29,9 @@ export interface RouterServerConfig {
   /** Cookies owned by the router and removed before forwarding; defaults to the development identity cookie. */
   readonly stripCookies?: readonly string[]
   readonly identity: IdentityVerifier
+  /** Re-verify the identity of every open HTTP stream and WebSocket at this interval; a denial or an unavailable
+   * lookup closes it. Unset keeps the previous behavior (verification at request and handshake only). */
+  readonly sessionRecheckMs?: number
   readonly ownerRouter: { route(rawUrl: string, userId: UserId): Promise<OwnerRoute> }
   readonly launch: BrowserLaunch
   readonly maxSocketLifetimeMs: number
@@ -106,6 +109,20 @@ export async function startRouterServer(config: RouterServerConfig): Promise<{ p
   const wrongHost = (request: IncomingMessage): boolean =>
     config.publicAuthority !== undefined && request.headers.host !== config.publicAuthority
   const sockets = new Set<Socket>()
+  const recheckMs = config.sessionRecheckMs
+  if (recheckMs !== undefined && (!Number.isSafeInteger(recheckMs) || recheckMs <= 0)) throw new Error('sessionRecheckMs must be positive')
+  /** Close an open stream once its session no longer verifies as the same user; the timer ends with the stream. */
+  const recheck = (request: IncomingMessage, userId: UserId, stream: { once(event: 'close', listener: () => void): unknown }, close: () => void): void => {
+    if (recheckMs === undefined) return
+    let checking = false
+    const timer = setInterval(() => {
+      if (checking) return
+      checking = true
+      config.identity.verify(request.headers).then(current => { if (current !== userId) close() }, () => close()).finally(() => { checking = false })
+    }, recheckMs)
+    timer.unref()
+    stream.once('close', () => clearInterval(timer))
+  }
   const server = createServer({ maxHeaderSize: maxHeaderBytes }, (request: IncomingMessage, response: ServerResponse) => {
     void (async () => {
       if (wrongHost(request)) { response.writeHead(421).end(); return }
@@ -113,7 +130,8 @@ export async function startRouterServer(config: RouterServerConfig): Promise<{ p
         && selectDevelopmentUser(request, response, config.developmentSelector)) return
       let userId: UserId
       try { userId = await config.identity.verify(request.headers) }
-      catch {
+      catch (error) {
+        if (error instanceof IdentityUnavailableError) { response.writeHead(503, { 'retry-after': String(config.retryAfterSeconds) }).end(); return }
         if (request.method === 'GET' && request.url === '/' && config.developmentSelector !== undefined) {
           response.writeHead(303, { location: '/dev' }).end()
         } else response.writeHead(401).end()
@@ -122,6 +140,7 @@ export async function startRouterServer(config: RouterServerConfig): Promise<{ p
       const route = await config.ownerRouter.route(request.url ?? '/', userId)
       if (route.kind !== 'ready') { deny(request, response, route, config.retryAfterSeconds); return }
       forwardHttp(request, response, userId, route.endpoint, route.upstreamPath, config.launch, forwarding)
+      recheck(request, userId, response, () => response.destroy())
     })().catch(() => { if (!response.headersSent && !response.destroyed) response.writeHead(503).end() })
   })
   server.on('upgrade', (request, socket, head) => {
@@ -129,7 +148,11 @@ export async function startRouterServer(config: RouterServerConfig): Promise<{ p
       if (wrongHost(request)) { socket.end('HTTP/1.1 421 Misdirected Request\r\nConnection: close\r\n\r\n'); return }
       let userId: UserId
       try { userId = await config.identity.verify(request.headers) }
-      catch { socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'); return }
+      catch (error) {
+        socket.end(error instanceof IdentityUnavailableError ? 'HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n'
+          : 'HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
+        return
+      }
       const route = await config.ownerRouter.route(request.url ?? '/', userId)
       if (route.kind !== 'ready') {
         const status = route.kind === 'rejected' ? route.status : 503
@@ -137,6 +160,7 @@ export async function startRouterServer(config: RouterServerConfig): Promise<{ p
         return
       }
       forwardUpgrade(request, socket, head, route.endpoint, route.upstreamPath, config.maxSocketLifetimeMs, forwarding.stripCookies)
+      recheck(request, userId, socket, () => socket.destroy())
     })().catch(() => socket.end('HTTP/1.1 503 Unavailable\r\nConnection: close\r\n\r\n'))
   })
   server.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)) })

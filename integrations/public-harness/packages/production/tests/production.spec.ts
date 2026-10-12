@@ -109,6 +109,12 @@ describe('strict production configuration files', () => {
   it('accepts the complete router file and rejects unknown, missing, or unsafe values', () => {
     expect(parseTeamRouterConfig(router).publicAuthority).toBe('harness.example.test')
     expect(() => parseTeamRouterConfig({ ...router, devMode: true })).toThrow(/exactly/)
+    const native = { kind: 'better-auth', sessionSocket: `${dir}/identity.sock`, timeoutMs: 2000, maxResponseBytes: 4096, sessionRecheckMs: 30000 }
+    expect(parseTeamRouterConfig({ ...router, identity: native }).identity).toEqual(native)
+    // Modes never mix: authentik fields in a better-auth record, or an unknown tag, are rejected.
+    expect(() => parseTeamRouterConfig({ ...router, identity: { ...native, issuer: 'https://login.example.test/' } })).toThrow(/exactly/)
+    expect(() => parseTeamRouterConfig({ ...router, identity: { ...router.identity, kind: 'development' } })).toThrow(/kind/)
+    expect(parseTeamRouterConfig({ ...router, identity: { ...router.identity, kind: 'authentik' } }).identity.kind).toBe('authentik')
     const { identity: _identity, ...withoutIdentity } = router
     expect(() => parseTeamRouterConfig(withoutIdentity)).toThrow(/exactly/)
     expect(() => parseTeamRouterConfig({ ...router, socketLifetimeMs: 61_000 })).toThrow(/at most/)

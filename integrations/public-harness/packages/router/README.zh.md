@@ -30,6 +30,8 @@ kind: "package-library"
 
 正式环境在受保护的转发认证环节之后读取 `x-authentik-jwt` 和 `x-authentik-uid`。代理必须丢弃客户端提供的值，并用认证成功后的结果替换这两个请求头。签名密钥来自本地配置；请求字段不能选择新的密钥来源。开发 Cookie 不能用于正式环境认证。
 
+`createNativeIdentity` 是 Better Auth 方案。它在每个请求和升级时只把身份会话 cookie 通过私有 socket 发送给[身份服务](../identity/README.zh.md)，再检查配置服务中的账户状态。查询超时、socket 故障或无效响应会抛出 `IdentityUnavailableError`，服务器以 503 响应，且不会复用之前的成功结果。设置 `sessionRecheckMs` 后，打开的 HTTP 流和 WebSocket 会按该间隔重新验证，会话被吊销或查询不可用时即关闭。production 配置用 `identity.kind: better-auth` 选择它，并在转发前移除会话 cookie。
+
 <a id="further-exploration"></a>
 ## 延伸阅读
 
