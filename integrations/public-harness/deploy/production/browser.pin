@@ -1,0 +1,5 @@
+# Pinned Chrome for Testing build for native instances. install-browser.sh reads these three values.
+# The checksum is the SHA-256 of the exact zip below; change all three together and re-verify on the host.
+CFT_VERSION=155.0.8059.39
+CFT_URL=https://storage.googleapis.com/chrome-for-testing-public/155.0.8059.39/linux64/chrome-linux64.zip
+CFT_SHA256=55672d1f392fd3e7b7a08621b6e804e6bcb39d40cf155504abb74b3a021ea8ea

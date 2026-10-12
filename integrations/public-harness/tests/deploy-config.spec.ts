@@ -417,3 +417,36 @@ describe('production profile generation', () => {
     await expect(writeProductionProfile(home, 'quota', { configFile: 'relative.json' })).rejects.toThrow(/absolute/)
   })
 })
+
+describe('install-browser.sh', () => {
+  const script = join(root, 'deploy/production/scripts/install-browser.sh')
+  it('pins one Chrome for Testing build by version, URL and SHA-256 and never disables the sandbox', async () => {
+    const pin = await text('deploy/production/browser.pin')
+    const version = /^CFT_VERSION=(\S+)$/m.exec(pin)?.[1]
+    expect(version).toMatch(/^\d+\.\d+\.\d+\.\d+$/)
+    expect(pin).toContain(`CFT_URL=https://storage.googleapis.com/chrome-for-testing-public/${version}/linux64/chrome-linux64.zip\n`)
+    expect(pin).toMatch(/^CFT_SHA256=[0-9a-f]{64}$/m)
+    expect(await text('deploy/production/scripts/install-browser.sh')).not.toMatch(/no-sandbox|apparmor_parser|unconfined|disable-setuid/)
+  })
+  it('refuses a mismatched archive and a non-root install before creating anything', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'dsh-browser-'))
+    const zip = join(base, 'chrome.zip'); await writeFile(zip, 'not the pinned archive')
+    const sha = execFileSync('sha256sum', [zip], { encoding: 'utf8' }).slice(0, 64)
+    const pin = join(base, 'pin')
+    const run = (pinSha: string) => {
+      execFileSync('bash', ['-c', `printf 'CFT_VERSION=1.2.3.4\\nCFT_URL=https://storage.googleapis.com/chrome-for-testing-public/1.2.3.4/linux64/chrome-linux64.zip\\nCFT_SHA256=%s\\n' ${pinSha} > ${pin}`])
+      return spawnSync('bash', [script, 'install', join(base, 'browser'), zip], { encoding: 'utf8', env: { ...process.env, DSH_BROWSER_PIN: pin } })
+    }
+    const mismatch = run('0'.repeat(64))
+    expect(mismatch.status).not.toBe(0); expect(mismatch.stderr).toContain('checksum mismatch')
+    if (process.getuid?.() !== 0) {
+      const nonRoot = run(sha)
+      expect(nonRoot.status).not.toBe(0); expect(nonRoot.stderr).toContain('must run as root')
+    }
+    expect((await readdir(base)).sort()).toEqual(['chrome.zip', 'pin'])
+    const tampered = spawnSync('bash', [script, 'verify', base], { encoding: 'utf8', env: { ...process.env, DSH_BROWSER_PIN: pin } })
+    expect(tampered.status).not.toBe(0); expect(tampered.stderr).toContain('missing pin record')
+    const relative = spawnSync('bash', [script, 'verify', 'browser'], { encoding: 'utf8' })
+    expect(relative.stderr).toContain('plain absolute path')
+  })
+})
