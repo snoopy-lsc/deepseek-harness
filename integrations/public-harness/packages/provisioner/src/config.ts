@@ -21,7 +21,7 @@ export interface ContainerRuntimeConfig {
   readonly sidecar: PortRange
 }
 /** Native configuration is owned by the systemd provider; no provider is mounted implicitly. */
-export interface SystemdRuntimeConfig { readonly kind: 'systemd' }
+export interface SystemdRuntimeConfig { readonly kind: 'systemd'; readonly configFile: string }
 /** Common lifecycle settings and a tagged provider selection. */
 export interface ProvisionerConfig {
   readonly paths: HostPaths
@@ -85,10 +85,10 @@ export function validateProvisionerConfig(value: unknown): ProvisionerConfig {
   if (typeof l.cpus !== 'number' || !Number.isFinite(l.cpus) || l.cpus <= 0) throw new Error('cpus must be positive')
   const limits = { cpus: l.cpus, memoryBytes: integer(l.memoryBytes, 'memoryBytes'), pids: integer(l.pids, 'pids'),
     openFiles: integer(l.openFiles, 'openFiles'), diskBytes: integer(l.diskBytes, 'diskBytes') }
-  const tag = record(c.runtime, ['kind'], ['runtimeAssets', 'tools', 'image', 'imageArchive', 'hostAddress', 'network', 'sidecar'])
+  const tag = record(c.runtime, ['kind'], ['runtimeAssets', 'tools', 'image', 'imageArchive', 'hostAddress', 'network', 'sidecar', 'configFile'])
   let runtime: ProvisionerConfig['runtime']
   switch (tag.kind) {
-    case 'systemd': record(tag, ['kind']); runtime = { kind: 'systemd' }; break
+    case 'systemd': record(tag, ['kind', 'configFile']); runtime = { kind: 'systemd', configFile: path(tag.configFile, 'runtime.configFile') }; break
     case 'podman-gvisor': {
       record(tag, ['kind', 'runtimeAssets', 'tools', 'image', 'hostAddress', 'network', 'sidecar'], ['imageArchive'])
       const ct = record(tag.tools, ['loginctl', 'sharedGroup', 'setquota', 'nft', 'runuser', 'podman', 'runsc', 'git', 'env'])

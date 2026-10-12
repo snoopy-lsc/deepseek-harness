@@ -6,6 +6,7 @@ import { AccountSuspendedError, CapacityError, type InstanceEndpoint, type Insta
 import { deriveNames } from '../src/accounts.ts'
 import { DeletionNotAllowedError, sweepSockets } from '../src/reconcile.ts'
 import { createProvisionerService } from '../src/service.ts'
+import { createUserProvisioner } from '../src/users.ts'
 import { alice, bob, makeHarness } from './helpers.ts'
 
 class FakeRuntime implements InstanceRuntime {
@@ -30,6 +31,8 @@ class FakeRuntime implements InstanceRuntime {
 async function service(overrides = {}) {
   const h = await makeHarness(overrides)
   const runtime = new FakeRuntime()
+  h.users = createUserProvisioner({ config: h.config, runner: h.runner, directory: h.directory, store: h.store, runtime,
+    ownership: { chown: async () => {} }, clock: () => h.clock.now })
   const svc = createProvisionerService({ config: h.config, runner: h.runner, directory: h.directory, store: h.store, users: h.users, runtime, clock: () => h.clock.now })
   const call = (op: 'ensure' | 'launch-grant' | 'stop' | 'status', userId = alice) => svc.handler({ op, userId })
   return { h, runtime, svc, call }
@@ -236,7 +239,7 @@ describe.skipIf(process.platform === 'win32')('runtime backend ownership', () =>
       releaseAllocation: async () => {}, prepare: async () => {}, initializeWorkspace: async () => {},
       start: async (): Promise<InstanceEndpoint> => { throw new Error('must not start') }, launchGrant: async () => 'grant',
       stop: async () => {}, state: async () => 'stopped' as const }
-    const config = { ...h.config, runtime: { kind: 'systemd' as const } }
+    const config = { ...h.config, runtime: { kind: 'systemd' as const, configFile: '/etc/dsh/native.json' } }
     const users = createUserProvisioner({ config, store: h.store, runner: h.runner, directory: h.directory, runtime })
     await expect(users.ensureUser(alice)).rejects.toThrow(/backend/)
     expect(h.runner.calls).toEqual([])
@@ -244,7 +247,7 @@ describe.skipIf(process.platform === 'win32')('runtime backend ownership', () =>
   })
   it('refuses an absent provider before allocating host resources', async () => {
     const h = await makeHarness()
-    expect(() => createProvisionerService({ config: { ...h.config, runtime: { kind: 'systemd' } },
+    expect(() => createProvisionerService({ config: { ...h.config, runtime: { kind: 'systemd', configFile: '/etc/dsh/native.json' } },
       runner: h.runner, directory: h.directory, store: h.store })).toThrow(/provider/)
     expect(h.runner.calls).toEqual([])
     expect(h.directory.created).toEqual([])

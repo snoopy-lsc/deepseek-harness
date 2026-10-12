@@ -255,3 +255,22 @@ describe.skipIf(process.platform === 'win32')('runtime record migration', () => 
     expect(await readFile(file, 'utf8')).toBe(text)
   })
 })
+
+it.skipIf(process.platform === 'win32')('native preparation owns storage and records completion only after success', async () => {
+  const h = await makeHarness()
+  const config = { ...h.config, runtime: { kind: 'systemd' as const, configFile: '/etc/dsh/native.json' } }
+  let prepared = false
+  const runtime = { ...h.runtime, kind: 'systemd' as const,
+    allocate: async (request: Parameters<typeof h.runtime.allocate>[0]) => ({ ...request, webPort: 29200, quotaPort: 29100 }),
+    prepare: async () => { throw new Error('native preparation interrupted') },
+    initializeWorkspace: async () => { prepared = true },
+  }
+  const users = createUserProvisioner({ config, store: h.store, directory: h.directory, runner: h.runner, runtime,
+    ownership: { chown: async () => { throw new Error('common native chown forbidden') } } })
+  await expect(users.ensureUser(alice)).rejects.toThrow('native preparation interrupted')
+  expect(prepared).toBe(false)
+  expect(await h.store.get(alice)).toMatchObject({ lifecycle: 'quarantined', steps: { account: true, storage: false }, acquired: ['account'] })
+  const i = (await h.store.get(alice))!.instance!
+  expect(i.controlDir).toBe(`${config.paths.stateDir}/runtime/${i.account}`)
+  expect(i.home).toBe(`${config.paths.storageRoot}/users/${i.account}/home`)
+})

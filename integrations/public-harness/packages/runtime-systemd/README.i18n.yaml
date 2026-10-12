@@ -1,0 +1,31 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write integrations/public-harness/packages/runtime-systemd/README.md
+/:
+  en: af98e9dcfbb168af
+  zh: 3cc75ca3df6865a6
+/public-harness-runtime-systemd:
+  en: 2db161d50d8aa098
+  zh: e16c3e75f3a3e754
+/public-harness-runtime-systemd/summary:
+  en: 6971e57f1ba32032
+  zh: f2d090e4d69db9d4
+/public-harness-runtime-systemd/table-of-contents:
+  en: 80b31a934611cb4a
+  zh: 5b70060b514cf1f4
+/public-harness-runtime-systemd/use-this-package:
+  en: 86c1aa222a72300a
+  zh: 038704c7a78ff52e
+/public-harness-runtime-systemd/understand-the-implementation:
+  en: 0110f8a5f17cb9bd
+  zh: 1a4c09b6ab3cd6ef
+/public-harness-runtime-systemd/further-exploration:
+  en: df496fea357c4935
+  zh: 22cc6c153f6d6c90
+/public-harness-runtime-systemd/known-limitations-and-deferred-work:
+  en: c0fc81bc2bba3590
+  zh: 9c36fbfd48b219a3
+/public-harness-runtime-systemd/dev-note:
+  en: 3fc68b89f884f511
+  zh: 374eb131cfe74334

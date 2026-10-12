@@ -35,7 +35,7 @@ describe('provisioner configuration', () => {
 describe('explicit backend selection', () => {
   it('parses a native selection without any container tool, asset, image, or sidecar setting', async () => {
     const c = await makeConfig()
-    const native = { ...c, runtime: { kind: 'systemd' } }
+    const native = { ...c, runtime: { kind: 'systemd', configFile: '/etc/dsh/native.json' } }
     expect(validateProvisionerConfig(native).runtime.kind).toBe('systemd')
   })
   it('refuses missing and unknown runtime tags', async () => {
@@ -44,4 +44,11 @@ describe('explicit backend selection', () => {
     expect(() => validateProvisionerConfig(missing)).toThrow()
     expect(() => validateProvisionerConfig({ ...c, runtime: { kind: 'unknown' } })).toThrow()
   })
+})
+
+it('rejects native configuration without an absolute companion file', async () => {
+  const c = await makeConfig()
+  for (const runtime of [{ kind: 'systemd' }, { kind: 'systemd', configFile: 'native.json' }]) {
+    expect(() => validateProvisionerConfig({ ...c, runtime })).toThrow()
+  }
 })

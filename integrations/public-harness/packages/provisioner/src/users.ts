@@ -4,7 +4,7 @@ import { AccountSuspendedError, CapacityError, parseInstanceId, parseUserId,
   type InstanceRuntime, type RuntimeInstance, type UserId } from '@public-harness/contracts'
 import { deriveNames, ensureAccount, type AccountDirectory } from './accounts.ts'
 import type { ProvisionerConfig } from './config.ts'
-import { ensureStorage, layoutFor, hostOwnership, type Ownership, type StorageLayout } from './storage.ts'
+import { ensureStorage, layoutForRuntime, hostOwnership, type Ownership, type StorageLayout } from './storage.ts'
 import type { Lifecycle, StateStore, UserStateV2 } from './state.ts'
 import { KeyedLock, type CommandRunner } from './system.ts'
 
@@ -69,7 +69,7 @@ export function createUserProvisioner(deps: UserProvisionerDeps): UserProvisione
     match(state)
     if (state.uid === undefined || state.gid === undefined) throw new Error('user is not provisioned')
     return { userId: state.userId, account: state.account, container: deriveNames(state.userId).container, uid: state.uid, gid: state.gid,
-      lifecycle: state.lifecycle, layout: layoutFor(config.paths, state.account) }
+      lifecycle: state.lifecycle, layout: layoutForRuntime(config.paths, state.account, config.runtime.kind) }
   }
   const allocationOf = (state: UserStateV2): Omit<RuntimeInstance, 'webPort' | 'quotaPort'> => {
     const record = recordOf(state), layout = record.layout
@@ -126,7 +126,7 @@ export function createUserProvisioner(deps: UserProvisionerDeps): UserProvisione
         await save(reservation)
       }
     })
-    const layout = layoutFor(config.paths, state.account)
+    const layout = layoutForRuntime(config.paths, state.account, config.runtime.kind)
     let step = 'account'
     try {
       if (!state.steps.account || state.uid === undefined || state.gid === undefined) {
@@ -136,7 +136,7 @@ export function createUserProvisioner(deps: UserProvisionerDeps): UserProvisione
         await save(state)
       }
       step = 'storage'
-      if (!state.steps.storage) {
+      if (!state.steps.storage && config.runtime.kind === 'podman-gvisor') {
         await ensureStorage(config.paths, layout, { uid: state.uid, gid: state.gid }, ownership, config.runtime.kind)
         state.steps.storage = true
         if (!state.acquired.includes('storage')) state.acquired.push('storage')
@@ -149,10 +149,14 @@ export function createUserProvisioner(deps: UserProvisionerDeps): UserProvisione
         state.instance = allocated; delete state.pending
         await save(state)
       }
-      if (!state.acquired.includes('policy')) {
+      if (!state.acquired.includes('policy') || !state.steps.storage) {
         step = 'prepare'
         await runtime.prepare(instanceOf(state))
         state = await requireState(userId)
+        if (config.runtime.kind === 'systemd') {
+          state.steps.storage = true
+          if (!state.acquired.includes('storage')) state.acquired.push('storage')
+        }
         if (!state.acquired.includes('policy')) state.acquired.push('policy')
         await save(state)
       }
@@ -173,7 +177,7 @@ export function createUserProvisioner(deps: UserProvisionerDeps): UserProvisione
     await save(state); return state
   }
   return {
-    store, recordOf, instanceOf, allocationOf, activeCount, recordOfLayout: state => layoutFor(config.paths, state.account),
+    store, recordOf, instanceOf, allocationOf, activeCount, recordOfLayout: state => layoutForRuntime(config.paths, state.account, config.runtime.kind),
     withUser: (userId, task) => userLocks.run(deriveNames(userId).account, task),
     ensureUser: userId => userLocks.run(deriveNames(parseUserId(userId)).account, async () => recordOf(await provision(userId))),
     stopUser: userId => userLocks.run(deriveNames(userId).account, async () => { await markStopped(userId) }),

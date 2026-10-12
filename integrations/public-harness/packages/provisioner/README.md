@@ -32,6 +32,8 @@ Account and runtime names derive from a hash of the user ID. Common settings con
 
 Records are written as version 2 with a runtime reference, launch ID, allocated ports and acquired resources. The retained v1 decoder interprets legacy records as container state without rewriting them on reads. Malformed or unsupported records remain untouched. Pending and complete allocations reserve capacity before host effects, including wakes of existing users. Interrupted allocations and failed cleanup are quarantined and withdraw routing; reconciliation permits reuse only after provider cleanup succeeds. Admission and administrative lifecycle changes share the per-user lock. Provider disposal cleans resumed complete allocations as well as fresh allocations. Backend transfer requires an operator-controlled offline backup, full stop and verified restore; changing `runtime.kind` alone refuses the existing records.
 
+Native `runtime.configFile` names the absolute companion configuration consumed by the native provider. Native account lookup refuses unlocked passwords and supplementary groups. Its data parent remains root-owned, and its root-only control directory is `stateDir/runtime/<account>`; token/readiness files use the private home. Common provisioning defers native directory preparation to the runtime and records storage only after preparation succeeds. A failed preparation retains the allocated instance in quarantine. See [native preparation](../runtime-systemd/README.md) for descriptor operations and pre-registration asset validation.
+
 <a id="further-exploration"></a>
 ## Further Exploration
 

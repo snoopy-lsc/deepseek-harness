@@ -35,6 +35,18 @@ export function layoutFor(paths: { readonly storageRoot: string; readonly socket
     podman: join(root, 'podman'), socketPath: join(paths.socketDir, `${account}.sock`) }
 }
 
+/** Select native root control storage while retaining the shared private data layout.
+ * @param paths Common deployment paths.
+ * @param account Derived account name.
+ * @param kind Explicit runtime selection.
+ * @returns Layout with native control files outside all user-writable directories.
+ */
+export function layoutForRuntime(paths: { readonly storageRoot: string; readonly socketDir: string; readonly stateDir: string },
+  account: string, kind: 'systemd' | 'podman-gvisor'): StorageLayout {
+  const layout = layoutFor(paths, account)
+  return kind === 'systemd' ? { ...layout, ctl: join(paths.stateDir, 'runtime', account) } : layout
+}
+
 /** Ownership changes are injected so tests can run unprivileged. */
 export interface Ownership { chown(path: string, uid: number, gid: number): Promise<void> }
 
@@ -60,6 +72,7 @@ async function ensureOwnedDirectory(path: string, identity: AccountIdentity, own
 /** Create the account's private tree, refusing pre-existing paths with the wrong owner or type. */
 export async function ensureStorage(paths: { readonly storageRoot: string }, layout: StorageLayout,
   identity: AccountIdentity, ownership: Ownership, kind: 'systemd' | 'podman-gvisor'): Promise<void> {
+  if (kind === 'systemd') throw new StorageOwnershipError('native storage requires descriptor-based provider preparation')
   const users = join(paths.storageRoot, 'users')
   await mkdir(users, { recursive: true, mode: 0o711 })
   const parent = await lstat(users)

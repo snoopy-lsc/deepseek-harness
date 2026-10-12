@@ -48,7 +48,7 @@ function assertAccount(account: string): void {
   if (!isDerivedAccountName(account)) throw new Error('refusing to manage a non-derived account name')
 }
 
-/** Account directory backed by `getent`, `useradd`, `loginctl`, and `userdel` through an injected runner. */
+/** Host account directory; native lookup verifies password lock and private-group membership, while container accounts retain linger. */
 export function createAccountDirectory(runner: CommandRunner, tools: Pick<AccountToolchain, 'getent' | 'useradd' | 'userdel' | 'nologin'>,
   runtime: { readonly kind: 'systemd' } | { readonly kind: 'podman-gvisor'; readonly tools: Pick<AccountToolchain, 'loginctl' | 'sharedGroup'> }): AccountDirectory {
   return {
@@ -60,7 +60,15 @@ export function createAccountDirectory(runner: CommandRunner, tools: Pick<Accoun
       const fields = result.stdout.trim().split(':')
       if (fields.length < 7 || fields[0] !== account) throw new Error('account lookup returned an unexpected entry')
       const uid = Number(fields[2]), gid = Number(fields[3])
-      if (!Number.isSafeInteger(uid) || !Number.isSafeInteger(gid) || uid <= 0) throw new Error('account lookup returned an invalid identity')
+      if (!Number.isSafeInteger(uid) || !Number.isSafeInteger(gid) || uid <= 0 || gid < 0) throw new Error('account lookup returned an invalid identity')
+      if (runtime.kind === 'systemd') {
+        const shadow = (await runChecked(runner, tools.getent, ['shadow', account])).trim().split(':')
+        const groups = (await runChecked(runner, tools.getent, ['initgroups', account])).trim().split(/\s+/)
+        if (gid === 0 || shadow[0] !== account || !/^[!*]/.test(shadow[1] ?? '') || groups[0] !== account
+          || groups.length < 2 || groups.slice(1).some(group => group !== String(gid))) {
+          throw new AccountConflictError('native account requires a locked password and only its private group')
+        }
+      }
       return { uid, gid, home: fields[5]!, shell: fields[6]! }
     },
     async create(account, home) {
