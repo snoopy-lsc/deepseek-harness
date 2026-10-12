@@ -90,11 +90,11 @@ UserStateV2 = Omit<UserState, 'version' | 'lifecycle'> & { version: 2; runtime: 
 
 **接口：** 提供 `installNetwork(instance: RuntimeInstance, config: SystemdConfig, runner: CommandRunner): Promise<void>`、`removeNetwork(instance: RuntimeInstance, config: SystemdConfig, runner: CommandRunner): Promise<void>` 和 `verifyEnforcement(instance: RuntimeInstance, config: SystemdConfig, runner: CommandRunner): Promise<void>`。最后一个函数拒绝 AppArmor 禁用/complain/配置缺失、cgroup 控制器或有效限制缺失、磁盘/inode 配额未启用；仅命令退出成功不够。
 
-- [ ] **1. 编写失败测试：** `foreign_loopback_and_ipv6_are_denied` 断言仅允许自己的已分配端点；`established_flow_does_not_bypass_uid_policy` 拒绝禁止的已有连接；`atomic_update_preserves_host_rules` 在成功或失败时都保持无关表不变。`disabled_enforcement_refuses_prepare` 对每项缺失的必需保护都断言在用户进程启动前拒绝。
+- [ ] **1. 编写失败测试：** `foreign_loopback_and_ipv6_are_denied` 断言其他账户无法连接该用户的任何回环监听，而属主可访问自己的所有回环端口；`established_flow_does_not_bypass_uid_policy` 拒绝禁止的已有连接；`atomic_update_preserves_host_rules` 在成功或失败时都保持无关表不变。`disabled_enforcement_refuses_prepare` 对每项缺失的必需保护都断言在用户进程启动前拒绝，包括已加载的主 profile 仍允许 `userns`、`kernel.apparmor_restrict_unprivileged_userns` 不为 1，以及缺少浏览器子 profile。
 
 - [ ] **2. 执行** `pnpm --dir integrations/public-harness test -- network.spec.ts probe.spec.ts`；预期函数缺失或执行状态断言失败。
 
-- [ ] **3. 实现** 自有 nftables 表的原子变更，按 UID 的限制先于通用连接状态放行。拒绝主机/私网/链路本地/元数据目的地、其他用户回环端口、未经允许的 IPv4/IPv6，以及外部直接连接任意用户监听器；只允许配置的 DNS/公网出站及自己的 Web/额度端口。检查内核和已挂载文件系统的实际限制，不仅检查生成的配置。
+- [ ] **3. 实现** 自有 nftables 表的原子变更，按 UID 的限制先于通用连接状态放行。仅限属主的回环：output 钩子把新回环连接的 `ct mark` 设为 `meta skuid`；input 钩子丢弃目标 socket 位于该用户 unit cgroup（`socket cgroupv2 level N`）且标记不等于该用户 UID 的新连接，因此任意回环端口都只对属主可用。在 unit cgroup 创建之后、用户代码启动之前加载每用户规则，停止时移除。拒绝主机/私网/链路本地/元数据目的地、未经允许的 IPv4/IPv6，以及外部直接连接任意用户监听器；只允许配置的 DNS/公网出站及自己的 Web/额度端口。检查内核和已挂载文件系统的实际限制，不仅检查生成的配置。
 
 - [ ] **4. 验证** 定向测试及 `typecheck`；预期通过。记录 UDS 由文件权限和 AppArmor 保护，并说明清理失败后的隔离保留机制；提交 `feat: enforce native per-user network and resource policy`。
 
