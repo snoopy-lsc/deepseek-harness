@@ -16,6 +16,7 @@
     "@public-harness/quota": "0.1.0",
     "@public-harness/quota-provider": "0.1.0",
     "@public-harness/router": "0.1.0",
+    "@public-harness/runtime-systemd": "0.1.0",
     "@public-harness/team-dev": "0.1.0",
     "@public-harness/ui": "0.1.0",
     "@public-harness/web-token": "0.1.0"
