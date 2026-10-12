@@ -9,11 +9,19 @@ export const NATIVE_TABLE = 'dsh_native'
 const PRIVATE_V4 = '{ 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.0.0.0/24, 192.168.0.0/16, 198.18.0.0/15, 224.0.0.0/4, 240.0.0.0/4 }'
 const PRIVATE_V6 = '{ ::/128, ::1/128, ::ffff:0:0/96, 64:ff9b::/96, 100::/64, fc00::/7, fe80::/10, ff00::/8 }'
 
-/** Cgroup path of the account's unit, as `socket cgroupv2` matches it (relative to the cgroup2 root). */
-export function unitCgroup(instance: RuntimeInstance): { path: string; level: number } {
+/** The account's own slice unit; systemd maps the dashes in its name to `dsh.slice/dsh-user.slice/<slice>`. */
+export function unitSlice(instance: RuntimeInstance): string {
   if (instance.runtime.kind !== 'systemd') throw new NativeHostError('invalid-config', 'runtime-selection')
-  const path = `system.slice/${instance.runtime.unit}`
-  return { path, level: path.split('/').length }
+  return instance.runtime.unit.replace(/\.service$/, '.slice')
+}
+
+/** Cgroup path of the account's slice, as `socket cgroupv2` matches it (relative to the cgroup2 root).
+ * The slice is started before the rules load, so the path exists when nft resolves it; the service and
+ * any confined helper the provider starts for the account run below it.
+ */
+export function unitCgroup(instance: RuntimeInstance): { path: string; level: number; service: string } {
+  const slice = unitSlice(instance), path = `dsh.slice/dsh-user.slice/${slice}`
+  return { path, level: path.split('/').length, service: `${path}/${instance.runtime.kind === 'systemd' ? instance.runtime.unit : ''}` }
 }
 
 /** Base table: owned chains and the UID dispatch map. Idempotent; `add` never replaces existing content. */

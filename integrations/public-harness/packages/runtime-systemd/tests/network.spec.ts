@@ -9,7 +9,7 @@ const other = () => ({ ...instance(), uid: 1202, gid: 1202, webPort: 29201, quot
 describe('native network policy', () => {
   it('foreign_loopback_and_ipv6_are_denied', () => {
     const i = instance(), script = renderUserNetwork(i, config()) + renderInputDispatch([i])
-    const own = `socket cgroupv2 level 2 "system.slice/${i.runtime.kind === 'systemd' ? i.runtime.unit : ''}"`
+    const own = `socket cgroupv2 level 3 "dsh.slice/dsh-user.slice/${i.runtime.kind === 'systemd' ? i.runtime.unit.replace('.service', '.slice') : ''}"`
     // Loopback is marked with the sender UID; the owner's listeners accept only that UID, root only on the Web port.
     expect(script).toContain('add rule inet dsh_native output oif "lo" ct state new ct mark set meta skuid\n')
     expect(script).toContain(`in_1201 ${own} ct mark 1201 accept\n`)

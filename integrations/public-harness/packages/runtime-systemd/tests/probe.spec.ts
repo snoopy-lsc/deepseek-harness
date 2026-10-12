@@ -5,7 +5,7 @@ import { config, instance } from './fixture.ts'
 
 const i = instance()
 const unit = i.runtime.kind === 'systemd' ? i.runtime.unit : ''
-const cg = `/sys/fs/cgroup/system.slice/${unit}`
+const cg = `/sys/fs/cgroup/dsh.slice/dsh-user.slice/${unit.replace('.service', '.slice')}/${unit}`
 function healthy(): Record<string, string> {
   return {
     '/sys/kernel/security/apparmor/profiles': `other (enforce)\n${i.account} (enforce)\n${i.account}//chromium (enforce)\n`,

@@ -14,7 +14,8 @@ export const native = {
     dsh: '/opt/dsh/release/dsh.mjs', launchPatch: '/opt/dsh/release/native.yml',
     browserRoot: '/opt/dsh/browser', browser: '/opt/dsh/browser/chrome-linux64/chrome' },
   tools: { node: '/opt/dsh/toolchain/node', systemctl: '/usr/bin/systemctl', apparmorParser: '/usr/sbin/apparmor_parser',
-    xfsQuota: '/usr/sbin/xfs_quota', nft: '/usr/sbin/nft' },
+    xfsQuota: '/usr/sbin/xfs_quota', nft: '/usr/sbin/nft',
+    systemdRun: '/usr/bin/systemd-run', git: '/usr/bin/git' },
   profile: 'public-user', diskInodes: 100000, shmBytes: 67108864, shmInodes: 4096, operationTimeoutMs: 10000,
   web: { min: 29200, max: 29209 }, resolver: '1.1.1.1', publicEgress: { tcp: [80, 443], udp: [] },
 }

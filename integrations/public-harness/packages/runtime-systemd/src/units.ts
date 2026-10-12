@@ -1,6 +1,8 @@
 /** System services retain one account, AppArmor profile and cgroup across every child process. */
 import type { RuntimeInstance } from '@public-harness/contracts'
 import type { SystemdConfig } from './config.ts'
+import { unitSlice } from './network.ts'
+import { READY_FILE } from '@public-harness/provisioner/token-channel'
 
 /** Generated resolver configuration; root writes it to `<controlDir>/resolv.conf` and the unit binds it read-only.
  * @param config Validated native configuration whose resolver is an IP literal.
@@ -21,11 +23,12 @@ export const RESOLV_CONF = 'resolv.conf'
 export function renderUnit(instance: RuntimeInstance, config: SystemdConfig): string {
   const { home, workspace, cache, tmp } = instance, { limits, paths, tools } = config
   return [
-    '[Unit]', 'Description=Private Harness instance', 'After=network.target', '', '[Service]', 'Type=exec',
+    '[Unit]', 'Description=Private Harness instance', 'After=network.target', '', '[Service]', 'Type=exec', `Slice=${unitSlice(instance)}`,
     `User=${instance.uid}`, `Group=${instance.gid}`, 'SupplementaryGroups=', 'UMask=0077',
     `WorkingDirectory=${workspace}`, `Environment=HOME=${home} DSH_HOME=${home} XDG_CACHE_HOME=${cache} TMPDIR=${tmp}`,
     `Environment=PATH=${paths.toolchain}:/usr/bin:/usr/sbin`, `Environment=PUBLIC_HARNESS_BROWSER=${paths.browser}`,
     `Environment=PUBLIC_HARNESS_WEB_PORT=${instance.webPort} PUBLIC_HARNESS_QUOTA_PORT=${instance.quotaPort} PUBLIC_HARNESS_INSTANCE_ID=${instance.instanceId}`,
+    `Environment=PUBLIC_HARNESS_READY_FILE=${home}/${READY_FILE}`,
     `ExecStart=${tools.node} ${paths.dsh} --profile ${config.profile} --patch ${paths.launchPatch}`,
     `AppArmorProfile=${instance.account}`, 'NoNewPrivileges=yes', 'CapabilityBoundingSet=', 'AmbientCapabilities=',
     'RestrictSUIDSGID=yes', 'LockPersonality=yes', 'ProtectSystem=strict', 'ProtectHome=yes', 'ProtectControlGroups=yes',

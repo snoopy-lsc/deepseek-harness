@@ -22,7 +22,7 @@ export interface SystemdConfig {
     /** The pinned browser executable; the only path the AppArmor browser child profile attaches to. */
     readonly browser: string
   }
-  readonly tools: ProvisionerConfig['tools'] & { readonly node: string; readonly systemctl: string; readonly apparmorParser: string; readonly xfsQuota: string; readonly nft: string }
+  readonly tools: ProvisionerConfig['tools'] & { readonly node: string; readonly systemctl: string; readonly apparmorParser: string; readonly xfsQuota: string; readonly nft: string; readonly systemdRun: string; readonly git: string }
   readonly limits: ProvisionerConfig['limits'] & { readonly diskInodes: number; readonly shmBytes: number; readonly shmInodes: number }
   readonly ports: { readonly web: PortRange; readonly quota: PortRange }
   readonly profile: string
@@ -70,10 +70,10 @@ export function parseSystemdConfig(value: unknown): SystemdConfig {
   if (common.runtime.kind !== 'systemd') throw new NativeHostError('invalid-config', 'runtime-selection')
   const n = record(root.native, ['paths', 'tools', 'profile', 'diskInodes', 'shmBytes', 'shmInodes', 'operationTimeoutMs', 'web', 'resolver', 'publicEgress'])
   const p = record(n.paths, ['release', 'releaseManifest', 'toolchain', 'dsh', 'launchPatch', 'browserRoot', 'browser'])
-  const t = record(n.tools, ['node', 'systemctl', 'apparmorParser', 'xfsQuota', 'nft'])
+  const t = record(n.tools, ['node', 'systemctl', 'apparmorParser', 'xfsQuota', 'nft', 'systemdRun', 'git'])
   const paths = { ...common.paths, release: path(p.release), releaseManifest: path(p.releaseManifest), toolchain: path(p.toolchain),
     dsh: path(p.dsh), launchPatch: path(p.launchPatch), browserRoot: path(p.browserRoot), browser: path(p.browser) }
-  const tools = { ...common.tools, node: path(t.node), systemctl: path(t.systemctl), apparmorParser: path(t.apparmorParser), xfsQuota: path(t.xfsQuota), nft: path(t.nft) }
+  const tools = { ...common.tools, node: path(t.node), systemctl: path(t.systemctl), apparmorParser: path(t.apparmorParser), xfsQuota: path(t.xfsQuota), nft: path(t.nft), systemdRun: path(t.systemdRun), git: path(t.git) }
   Object.values(paths).forEach(path); Object.values(tools).forEach(path)
   path(common.runtime.configFile)
   if (!inside(paths.storageRoot, paths.quotaMount) || !inside(paths.dsh, paths.release) || !inside(paths.launchPatch, paths.release)

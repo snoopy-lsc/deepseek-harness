@@ -50,7 +50,7 @@ export async function verifyEnforcement(instance: RuntimeInstance, config: Syste
   if ((await read('/proc/sys/kernel/apparmor_restrict_unprivileged_userns', 'userns-restriction')).trim() !== '1') {
     refuse('userns-restriction', 'kernel.apparmor_restrict_unprivileged_userns must be 1')
   }
-  const cgroup = `/sys/fs/cgroup/${unitCgroup(instance).path}`
+  const cgroup = `/sys/fs/cgroup/${unitCgroup(instance).service}`
   const controllers = (await read(`${cgroup}/cgroup.controllers`, 'cgroup')).trim().split(/\s+/)
   for (const controller of ['cpu', 'memory', 'pids']) if (!controllers.includes(controller)) refuse('cgroup', `${controller} controller missing`)
   const { limits } = config
