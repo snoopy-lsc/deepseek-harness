@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { isMap, isScalar, isSeq, parse, parseDocument, type Document } from 'yaml'
@@ -241,6 +241,75 @@ describe('host artifacts', () => {
     expect(enable).toContain('verify-hidepid.sh')
   })
 
+  describe('enable-hidepid.sh', () => {
+    const enable = async (fstabText: string, runs: number): Promise<{ fstab: string; backup: string | undefined; statuses: Array<number | null>; dropin: string }> => {
+      const dir = await mkdtemp(join(tmpdir(), 'dsh-enable-'))
+      const bin = join(dir, 'bin')
+      await mkdir(bin)
+      const stub = async (name: string, body: string): Promise<void> => { await writeFile(join(bin, name), `#!/bin/bash\n${body}\n`, { mode: 0o755 }) }
+      await stub('getent', 'echo "dsh-procview:x:991:"')
+      await stub('systemctl', 'true')
+      await stub('mount', 'true')
+      await stub('findmnt', 'echo "rw,nosuid,nodev,noexec,relatime,hidepid=invisible,gid=991"')
+      const fstab = join(dir, 'fstab')
+      await writeFile(fstab, fstabText)
+      const statuses: Array<number | null> = []
+      for (let run = 0; run < runs; run += 1) {
+        statuses.push(spawnSync('bash', [join(root, 'deploy/production/scripts/enable-hidepid.sh')],
+          { encoding: 'utf8', env: { PATH: `${bin}:/usr/bin:/bin`, DSH_FSTAB: fstab, DSH_SYSTEMD_DIR: join(dir, 'systemd') } }).status)
+      }
+      return { fstab: await readFile(fstab, 'utf8'), backup: await readFile(`${fstab}.dsh-backup`, 'utf8').catch(() => undefined), statuses,
+        dropin: await readFile(join(dir, 'systemd/systemd-logind.service.d/dsh-public.conf'), 'utf8') }
+    }
+    const original = 'UUID=abc / ext4 defaults 0 1\nproc /proc proc defaults 0 0\n'
+
+    it('writes one hidepid line and keeps the original fstab as the backup', async () => {
+      const result = await enable(original, 1)
+      expect(result.statuses).toEqual([0])
+      expect(result.backup).toBe(original)
+      expect(result.fstab.split('\n').filter(line => line.startsWith('proc /proc'))).toEqual(['proc /proc proc nosuid,nodev,noexec,hidepid=2,gid=991 0 0'])
+      expect(result.fstab).toContain('UUID=abc / ext4 defaults 0 1')
+      expect(result.dropin).toContain('SupplementaryGroups=dsh-procview')
+    })
+
+    it('never overwrites the backup on later runs, and stays idempotent', async () => {
+      const result = await enable(original, 3)
+      expect(result.statuses).toEqual([0, 0, 0])
+      expect(result.backup).toBe(original)
+      expect(result.backup).not.toContain('hidepid')
+      expect(result.fstab.split('\n').filter(line => line.startsWith('proc /proc'))).toHaveLength(1)
+      expect(result.fstab.match(/UUID=abc/g)).toHaveLength(1)
+    })
+
+    it('keeps an existing backup even when the live fstab was edited in between', async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'dsh-enable-'))
+      const fstab = join(dir, 'fstab')
+      await writeFile(fstab, original)
+      await writeFile(`${fstab}.dsh-backup`, 'ORIGINAL-OF-RECORD\n')
+      const bin = join(dir, 'bin')
+      await mkdir(bin)
+      for (const [name, body] of [['getent', 'echo "dsh-procview:x:991:"'], ['systemctl', 'true'], ['mount', 'true'],
+        ['findmnt', 'echo "hidepid=2,gid=991"']] as const) await writeFile(join(bin, name), `#!/bin/bash\n${body}\n`, { mode: 0o755 })
+      const status = spawnSync('bash', [join(root, 'deploy/production/scripts/enable-hidepid.sh')],
+        { env: { PATH: `${bin}:/usr/bin:/bin`, DSH_FSTAB: fstab, DSH_SYSTEMD_DIR: join(dir, 'systemd') } }).status
+      expect(status).toBe(0)
+      expect(await readFile(`${fstab}.dsh-backup`, 'utf8')).toBe('ORIGINAL-OF-RECORD\n')
+    })
+
+    it('fails closed without touching fstab when the group is missing', async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'dsh-enable-'))
+      const bin = join(dir, 'bin')
+      await mkdir(bin)
+      await writeFile(join(bin, 'getent'), '#!/bin/bash\nexit 2\n', { mode: 0o755 })
+      const fstab = join(dir, 'fstab')
+      await writeFile(fstab, original)
+      const result = spawnSync('bash', [join(root, 'deploy/production/scripts/enable-hidepid.sh')],
+        { encoding: 'utf8', env: { PATH: `${bin}:/usr/bin:/bin`, DSH_FSTAB: fstab, DSH_SYSTEMD_DIR: join(dir, 'systemd') } })
+      expect(result.status).toBe(1)
+      expect(await readFile(fstab, 'utf8')).toBe(original)
+    })
+  })
+
   describe('verify-hidepid.sh', () => {
     const run = async (env: Record<string, string>, ...accounts: string[]): Promise<{ status: number | null; stderr: string; stdout: string }> => {
       const bin = await mkdtemp(join(tmpdir(), 'dsh-stubs-'))
@@ -250,8 +319,10 @@ describe('host artifacts', () => {
       await stub('id', 'if [ "$1" = -u ]; then echo 2001; else echo "$FAKE_GROUPS"; fi')
       await stub('runuser', 'shift 3; exec "$@"')
       await stub('ps', 'printf "%s" "$FAKE_PS"')
+      const subuid = join(bin, 'subuid')
+      await writeFile(subuid, env.FAKE_SUBUID ?? '')
       const result = spawnSync('bash', [join(root, 'deploy/production/scripts/verify-hidepid.sh'), ...accounts],
-        { encoding: 'utf8', env: { PATH: `${bin}:/usr/bin:/bin`, FAKE_GROUPS: 'dsh-instances', FAKE_PS: '2001 sleep 1\n', ...env } })
+        { encoding: 'utf8', env: { PATH: `${bin}:/usr/bin:/bin`, FAKE_GROUPS: 'dsh-instances', FAKE_PS: '2001 sleep 1\n', DSH_SUBUID_FILE: subuid, ...env } })
       return { status: result.status, stderr: result.stderr, stdout: result.stdout }
     }
     const hidden = 'rw,nosuid,nodev,noexec,relatime,hidepid=invisible,gid=991'
@@ -259,6 +330,35 @@ describe('host artifacts', () => {
     it('passes when /proc hides other users and the account sees only itself', async () => {
       expect((await run({ FAKE_OPTIONS: hidden }, 'dsh-abc')).status).toBe(0)
       expect((await run({ FAKE_OPTIONS: 'rw,nosuid,hidepid=2,gid=991' })).status).toBe(0)
+    })
+
+    describe('rootless sandbox processes under the account\'s own subuid range', () => {
+      const own = 'dsh-abc:165536:65536\ndsh-def:231072:65536\n'
+      const ps = (...uids: number[]): string => ['2001 podman run x', ...uids.map(uid => `${uid} runsc-sandbox`)].join('\n') + '\n'
+
+      it('does not count them as another user, including both ends of the range', async () => {
+        for (const uid of [165536, 200000, 231071]) {
+          expect((await run({ FAKE_OPTIONS: hidden, FAKE_SUBUID: own, FAKE_PS: ps(uid) }, 'dsh-abc')).status, String(uid)).toBe(0)
+        }
+        expect((await run({ FAKE_OPTIONS: hidden, FAKE_SUBUID: own, FAKE_PS: ps(165536, 165537, 231071) }, 'dsh-abc')).status).toBe(0)
+        // Entries keyed by numeric uid count too, and several entries for one account add up.
+        expect((await run({ FAKE_OPTIONS: hidden, FAKE_SUBUID: '2001:300000:10\ndsh-abc:165536:2\n', FAKE_PS: ps(300009, 165537) }, 'dsh-abc')).status).toBe(0)
+      })
+
+      it.each([
+        ["another account's range", own, ps(231072)],
+        ["just below the account's own range", own, ps(165535)],
+        ['just above the account\'s own range', own, ps(231072, 165536)],
+        ['an own sandbox process mixed with a foreign one', own, ps(165536, 231080)],
+        ['no subuid entry for the account at all', 'dsh-def:231072:65536\n', ps(165536)],
+        ['an empty subuid file', '', ps(165536)],
+        ["another user's ordinary uid", own, ps(1002)],
+        ['root', own, ps(0)],
+      ])('still fails for %s', async (_name, subuid, output) => {
+        const result = await run({ FAKE_OPTIONS: hidden, FAKE_SUBUID: subuid, FAKE_PS: output }, 'dsh-abc')
+        expect(result.status).toBe(1)
+        expect(result.stderr).toMatch(/^FAIL: dsh-abc can see another user/)
+      })
     })
 
     it.each([
