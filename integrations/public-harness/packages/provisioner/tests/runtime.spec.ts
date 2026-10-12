@@ -34,6 +34,8 @@ async function setup(options: { quotaHealthy?: boolean; busyPorts?: number[]; im
     close: async () => { quotaCalls.push('close') },
   }
   let now = 0
+  let healthy = true
+  const logs: string[] = []
   runner.handler = async (command, args) => {
     const joined = args.join(' ')
     if (joined.includes(' run ') || args.includes('run')) {
@@ -44,8 +46,9 @@ async function setup(options: { quotaHealthy?: boolean; busyPorts?: number[]; im
   }
   const runtime = createRuntime({ config, runner, quota, probe: controllers, publicHost: 'harness.example.test',
     startForwarder: async options => { forwarded.push(options); return { close: async () => { forwarderClosed += 1 } } },
-    healthProbe: async () => true, portFree: async port => !(busyPorts ?? []).includes(port), sleep: async ms => { now += ms }, clock: () => now })
-  return { config, record, runner, runtime, forwarded, quotaCalls, closed: () => forwarderClosed, layout }
+    healthProbe: async () => healthy, log: line => { logs.push(line) }, portFree: async port => !(busyPorts ?? []).includes(port), sleep: async ms => { now += ms }, clock: () => now })
+  return { config, record, runner, runtime, forwarded, quotaCalls, closed: () => forwarderClosed, layout, logs, elapsed: () => now,
+    setHealthy: (value: boolean) => { healthy = value } }
 }
 
 describe('mandatory limits', () => {
@@ -331,9 +334,70 @@ describe('confined container launch', () => {
     await expect(runtime.launchGrant(record)).rejects.toThrow(/unavailable/)
   })
 
+  describe('a container that dies during start', () => {
+    const SECRET = 'sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+    const dead = (runner: FakeRunner, extra?: (args: readonly string[]) => Promise<void> | void): void => {
+      const inner = runner.handler
+      runner.handler = async (command, args) => {
+        if (args.includes('inspect')) return { code: 0, stdout: 'false\n', stderr: '' }
+        if (args.includes('logs')) return { code: 0, stdout: `starting\nEACCES: open /run/harness-ctl/ready.json\nkey ${SECRET}\n`, stderr: 'node: fatal \x1b[31mred\x1b[0m\n' }
+        await extra?.(args)
+        return inner(command, args)
+      }
+    }
+
+    it('fails within seconds instead of waiting out readyTimeoutMs, tears down, and logs only a redacted tail', async () => {
+      const { runner, runtime, record, logs, elapsed, config } = await setup()
+      dead(runner, () => undefined)
+      runner.handler = (inner => async (command: string, args: readonly string[]) => args.includes('run') ? { code: 0, stdout: 'abcdef\n', stderr: '' } : inner(command, args))(runner.handler)
+      const error = await runtime.start(record).catch((e: unknown) => e)
+      expect(error).toMatchObject({ reason: 'container-exited' })
+      expect(String((error as Error).message)).not.toMatch(/EACCES|ready\.json|sk-ant/)
+      expect(elapsed()).toBeLessThan(3000)
+      expect(elapsed()).toBeLessThan(config.readyTimeoutMs / 2)
+      expect(logs).toHaveLength(1)
+      expect(logs[0]).toContain('exited during start')
+      expect(logs[0]).toContain('EACCES')
+      expect(logs[0]).not.toContain(SECRET)
+      expect(logs[0]).not.toContain('/run/harness-ctl')
+      expect(logs[0]).not.toContain('\x1b')
+      expect(logs[0]!.length).toBeLessThan(800)
+      const last = runner.calls.at(-1)!.args
+      expect(last).toEqual(expect.arrayContaining(['rm', '--force', record.container]))
+    })
+
+    it('also notices a container that dies after publishing readiness, and clears the launch token', async () => {
+      const { runner, runtime, record, layout, setHealthy, logs } = await setup()
+      setHealthy(false)
+      dead(runner)
+      const error = await runtime.start(record).catch((e: unknown) => e)
+      expect(error).toMatchObject({ reason: 'container-exited' })
+      expect(logs).toHaveLength(1)
+      await expect(readReady(layout.ctl, uid)).resolves.toBeUndefined()
+      await expect(runtime.launchGrant(record)).rejects.toThrow(/unavailable/)
+    })
+
+    it('keeps waiting while the engine cannot answer, and only a stopped container ends the wait', async () => {
+      const { runner, runtime, record, elapsed, config } = await setup()
+      runner.handler = (_command, args) => args.includes('run') ? { code: 0, stdout: '', stderr: '' }
+        : args.includes('inspect') ? { code: 1, stdout: '', stderr: 'timeout' } : undefined
+      const error = await runtime.start(record).catch((e: unknown) => e)
+      expect(error).toMatchObject({ reason: 'not-ready' })
+      expect(elapsed()).toBeGreaterThanOrEqual(config.readyTimeoutMs)
+    })
+
+    it('does not mistake a container that wrote its token and then exited for a failed start', async () => {
+      const { runner, runtime, record } = await setup()
+      const inner = runner.handler
+      runner.handler = (command, args) => args.includes('inspect') ? { code: 0, stdout: 'false\n', stderr: '' } : inner(command, args)
+      await expect(runtime.start(record)).resolves.toMatchObject({ kind: 'unix' })
+    })
+  })
+
   it('times out with a generic error and tears down when readiness never arrives', async () => {
     const { runner, runtime, record } = await setup()
-    runner.handler = (_command, args) => args.includes('run') ? { code: 0, stdout: '', stderr: '' } : undefined
+    runner.handler = (_command, args) => args.includes('run') ? { code: 0, stdout: '', stderr: '' }
+      : args.includes('inspect') ? { code: 0, stdout: 'true\n', stderr: '' } : undefined
     const error = await runtime.start(record).catch((e: unknown) => e)
     expect(error).toMatchObject({ reason: 'not-ready' })
     expect(String((error as Error).message)).not.toContain(record.layout.root)

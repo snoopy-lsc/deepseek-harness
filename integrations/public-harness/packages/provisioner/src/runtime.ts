@@ -8,7 +8,7 @@ import { portsFrom, type InstanceEndpoint, type UserId } from '@public-harness/c
 import type { ProvisionerConfig } from './config.ts'
 import { startUnixForwarder, type Forwarder } from './forwarder.ts'
 import { enforceLimits, LimitsError, networkArgument, type EnforcementProbe } from './limits.ts'
-import { clearReady, readReady, waitForReady } from './token-channel.ts'
+import { clearReady, ContainerExitedError, readReady, waitForReady } from './token-channel.ts'
 import { KeyedLock, type CommandRunner } from './system.ts'
 import type { UserRecord } from './users.ts'
 
@@ -40,7 +40,7 @@ export interface QuotaBridge {
 /** Ordered failures a start can report; messages never include paths, argv, or token material. */
 export class RuntimeStartError extends Error {
   override readonly name = 'RuntimeStartError'
-  constructor(readonly reason: 'gvisor-unavailable' | 'limits' | 'quota-unavailable' | 'start-failed' | 'not-ready' | 'unsafe-argv' | 'no-port' | 'image-unavailable') {
+  constructor(readonly reason: 'gvisor-unavailable' | 'limits' | 'quota-unavailable' | 'start-failed' | 'not-ready' | 'unsafe-argv' | 'no-port' | 'image-unavailable' | 'container-exited') {
     super(`runtime start refused: ${reason}`)
   }
 }
@@ -84,6 +84,20 @@ export interface RuntimeDeps {
   readonly stopGraceMs?: number
   /** Margin after a command's own timeout before the provisioner stops waiting for the runner (default 1 s). */
   readonly deadlineSlackMs?: number
+  /** How often the readiness wait asks the engine whether the container is still there (default 1 s). */
+  readonly livenessEveryMs?: number
+  /** One-line diagnostics for the operator (default: stderr). Never receives paths, argv, or token material. */
+  readonly log?: (line: string) => void
+}
+
+/**
+ * Make a container log tail safe to log: control characters removed, long token-like strings and absolute paths
+ * replaced, at most ten lines and 600 characters, keeping the end.
+ */
+export function redactLogTail(text: string): string {
+  const lines = text.replace(/[^\x09\x0a\x20-\x7e]/g, '?').split('\n').map(line => line.trimEnd()).filter(line => line !== '').slice(-10)
+  const cleaned = lines.join(' | ').replace(/\/[^\s|:'"]+/g, '<path>').replace(/[A-Za-z0-9_+=.-]{20,}/g, '<redacted>')
+  return cleaned.length > 600 ? `...${cleaned.slice(-600)}` : cleaned
 }
 
 /** The exact argv for `podman` (after the executable) that starts one instance. */
@@ -187,6 +201,7 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
   const probeHealth = deps.healthProbe ?? httpHealthProbe
   const rotateMs = deps.credentialRotateMs ?? 480_000
   const portFree = deps.portFree ?? loopbackPortFree
+  const log = deps.log ?? ((line: string) => { process.stderr.write(`provisioner: ${line}\n`) })
   const imageLock = new KeyedLock()
   const live = new Map<UserId, { forwarder: Forwarder; timer: NodeJS.Timeout; instanceId: string; port: number }>()
   let cursor = 0
@@ -262,6 +277,14 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     try { await removeContainer(record) } finally { await clearReady(record.layout.ctl).catch(() => {}) }
   }
 
+  /** The container died while we waited for it: fail now, and send a redacted log tail to the operator log only. */
+  async function exitedDuringStart(record: UserRecord): Promise<RuntimeStartError> {
+    const tail = await asAccount(record, ['logs', '--tail', '20', record.container], 15_000).catch(() => undefined)
+    const detail = tail === undefined ? '' : redactLogTail(`${tail.stdout}\n${tail.stderr}`)
+    log(`instance ${record.account} exited during start${detail === '' ? '' : `: ${detail}`}`)
+    return new RuntimeStartError('container-exited')
+  }
+
   /** Polite stop within the configured time, then SIGKILL, then a forced remove; fails loudly if it is still there. */
   async function removeContainer(record: UserRecord): Promise<void> {
     const polite = await asAccount(record, ['rm', '--force', '--ignore', '--time', String(Math.ceil(config.stopTimeoutMs / 1000)), record.container],
@@ -297,13 +320,21 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
         assertSafeRunArgv(argv, config, record)
         const started = await asAccount(record, argv)
         if (started.code !== 0) throw new RuntimeStartError('start-failed')
-        const ready = await waitForReady(record.layout.ctl, record.uid, config.readyTimeoutMs, 100, sleep, deps.clock)
-          .catch(() => { throw new RuntimeStartError('not-ready') })
-        void ready
+        await waitForReady(record.layout.ctl, record.uid, config.readyTimeoutMs, 100, sleep, deps.clock,
+          { check: () => containerState(record), everyMs: deps.livenessEveryMs ?? 1000 })
+          .catch(async (error: unknown) => {
+            throw error instanceof ContainerExitedError ? await exitedDuringStart(record) : new RuntimeStartError('not-ready')
+          })
         const hostPort = sidecarPort
         const deadline = (deps.clock ?? Date.now)() + config.readyTimeoutMs
+        let lastCheck = (deps.clock ?? Date.now)()
         while (!await probeHealth(hostPort)) {
-          if ((deps.clock ?? Date.now)() >= deadline) throw new RuntimeStartError('not-ready')
+          const at = (deps.clock ?? Date.now)()
+          if (at >= deadline) throw new RuntimeStartError('not-ready')
+          if (at - lastCheck >= (deps.livenessEveryMs ?? 1000)) {
+            lastCheck = at
+            if (await containerState(record) === 'stopped') throw await exitedDuringStart(record)
+          }
           await sleep(200)
         }
         const forwarder = await forward({ socketPath: record.layout.socketPath, port: hostPort, gid: config.socketGid })

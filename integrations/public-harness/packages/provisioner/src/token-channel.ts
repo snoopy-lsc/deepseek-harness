@@ -45,15 +45,32 @@ export async function clearReady(ctlDir: string): Promise<void> {
   await unlink(join(ctlDir, READY_FILE)).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error })
 }
 
+/** The container stopped before it published readiness; waiting longer cannot help. */
+export class ContainerExitedError extends Error {
+  override readonly name = 'ContainerExitedError'
+  constructor() { super('container exited before it was ready') }
+}
+
+/** Optional liveness check made while waiting; `stopped` ends the wait at once, anything else keeps waiting. */
+export interface Liveness { readonly check: () => Promise<'running' | 'stopped' | 'unknown'>; readonly everyMs: number }
+
 /** Wait until the instance publishes readiness, or fail without revealing any file content. */
 export async function waitForReady(ctlDir: string, uid: number, timeoutMs: number, pollMs = 100,
   sleep: (ms: number) => Promise<void> = ms => new Promise(resolve => setTimeout(resolve, ms)),
-  clock: () => number = Date.now): Promise<ReadyToken> {
+  clock: () => number = Date.now, liveness?: Liveness): Promise<ReadyToken> {
   const deadline = clock() + timeoutMs
+  let lastCheck = clock()
   for (;;) {
     const ready = await readReady(ctlDir, uid)
     if (ready !== undefined) return ready
     if (clock() >= deadline) throw new Error('readiness timed out')
+    if (liveness !== undefined && clock() - lastCheck >= liveness.everyMs) {
+      lastCheck = clock()
+      // One last look at the file first: a container that wrote its token and then exited has still said it was ready.
+      if (await liveness.check().catch(() => 'unknown' as const) === 'stopped' && await readReady(ctlDir, uid) === undefined) {
+        throw new ContainerExitedError()
+      }
+    }
     await sleep(pollMs)
   }
 }
