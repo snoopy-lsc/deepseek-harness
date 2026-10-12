@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { deriveNames } from '../src/accounts.ts'
 import { LimitsError, enforceLimits, networkArgument, validateLimits } from '../src/limits.ts'
-import { CONTAINER, RuntimeStartError, RuntimeStopError, SIDECAR_PORT, assertSafeRunArgv, buildRunArgv, createRuntime, type QuotaBridge } from '../src/runtime.ts'
+import { CONTAINER, INSTANCE_USERNS, RuntimeStartError, RuntimeStopError, SIDECAR_PORT, assertSafeRunArgv, buildRunArgv, createRuntime, type QuotaBridge } from '../src/runtime.ts'
 import { startSidecar } from '../src/sidecar.ts'
 import { readReady, waitForReady } from '../src/token-channel.ts'
 import type { CommandRunner } from '../src/system.ts'
@@ -133,6 +133,35 @@ describe('confined container launch', () => {
     const { config, record } = await setup()
     const argv = buildRunArgv(config, record, 29200)
     argv.splice(argv.indexOf(config.image), 0, ...extra)
+    expect(() => assertSafeRunArgv(argv, config, record)).toThrow(RuntimeStartError)
+  })
+
+  it('maps the host account onto the image user with exactly one keep-id userns', async () => {
+    const { config, record } = await setup()
+    const argv = buildRunArgv(config, record, 29200)
+    expect(argv.filter(arg => arg === '--userns')).toHaveLength(1)
+    expect(argv[argv.indexOf('--userns') + 1]).toBe('keep-id:uid=10001,gid=10001')
+    expect(INSTANCE_USERNS).toBe('keep-id:uid=10001,gid=10001')
+    expect(() => assertSafeRunArgv(argv, config, record)).not.toThrow()
+  })
+
+  it.each(['host', 'auto', 'private', 'nomap', 'keep-id', 'keep-id:uid=0,gid=0', 'keep-id:uid=10001', 'keep-id:uid=10001,gid=10001,size=65536',
+    'keep-id:gid=10001,uid=10001', 'keep-id:uid=10001,gid=10001 ', 'KEEP-ID:uid=10001,gid=10001', 'container:other', 'ns:/proc/1/ns/user', ''])(
+    'rejects --userns %j', async value => {
+      const { config, record } = await setup()
+      const argv = buildRunArgv(config, record, 29200)
+      argv[argv.indexOf('--userns') + 1] = value
+      expect(() => assertSafeRunArgv(argv, config, record)).toThrow(RuntimeStartError)
+    })
+
+  it.each([['the --userns=value form', (argv: string[]) => argv.splice(argv.indexOf('--userns'), 2, '--userns=keep-id:uid=10001,gid=10001')],
+    ['a missing --userns', (argv: string[]) => argv.splice(argv.indexOf('--userns'), 2)],
+    ['a duplicated exact --userns', (argv: string[]) => argv.splice(argv.indexOf(argv.at(-3)!), 0, '--userns', INSTANCE_USERNS)],
+    ['a trailing --userns without value', (argv: string[]) => { argv.splice(argv.indexOf('--userns'), 2); argv.splice(argv.indexOf('--network'), 0, '--userns') }],
+  ])('rejects %s', async (_name, mutate) => {
+    const { config, record } = await setup()
+    const argv = buildRunArgv(config, record, 29200)
+    mutate(argv)
     expect(() => assertSafeRunArgv(argv, config, record)).toThrow(RuntimeStartError)
   })
 

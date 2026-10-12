@@ -8,6 +8,7 @@ import { collectConfigFacts } from '../deploy/release-check.ts'
 import { PRODUCTION_PROFILES, writeProductionProfile } from '../deploy/production-profile.ts'
 import { portRangesOverlap } from '../packages/contracts/src/ports.ts'
 import { parseReleaseManifest } from '../deploy/upgrade.ts'
+import { INSTANCE_USER } from '../packages/provisioner/src/runtime.ts'
 import { networkArgument } from '../packages/provisioner/src/limits.ts'
 import { parseProvisionerProfileConfig } from '../packages/production/src/provisioner-service.ts'
 import { parseQuotaProfileConfig } from '../packages/production/src/quota-service.ts'
@@ -282,6 +283,12 @@ describe('host artifacts', () => {
     }
     expect(await text('deploy/production/scripts/restore.sh')).toMatch(/target state is not empty/)
     expect(await text('deploy/production/scripts/backup.sh')).toMatch(/sqlite3 .*\.backup/)
+  })
+
+  it('keeps the userns mapping in step with the image user', async () => {
+    const containerfile = await text('deploy/production/Containerfile')
+    expect(containerfile).toMatch(new RegExp(`useradd --uid ${INSTANCE_USER.uid} `))
+    expect(containerfile).toContain(`USER ${INSTANCE_USER.uid}:${INSTANCE_USER.gid}`)
   })
 
   it('runs the instance image unprivileged and without secrets', async () => {

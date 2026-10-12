@@ -19,6 +19,15 @@ export const SIDECAR_PORT = 8081
 /** Mount points inside the container. */
 export const CONTAINER = { home: '/home/harness', workspace: '/workspace', ctl: '/run/harness-ctl', assets: '/opt/public-harness' } as const
 
+/**
+ * The unprivileged user the image runs as (`useradd --uid 10001` in the Containerfile; a test keeps them equal).
+ * Rootless Podman would map that uid to a subuid that cannot write the account-owned control directory, so the
+ * container is started with exactly `--userns keep-id:uid=10001,gid=10001`, which maps the host account onto it.
+ */
+export const INSTANCE_USER = { uid: 10001, gid: 10001 } as const
+/** The only `--userns` value an instance may be started with. */
+export const INSTANCE_USERNS = `keep-id:uid=${INSTANCE_USER.uid},gid=${INSTANCE_USER.gid}`
+
 /** The model quota proxy as seen by the provisioner (its control channel is private to the provisioner). */
 export interface QuotaBridge {
   healthy(): Promise<boolean>
@@ -84,7 +93,8 @@ export function buildRunArgv(config: ProvisionerConfig, record: UserRecord, side
   const env = (name: string, value: string): string[] => ['--env', `${name}=${value}`]
   return [
     '--runtime', tools.runsc, 'run', '--detach', '--replace', '--name', record.container,
-    '--network', networkArgument(limits.network, config.quota.hostAddress), '--publish', `127.0.0.1:${sidecarPort}:${SIDECAR_PORT}`,
+    '--network', networkArgument(limits.network, config.quota.hostAddress), '--userns', INSTANCE_USERNS,
+    '--publish', `127.0.0.1:${sidecarPort}:${SIDECAR_PORT}`,
     '--cap-drop', 'all', '--security-opt', 'no-new-privileges', '--read-only',
     '--tmpfs', '/tmp:rw,nosuid,nodev,size=256m,mode=1777',
     '--pids-limit', String(limits.pids), '--memory', String(limits.memoryBytes), '--memory-swap', String(limits.memoryBytes),
@@ -125,17 +135,22 @@ export function assertSafeRunArgv(argv: readonly string[], config: ProvisionerCo
     `${record.layout.home}:${CONTAINER.home}:rw,Z`, `${record.layout.workspace}:${CONTAINER.workspace}:rw,Z`,
     `${record.layout.ctl}:${CONTAINER.ctl}:rw,Z`, `${config.paths.runtimeAssets}:${CONTAINER.assets}:ro,Z`])
   const seen = new Set<string>()
+  let userns = 0
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]!
     if (arg === '--volume') {
       const value = argv[index + 1] ?? ''
       if (!allowedVolumes.has(value) || seen.has(value)) throw new RuntimeStartError('unsafe-argv')
       seen.add(value); index += 1
+    } else if (arg === '--userns') {
+      // Precise allowlist: one exact value, never host, auto, a bare keep-id, other ids, or an option variant.
+      if (argv[index + 1] !== INSTANCE_USERNS || ++userns > 1) throw new RuntimeStartError('unsafe-argv')
+      index += 1
     } else if (FORBIDDEN_FLAGS.test(arg)) throw new RuntimeStartError('unsafe-argv')
     else if (arg === '--network' && argv[index + 1] !== networkArgument(config.limits.network, config.quota.hostAddress)) throw new RuntimeStartError('unsafe-argv')
     else if (arg === '--publish' && !publishedInRange(argv[index + 1] ?? '', config)) throw new RuntimeStartError('unsafe-argv')
   }
-  if (seen.size !== allowedVolumes.size) throw new RuntimeStartError('unsafe-argv')
+  if (seen.size !== allowedVolumes.size || userns !== 1) throw new RuntimeStartError('unsafe-argv')
   if (!argv.includes('--read-only') || argv[argv.indexOf('--cap-drop') + 1] !== 'all') throw new RuntimeStartError('unsafe-argv')
 }
 
