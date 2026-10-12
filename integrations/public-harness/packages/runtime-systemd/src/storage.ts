@@ -1,7 +1,7 @@
 /** Native root writes use held directory descriptors; user trees are never traversed for ownership changes. */
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
-import { lstat, mkdir, open, readFile, readdir, realpath, rename, type FileHandle } from 'node:fs/promises'
+import { lstat, mkdir, open, readFile, readdir, realpath, rename, unlink, type FileHandle } from 'node:fs/promises'
 import { dirname, join, relative } from 'node:path'
 import type { RuntimeInstance } from '@public-harness/contracts'
 import type { AccountIdentity } from '@public-harness/provisioner/accounts'
@@ -225,12 +225,22 @@ export async function prepareNativeStorage(instance: RuntimeInstance, config: Sy
  * @param name Server-derived single file name.
  * @param text Generated text; never tenant input.
  * @param mode File mode; 0600 unless the file is bind-mounted into the account's view.
- * @returns Resolves after syncing and replacement; stale exclusive staging files reject for reconciliation.
+ * @returns Resolves after syncing and replacement; a stale root-owned staging file from an interrupted write is replaced.
  */
 export async function writeControlFile(directory: string, name: string, text: string, mode = 0o600): Promise<void> {
   const parent = await openRootDirectory(directory)
   try {
     const pending = entry(parent, `${name}.pending`), target = entry(parent, name)
+    // Callers hold the account's provisioning lock, so an existing staging file is left by an interrupted write.
+    // Only a root-owned regular file is removed; anything else in the root-only directory is refused.
+    const stale = await lstat(pending).catch((error: unknown) => {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined
+      throw error
+    })
+    if (stale !== undefined) {
+      if (!stale.isFile() || stale.uid !== 0) throw new Error(`unexpected ${name}.pending entry`)
+      await unlink(pending)
+    }
     const file = await open(pending, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, mode)
     try { await file.writeFile(text); await file.chmod(mode); await file.sync() } finally { await file.close() }
     await rename(pending, target); await parent.sync()

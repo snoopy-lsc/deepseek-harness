@@ -158,3 +158,22 @@ it.skipIf(process.platform !== 'linux' || process.getuid?.() !== 0)('walks asset
     expect((await stat(join(control, 'unit.service'))).mode & 0o777).toBe(0o600)
   } finally { await rm(base, { recursive: true, force: true }) }
 })
+
+it.skipIf(process.platform !== 'linux' || process.getuid?.() !== 0)('replaces a staging file left by an interrupted control write and refuses other entries', async () => {
+  const { writeControlFile } = await import('../src/storage.ts')
+  const { chmod } = await import('node:fs/promises')
+  const base = await mkdtemp('/root/dsh-control-')
+  try {
+    await chmod(base, 0o755)
+    const control = join(base, 'control'); await mkdir(control, { mode: 0o700 })
+    await writeFile(join(control, 'unit.service.pending'), 'half written', { mode: 0o600 })
+    await writeControlFile(control, 'unit.service', '[Unit]\n')
+    expect(await readFile(join(control, 'unit.service'), 'utf8')).toBe('[Unit]\n')
+    await expect(stat(join(control, 'unit.service.pending'))).rejects.toMatchObject({ code: 'ENOENT' })
+    await mkdir(join(control, 'other.pending'))
+    await expect(writeControlFile(control, 'other', 'x')).rejects.toMatchObject({ operation: 'control-file' })
+    await symlink('/etc/passwd', join(control, 'linked.pending'))
+    await expect(writeControlFile(control, 'linked', 'x')).rejects.toMatchObject({ operation: 'control-file' })
+    expect((await stat('/etc/passwd')).size).toBeGreaterThan(1)
+  } finally { await rm(base, { recursive: true, force: true }) }
+})
