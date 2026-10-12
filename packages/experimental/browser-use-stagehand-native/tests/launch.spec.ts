@@ -1,6 +1,7 @@
 /** Chromium ownership spans readiness failure, cancellation, and process close. */
 
 import { EventEmitter } from 'node:events'
+import { PassThrough } from 'node:stream'
 import { access, rm } from 'node:fs/promises'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { NativeBrowserConfig } from '../src/native.ts'
@@ -24,17 +25,23 @@ afterEach(async () => {
 })
 
 function processFixture() {
-  const child = new EventEmitter()
+  const toBrowser = new PassThrough(), fromBrowser = new PassThrough()
+  const child = Object.assign(new EventEmitter(), { stdio: [null, null, null, toBrowser, fromBrowser] })
   const ready = Promise.withResolvers<string>()
+  const requests: string[] = []
+  toBrowser.on('data', (chunk: Buffer) => { requests.push(chunk.toString()) })
+  // The fake browser answers the readiness request on its pipe, or closes the pipe on failure.
+  ready.promise.then(() => { fromBrowser.write('{"id":2147483647,"result":{"product":"fixture"}}\0') }, (error: unknown) => { fromBrowser.destroy(error as Error) })
   const started = Promise.withResolvers<undefined>()
   const killed = Promise.withResolvers<undefined>()
   const kill = vi.fn(() => { killed.resolve(undefined); child.emit('close', 0) })
-  state.launch.mockImplementation((options: { args: string[] }) => {
+  state.launch.mockImplementation((options: { args: string[]; pipe?: boolean }) => {
+    expect(options.pipe).toBe(true)
     profiles.push(options.args.find(arg => arg.startsWith('--user-data-dir='))!.slice('--user-data-dir='.length))
     started.resolve(undefined)
     return { nodeProcess: child, kill, waitForLineOutput: () => ready.promise }
   })
-  return { child, ready, started, killed, kill }
+  return { child, ready, started, killed, kill, requests }
 }
 
 it.each([true, false])('launches with scrubbed environment and owns the profile until child close (headless %s)', async (headless) => {
@@ -49,7 +56,13 @@ it.each([true, false])('launches with scrubbed environment and owns the profile 
   const options = state.launch.mock.calls[0]![0] as { executablePath: string; args: string[]; env: Record<string, string> }
   expect(options.executablePath).toBe(headless ? '/fixture/chrome' : '/custom/chrome')
   expect(options.args.includes('--headless=new')).toBe(headless)
-  expect(options.args).toContain('--remote-debugging-port=0')
+  expect(options.args).toContain('--remote-debugging-pipe')
+  expect(options.args).toContain('--remote-debugging-address=127.0.0.1')
+  expect(options.args).not.toContain('--remote-allow-origins=*')
+  expect(options.args.filter(arg => arg.startsWith('--remote-allow-origins='))).toEqual([expect.stringMatching(/^--remote-allow-origins=chrome-extension:\/\/[a-p]{32}$/)])
+  expect(browser.endpoint).toBe('ws://127.0.0.1:1234/devtools/browser/fixture')
+  expect(fake.requests).toEqual([`${JSON.stringify({ id: 2147483647, method: 'Browser.getVersion' })}\0`])
+  expect(browser.pipe.closed).toBe(false)
   expect(options.env.BROWSER_LAUNCH_PUBLIC).toBe('visible')
   expect(options.env.BROWSER_LAUNCH_API_TOKEN).toBeUndefined()
   expect(options.env.DSH_FIXTURE_ID).toBeUndefined()
@@ -78,7 +91,7 @@ it('cancels after spawn and waits for close before removing the profile', async 
 it('cleans up before reporting a CDP readiness failure', async () => {
   const fake = processFixture()
   const opening = launchChromium(config, new AbortController().signal)
-  const failed = expect(opening).rejects.toThrow('No debugging endpoint')
+  const failed = expect(opening).rejects.toThrow('closed its debugging pipe')
   await fake.started.promise
   fake.ready.reject(new Error('No debugging endpoint'))
   await failed
@@ -113,4 +126,12 @@ it('preserves cleanup failure when a canceled process cannot be killed', async (
   fake.ready.reject(new Error('Readiness deadline'))
   await failed
   await expect(access(profiles[0]!)).resolves.toBeUndefined()
+})
+
+it('derives the unpacked extension id Chromium reports for a directory', async () => {
+  const { unpackedExtensionId } = await import('../src/launch.ts')
+  // Observed from Chrome for Testing 155 Extensions.loadUnpacked on this path.
+  const path = '/workspace/deepseek-harness/node_modules/.pnpm/@browserbasehq+stagehand@4.1.0/node_modules/@browserbasehq/stagehand/dist/extension'
+  expect(unpackedExtensionId(path)).toBe('ifikcfalllnjffolenbpdfgliedcnhnd')
+  expect(unpackedExtensionId(`${path}/`)).toBe('ifikcfalllnjffolenbpdfgliedcnhnd')
 })

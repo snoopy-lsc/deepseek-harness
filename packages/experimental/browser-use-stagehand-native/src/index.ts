@@ -12,7 +12,9 @@ import { z } from 'zod'
 import { browserInputs, stagehandModelSchema, StagehandDrainError } from './native.ts'
 import type { BrowserMethod, NativeBrowserRuntime, StagehandModelConfig } from './native.ts'
 import { openBrowserWorker } from './worker-client.ts'
+import { MessageChannel } from 'node:worker_threads'
 import { launchChromium } from './launch.ts'
+import { bridgeCdpPipe } from './pipe-bridge.ts'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-browser-use'
 import type {} from '@deepseek-ai/dsh-system-prompt'
@@ -103,13 +105,24 @@ export function apply(ctx: Context, input: Config): void {
       async open(_agent, signal) {
         signal.throwIfAborted()
         const chromium = config.mode === 'launch' ? await launchChromium(config, signal) : undefined
-        const connect = (connectionSignal: AbortSignal) => openBrowserWorker({
-          mode: 'attach', model: config.model, headless: config.headless,
-          operationTimeoutMs: config.operationTimeoutMs, shutdownGraceMs: config.shutdownGraceMs,
-          ...config.extensionId === undefined ? {} : { extensionId: config.extensionId },
-          ...config.cdpEndpoint === undefined ? {} : { cdpEndpoint: config.cdpEndpoint },
-          ...chromium === undefined ? {} : { cdpEndpoint: chromium.endpoint },
-        }, connectionSignal, (message) => { ctx.logger.warn(message) })
+        let detach: (() => void) | undefined
+        const connect = (connectionSignal: AbortSignal) => {
+          // Each Worker connection gets a fresh channel to the owned browser's single pipe.
+          detach?.(); detach = undefined
+          let workerPort
+          if (chromium !== undefined) {
+            const channel = new MessageChannel()
+            detach = bridgeCdpPipe(chromium.pipe, channel.port1)
+            workerPort = channel.port2
+          }
+          return openBrowserWorker({
+            mode: 'attach', model: config.model, headless: config.headless,
+            operationTimeoutMs: config.operationTimeoutMs, shutdownGraceMs: config.shutdownGraceMs,
+            ...config.extensionId === undefined ? {} : { extensionId: config.extensionId },
+            ...config.cdpEndpoint === undefined ? {} : { cdpEndpoint: config.cdpEndpoint },
+            ...chromium === undefined ? {} : { cdpEndpoint: chromium.endpoint },
+          }, connectionSignal, (message) => { ctx.logger.warn(message) }, workerPort)
+        }
         let connection: NativeBrowserRuntime | undefined
         try {
           connection = await connect(signal)
@@ -133,6 +146,7 @@ export function apply(ctx: Context, input: Config): void {
         }
         const close = async () => {
           const [connectionResult, chromiumResult] = await Promise.allSettled([native.close(), chromium?.close()])
+          detach?.()
           const errors: unknown[] = []
           if (connectionResult.status === 'rejected'
             && !(connectionResult.reason instanceof StagehandDrainError && chromium !== undefined && chromiumResult.status === 'fulfilled')) {

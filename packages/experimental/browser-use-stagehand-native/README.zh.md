@@ -88,7 +88,7 @@ env -u NODE_USE_ENV_PROXY DSH_STAGEHAND_E2E=1 pnpm exec vitest run --config vite
 
 [SessionResources](../browser-use-runtime/README.zh.md) 为每个确切的活动 Agent 管理延迟获取、串行执行和资源释放。Provider 保留浏览器使用注册，直到清理完成。[原生 Provider](src/index.ts) 通过现有 MCP 结果适配器注册工具，由该适配器把截图保存为持久附件。
 
-宿主在等待 CDP 就绪前即拥有启动的 Chromium 进程及其临时配置目录。Chromium 接收标准清理后的子进程环境，保留路径、区域设置和代理配置，排除凭据形式的变量及 DSH 身份信息。两种模式都在独立 Worker 中连接 SDK。Worker 除显式的源码 TypeScript 配置路径外不接收宿主环境，因此其 CDP 连接不继承宿主代理设置。SDK 关闭会等待活动操作。清理在配置的 SDK 宽限时间后终止连接 Worker；启动模式还会终止并等待自有 Chromium 进程退出，再移除配置目录。外部连接的浏览器保持运行。清理失败遵循下方的[所有权限制](#known-limitations-and-deferred-work)。
+宿主在等待 CDP 就绪前即拥有启动的 Chromium 进程及其临时配置目录。Chromium 接收标准清理后的子进程环境，保留路径、区域设置和代理配置，排除凭据形式的变量及 DSH 身份信息。启动模式以 `--remote-debugging-pipe` 启动 Chromium，并等待它在该管道上应答。宿主通过 MessageChannel 把管道转发给 Worker，Worker 的 `WebSocket` 只接受该浏览器的 URL。SDK 的浏览器内扩展仍需要 WebSocket 端点（`browserCdpUrl`），因此 Chromium 还会在 `127.0.0.1` 上打开一个由系统分配的调试端口，该端口只接受内置 Stagehand 扩展的 `chrome-extension://` 来源；浏览器中的网页会得到 403。在原生主机上，仅限属主的回环规则阻止其他账户访问该端口。Worker 连接结束时，宿主会卸载该连接加载的扩展并分离其创建的会话，与关闭 WebSocket 的效果一致，因此下一个 Worker 能重新连接到相同的标签页。两种模式都在独立 Worker 中连接 SDK。Worker 除显式的源码 TypeScript 配置路径外不接收宿主环境，因此其 CDP 连接不继承宿主代理设置。SDK 关闭会等待活动操作。清理在配置的 SDK 宽限时间后终止连接 Worker；启动模式还会终止并等待自有 Chromium 进程退出，再移除配置目录。外部连接的浏览器保持运行。清理失败遵循下方的[所有权限制](#known-limitations-and-deferred-work)。
 
 [原生运行时](src/native.ts)将显式模型配置传入 Stagehand 的公开初始化 API。Stagehand 在其浏览器扩展中负责模型请求、响应验证与 token 计量。DSH 通过现有 Session 日志记录浏览器工具输入和返回数据，包括 SDK 结果元数据。底层推理请求/响应捕获及其与 DSH Session 用量计量的集成均属暂缓工作。
 

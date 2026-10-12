@@ -147,32 +147,24 @@ it.skipIf(process.env.DSH_STAGEHAND_E2E !== '1' || process.platform === 'win32')
   const root = await mkdtemp(join(tmpdir(), 'dsh-stagehand-acquire-'))
   const marker = join(root, 'browser.json')
   const wrapper = join(root, 'chrome.mjs')
-  const sockets = new Set<import('node:stream').Duplex>()
-  const connected: PromiseWithResolvers<void> = Promise.withResolvers()
-  const stalled = createServer()
-  stalled.on('upgrade', (_request, socket) => {
-    sockets.add(socket)
-    socket.on('close', () => { sockets.delete(socket) })
-    connected.resolve()
-  })
+  const stalledMarker = `${marker}.stalled`
   const ctx = new Context()
   vi.stubEnv('BROWSER_FIXTURE_API_TOKEN', 'do-not-forward')
   vi.stubEnv('DSH_BROWSER_FIXTURE_ID', 'do-not-forward')
   vi.stubEnv('BROWSER_FIXTURE_PUBLIC', 'visible')
   try {
-    stalled.listen(0, '127.0.0.1')
-    await once(stalled, 'listening')
-    const address = stalled.address()
-    if (address === null || typeof address === 'string') throw new Error('No stalled CDP listener')
-    const endpoint = `ws://127.0.0.1:${address.port}/devtools/browser/stalled`
     await writeFile(wrapper, [
       `#!${process.execPath}`,
       'import { spawn } from \'node:child_process\'',
       'import { writeFileSync } from \'node:fs\'',
-      `const child = spawn(${JSON.stringify(executable)}, process.argv.slice(2), { stdio: ['ignore', 'ignore', 'pipe'], env: process.env })`,
+      'import { createReadStream, createWriteStream } from \'node:fs\'',
+      // Real Chromium answers only the launcher's readiness request on its pipe; later CDP traffic stalls here.
+      `const child = spawn(${JSON.stringify(executable)}, process.argv.slice(2), { stdio: ['ignore', 'ignore', 'inherit', 'pipe', 'pipe'], env: process.env })`,
       `writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ pid: child.pid, token: process.env.BROWSER_FIXTURE_API_TOKEN ?? null, identity: process.env.DSH_BROWSER_FIXTURE_ID ?? null, publicValue: process.env.BROWSER_FIXTURE_PUBLIC, profile: process.argv.find(value => value.startsWith('--user-data-dir=')).slice('--user-data-dir='.length) }))`,
-      'let output = \'\'',
-      `child.stderr.on('data', chunk => { output += chunk.toString(); if (output.includes('DevTools listening on ')) { process.stderr.write(${JSON.stringify(`DevTools listening on ${endpoint}\n`)}); output = '' } })`,
+      'const fromHost = createReadStream(null, { fd: 3 }), toHost = createWriteStream(null, { fd: 4 })',
+      'let forwarded = false',
+      `fromHost.on('data', chunk => { if (!forwarded) { forwarded = true; child.stdio[3].write(chunk) } else writeFileSync(${JSON.stringify(stalledMarker)}, '') })`,
+      'child.stdio[4].on(\'data\', chunk => { toHost.write(chunk) })',
       'child.on(\'error\', error => { console.error(error); process.exit(1) })',
       'child.on(\'exit\', code => process.exit(code ?? 1))',
       '',
@@ -186,7 +178,7 @@ it.skipIf(process.env.DSH_STAGEHAND_E2E !== '1' || process.platform === 'win32')
     const operation = owner.agent.runMaintenance(signal => ctx.tools.execute({
       agent: owner.agent, name: 'stagehand_tabs', arguments: { action: 'list' }, callId: ToolCallId('stalled-init'), signal,
     }))
-    await connected.promise
+    await vi.waitFor(() => access(stalledMarker), { timeout: 60_000 })
     const browser = JSON.parse(await readFile(marker, 'utf8')) as { pid: number; token: unknown; identity: unknown; publicValue: string; profile: string }
     expect(browser.token).toBeNull()
     expect(browser.identity).toBeNull()
@@ -197,9 +189,7 @@ it.skipIf(process.env.DSH_STAGEHAND_E2E !== '1' || process.platform === 'win32')
     await vi.waitFor(() => { expect(() => process.kill(browser.pid, 0)).toThrow() })
     await expect(access(browser.profile)).rejects.toThrow()
   } finally {
-    for (const socket of sockets) socket.destroy()
     await ctx.fiber.dispose()
-    await new Promise<void>((resolve, reject) => { stalled.close((error) => { if (error) reject(error); else resolve() }) })
     vi.unstubAllEnvs()
     await rm(root, { recursive: true, force: true })
   }

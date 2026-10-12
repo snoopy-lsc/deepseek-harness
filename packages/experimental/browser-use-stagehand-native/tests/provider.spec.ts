@@ -42,8 +42,16 @@ vi.mock('../src/launch.ts', async (importActual) => {
 vi.mock('../src/worker-client.ts', async () => {
   const { openNativeBrowser } = await import('../src/native.ts')
   return {
-    async openBrowserWorker(config: NativeBrowserConfig, signal: AbortSignal, warn: (message: string) => void) {
+    async openBrowserWorker(config: NativeBrowserConfig, signal: AbortSignal, warn: (message: string) => void, pipePort?: import('node:worker_threads').MessagePort) {
       acquisition.signal = signal
+      if (pipePort !== undefined) {
+        // Exercise the host bridge: ask the fake pipe peer which fixture browser owns this pipe.
+        const reply = new Promise<string>((resolve) => { pipePort.once('message', (frame: { data: string }) => { resolve(frame.data) }) })
+        pipePort.postMessage(JSON.stringify({ id: 1, method: 'Fixture.endpoint' }))
+        const endpoint = (JSON.parse(await reply) as { result: { endpoint: string } }).result.endpoint
+        expect(endpoint).toBe(config.cdpEndpoint)
+        pipePort.close()
+      }
       const native = await openNativeBrowser(config)
       let closing: Promise<void> | undefined
       const close = () => closing ??= (async () => {

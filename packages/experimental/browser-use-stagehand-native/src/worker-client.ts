@@ -1,6 +1,6 @@
 /** Isolated Stagehand Workers own CDP connections; the host owns browser processes. */
 
-import { Worker } from 'node:worker_threads'
+import { Worker, type MessagePort } from 'node:worker_threads'
 import { StagehandDrainError } from './native.ts'
 import type { NativeBrowserConfig, NativeBrowserRuntime } from './native.ts'
 import { request } from './worker-rpc.ts'
@@ -10,10 +10,11 @@ import { request } from './worker-rpc.ts'
  * @param config - resolved CDP connection and operation options.
  * @param signal - cancellation of lazy browser acquisition.
  * @param warn - report SDK cleanup failures after connection termination.
+ * @param pipePort - Worker end of an owned browser's debugging-pipe bridge; transferred, never cloned.
  * @returns a runtime whose close requires SDK request drainage before releasing ownership.
  */
 export async function openBrowserWorker(
-  config: NativeBrowserConfig, signal: AbortSignal, warn: (message: string) => void,
+  config: NativeBrowserConfig, signal: AbortSignal, warn: (message: string) => void, pipePort?: MessagePort,
 ): Promise<NativeBrowserRuntime> {
   signal.throwIfAborted()
   const entry = new URL('./worker.js', import.meta.url)
@@ -21,13 +22,15 @@ export async function openBrowserWorker(
   const env: NodeJS.ProcessEnv = {}
   if (process.env.TSX_TSCONFIG_PATH !== undefined) env.TSX_TSCONFIG_PATH = process.env.TSX_TSCONFIG_PATH
   let worker: Worker
+  const workerData = pipePort === undefined ? config : { ...config, cdpPipe: pipePort }
+  const transferList = pipePort === undefined ? [] : [pipePort]
   /* v8 ignore next 3 -- native.e2e.ts starts the bundled Worker through a plain-Node provider fixture. */
   if (!import.meta.url.endsWith('.ts')) {
-    worker = new Worker(entry, { workerData: config, execArgv: [], env })
+    worker = new Worker(entry, { workerData, transferList, execArgv: [], env })
   } else {
     const source = new URL('./worker.ts', import.meta.url)
     const bootstrap = `import { register } from ${JSON.stringify(import.meta.resolve('tsx/esm/api'))}; register(); await import(${JSON.stringify(source.href)})`
-    worker = new Worker(new URL(`data:text/javascript,${encodeURIComponent(bootstrap)}`), { workerData: config, execArgv: [], env })
+    worker = new Worker(new URL(`data:text/javascript,${encodeURIComponent(bootstrap)}`), { workerData, transferList, execArgv: [], env })
   }
   let termination: Promise<number> | undefined
   const terminate = () => termination ??= worker.terminate()
