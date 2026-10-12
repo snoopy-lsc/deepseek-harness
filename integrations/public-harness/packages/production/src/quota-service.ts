@@ -8,7 +8,7 @@ import { absolutePath, exactRecord, readConfigFile } from './config-file.ts'
 /** Quota service settings plus the control-socket path. */
 export interface QuotaProfileConfig { readonly controlSocket: string; readonly service: QuotaServiceConfig }
 
-const SERVICE_KEYS = ['stateDir', 'upstreamRoot', 'platformKeyFile', 'tokenSecretFile', 'healthSecretFile', 'modelId', 'contextWindow',
+const SERVICE_KEYS = ['stateDir', 'upstreamRoot', 'platformKeyFile', 'tokenSecretFile', 'healthSecretFile', 'modelId', 'contextWindow', 'maxOutputTokens',
   'personalDailyTokens', 'siteDailyTokens', 'personalConcurrency', 'siteConcurrency', 'busyTimeoutMs', 'maxBodyBytes', 'maxImagesPerRequest',
   'maxInlineImageBytes', 'maxEventBytes', 'maxFileBodyBytes', 'maxFilesPerUser', 'maxFileMetadataBytes', 'maxFileListLimit', 'credentialLifetimeMs', 'listenPorts']
 

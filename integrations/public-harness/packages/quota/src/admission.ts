@@ -6,6 +6,8 @@ import type { TokenIssuer } from './tokens.ts'
 /** Explicit request and image limits for the supported Messages operation. */
 export interface AdmissionConfig {
   readonly modelContextWindows: Readonly<Record<string, number>>
+  /** Largest output per call for each model; a larger `max_tokens` is lowered to it before forwarding. */
+  readonly modelMaxOutputTokens: Readonly<Record<string, number>>
   readonly maxBodyBytes: number
   readonly maxImagesPerRequest: number
   readonly maxInlineImageBytes: number
@@ -21,8 +23,20 @@ export interface AdmissionRequest {
   readonly body: Uint8Array
 }
 
-/** Admission result consumed by the bounded Messages forwarder. */
-export interface AdmittedRequest { readonly userId: UserId; readonly reservation: Reservation }
+/**
+ * Admission result consumed by the bounded Messages forwarder. `body` is the request to forward: the caller's bytes,
+ * or a re-encoded copy when `max_tokens` was lowered to the model's configured maximum output.
+ */
+export interface AdmittedRequest { readonly userId: UserId; readonly reservation: Reservation; readonly body: Uint8Array }
+
+/**
+ * Conservative input-token estimate from the encoded request size: one token per three UTF-8 bytes (about four
+ * characters of English or one CJK character per token, so it overestimates typical text), capped by the context
+ * window. It sizes the reservation and settles calls that end before upstream reports usage; reported usage wins.
+ */
+export function estimateInputTokens(bodyBytes: number, contextWindow: number): number {
+  return Math.max(1, Math.min(contextWindow, Math.ceil(bodyBytes / 3)))
+}
 
 /** A caller supplied an unsupported or over-limit Messages request. */
 export class QuotaRequestError extends Error {}
@@ -79,6 +93,11 @@ export function createAdmission(dependencies: {
   if (Object.keys(config.modelContextWindows).length === 0) throw new Error('model context windows are required')
   for (const [model, context] of Object.entries(config.modelContextWindows)) {
     if (!model || !Number.isSafeInteger(context) || context <= 0) throw new Error('model context window must be positive')
+    const output = config.modelMaxOutputTokens[model]
+    if (output === undefined || !Number.isSafeInteger(output) || output <= 0) throw new Error('model maximum output must be positive')
+  }
+  if (Object.keys(config.modelMaxOutputTokens).some(model => !Object.hasOwn(config.modelContextWindows, model))) {
+    throw new Error('model maximum output names an unknown model')
   }
   return {
     async admit(request) {
@@ -105,9 +124,16 @@ export function createAdmission(dependencies: {
       for (const fileId of fileIds) {
         if (dependencies.ownsFile?.(userId, fileId) !== true) reject('request image file ownership denied')
       }
-      const maximumTokens = context + Number(data.max_tokens)
+      // Clamp rather than reject: clients ask for their own default output size, and the platform bound is what we pay for.
+      const maxOutput = config.modelMaxOutputTokens[data.model]!
+      const outputTokens = Math.min(Number(data.max_tokens), maxOutput)
+      const body = outputTokens === data.max_tokens ? request.body
+        : new TextEncoder().encode(JSON.stringify({ ...data, max_tokens: outputTokens }))
+      const estimatedInputTokens = estimateInputTokens(body.byteLength, context)
+      const maximumTokens = estimatedInputTokens + outputTokens
       if (!Number.isSafeInteger(maximumTokens)) reject('request has no safe token bound')
-      return { userId, reservation: await ledger.reserve(userId, maximumTokens) }
+      const reservation = await ledger.reserve(userId, maximumTokens)
+      return { userId, reservation: { ...reservation, estimatedInputTokens }, body }
     },
   }
 }

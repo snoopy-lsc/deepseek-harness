@@ -70,6 +70,21 @@ async function send(response: ServerResponse, result: Response, signal: AbortSig
   }
 }
 
+/**
+ * Messages-style error body for a quota refusal. The message names the platform allowance, not a model vendor, so a
+ * client that shows `error.message` tells the user what ran out, how much is left, and when it resets (UTC).
+ */
+export function quotaErrorBody(error: QuotaExceededError): Record<string, unknown> {
+  const limit = error.reason.replace(' ', '-')
+  const detail = error.detail
+  const message = detail === undefined
+    ? `Platform model quota: too many model requests in flight (${error.reason} limit); retry shortly.`
+    : `Platform model quota exhausted (${error.reason} limit): ${detail.remainingTokens} tokens left today, this request needs up to `
+      + `${detail.requestedTokens}; resets at ${detail.resetAt}.`
+  return { type: 'error', error: { type: 'quota_exceeded', message },
+    quota: { limit, ...detail === undefined ? {} : { remainingTokens: detail.remainingTokens, requestedTokens: detail.requestedTokens, resetAt: detail.resetAt } } }
+}
+
 function categorize(error: unknown): RejectionCategory {
   if (error instanceof QuotaExceededError) {
     return error.reason === 'personal daily' ? 'personal-daily' : error.reason === 'site daily' ? 'site-daily' : 'concurrency'
@@ -129,15 +144,18 @@ export async function startQuotaHttpServer(config: QuotaHttpConfig): Promise<{ p
           const admitted = await config.admission.admit({ method: request.method ?? '', path,
             instanceId: config.instanceId, authorization, contentType: headers.get('content-type') ?? undefined, body: bytes })
           const forwarded = new Request(`http://127.0.0.1${path}`, { method: 'POST',
-            headers, body: Uint8Array.from(bytes), signal: abort.signal })
+            headers, body: Uint8Array.from(admitted.body), signal: abort.signal })
           await send(response, await config.forwardMessages(forwarded, admitted.reservation), abort.signal)
         } catch (error) {
           config.rejections?.record(categorize(error))
           if (response.headersSent) { response.destroy(); return }
-          response.writeHead(error instanceof QuotaExceededError
-            ? error.reason === 'personal daily' || error.reason === 'site daily' ? 402 : 429
-            : error instanceof QuotaAuthenticationError ? 401
-              : error instanceof QuotaRequestError ? 400 : 503).end()
+          if (error instanceof QuotaExceededError) {
+            const status = error.reason === 'personal daily' || error.reason === 'site daily' ? 402 : 429
+            response.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(quotaErrorBody(error)))
+            return
+          }
+          response.writeHead(error instanceof QuotaAuthenticationError ? 401
+            : error instanceof QuotaRequestError ? 400 : 503).end()
         }
         return
       }

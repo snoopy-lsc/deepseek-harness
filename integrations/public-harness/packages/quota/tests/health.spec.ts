@@ -73,7 +73,12 @@ describe('private quota health and public errors', () => {
         method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: '{}',
       })
       expect(response.status).toBe(status)
-      expect(await response.text()).toBe('')
+      const text = await response.text()
+      if (failure instanceof QuotaExceededError) {
+        expect(JSON.parse(text)).toMatchObject({ type: 'error', error: { type: 'quota_exceeded' } })
+        expect(response.headers.get('content-type')).toBe('application/json')
+      } else expect(text).toBe('')
+      expect(text).not.toMatch(/private|secret|alice|instance/)
     } finally { await server.close() }
   })
 

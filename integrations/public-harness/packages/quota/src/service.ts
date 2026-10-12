@@ -22,6 +22,8 @@ export interface QuotaServiceConfig {
   readonly healthSecretFile: string
   readonly modelId: string
   readonly contextWindow: number
+  /** Largest output per call; larger `max_tokens` requests are lowered to it (never above the context window). */
+  readonly maxOutputTokens: number
   readonly personalDailyTokens: number
   readonly siteDailyTokens: number
   readonly personalConcurrency: number
@@ -58,6 +60,7 @@ export function validateQuotaServiceConfig(config: QuotaServiceConfig): void {
   }
   validatePortRange(config.listenPorts, 'listenPorts')
   if (config.credentialLifetimeMs > 900_000) throw new Error('credentialLifetimeMs exceeds fifteen minutes')
+  if (config.maxOutputTokens > config.contextWindow) throw new Error('maxOutputTokens must not exceed contextWindow')
   if (config.contextWindow > config.personalDailyTokens || config.contextWindow > config.siteDailyTokens) {
     throw new Error('daily budgets must admit one model request')
   }
@@ -98,7 +101,8 @@ export async function createQuotaService(config: QuotaServiceConfig, options: { 
     maxUploadBytes: config.maxFileBodyBytes, maxFilesPerUser: config.maxFilesPerUser, maxMetadataBytes: config.maxFileMetadataBytes,
     maxListLimit: config.maxFileListLimit, fetcher: options.fetcher })
   const admission = createAdmission({ issuer, ledger, ownsFile: (userId, fileId) => files.owns(userId, fileId),
-    config: { modelContextWindows: { [config.modelId]: config.contextWindow }, maxBodyBytes: config.maxBodyBytes,
+    config: { modelContextWindows: { [config.modelId]: config.contextWindow },
+      modelMaxOutputTokens: { [config.modelId]: config.maxOutputTokens }, maxBodyBytes: config.maxBodyBytes,
       maxImagesPerRequest: config.maxImagesPerRequest, maxInlineImageBytes: config.maxInlineImageBytes } })
   const forwardMessages = createMessagesForwarder({ upstreamUrl: `${config.upstreamRoot}/messages`, platformKey,
     maxEventBytes: config.maxEventBytes, ledger, fetcher: options.fetcher })

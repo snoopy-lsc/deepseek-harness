@@ -24,7 +24,7 @@ async function setup(overrides: Partial<QuotaServiceConfig> = {}): Promise<{ con
   }
   const config: QuotaServiceConfig = { stateDir: dir, upstreamRoot: 'https://upstream.example.test/anthropic/v1',
     platformKeyFile: await secret('platform.key', 'platform-secret-key'), tokenSecretFile: await secret('token.key', 'x'.repeat(48)),
-    healthSecretFile: await secret('health.key', 'h'.repeat(24)), modelId: 'platform-model', contextWindow: 4096,
+    healthSecretFile: await secret('health.key', 'h'.repeat(24)), modelId: 'platform-model', contextWindow: 4096, maxOutputTokens: 1024,
     personalDailyTokens: 6000, siteDailyTokens: 100_000, personalConcurrency: 2, siteConcurrency: 8, busyTimeoutMs: 1000,
     maxBodyBytes: 100_000, maxImagesPerRequest: 2, maxInlineImageBytes: 10_000, maxEventBytes: 65_536, maxFileBodyBytes: 100_000,
     maxFilesPerUser: 10, maxFileMetadataBytes: 4096, maxFileListLimit: 20, credentialLifetimeMs: 600_000, listenPorts: { min: 29100, max: 29139 }, ...overrides }
@@ -82,7 +82,7 @@ describe('production quota service', () => {
   })
 
   it('meters a model call end to end, keeps the platform key upstream-only, and reports aggregate health', async () => {
-    const { config, calls } = await setup()
+    const { config, calls } = await setup({ personalDailyTokens: 5000 })
     const service = await start(config, calls)
     const { port } = await service.open(alice, 'instance-1')
     const { token } = service.issue(alice, 'instance-1')
@@ -97,9 +97,13 @@ describe('production quota service', () => {
     const other = service.issue(alice, 'instance-2')
     expect((await fetch(`http://127.0.0.1:${port}/v1/messages`, { method: 'POST', body,
       headers: { authorization: `Bearer ${other.token}`, 'content-type': 'application/json' } })).status).toBe(401)
-    // The next call would exceed the personal daily budget (4096 + 100 per call, 6000 allowed, 17 used).
-    expect((await fetch(`http://127.0.0.1:${port}/v1/messages`, { method: 'POST', body: JSON.stringify({ model: 'platform-model', max_tokens: 3000, messages: [] }),
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' } })).status).toBe(402)
+    // A request with a context-sized input (capped at 4096) plus the clamped 1024 output exceeds 5000 - 17 tokens.
+    const refused = await fetch(`http://127.0.0.1:${port}/v1/messages`, { method: 'POST',
+      body: JSON.stringify({ model: 'platform-model', max_tokens: 3000, messages: [{ role: 'user', content: 'x'.repeat(15_000) }] }),
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' } })
+    expect(refused.status).toBe(402)
+    expect(await refused.json()).toMatchObject({ type: 'error', error: { type: 'quota_exceeded' },
+      quota: { limit: 'personal-daily', remainingTokens: 4983, requestedTokens: 5120 } })
     const health = await service.inspect()
     expect(health).toMatchObject({ available: true, rejections: { unauthenticated: 1, 'personal-daily': 1 } })
     expect(JSON.stringify(health)).not.toMatch(/alice|platform-secret|instance/)

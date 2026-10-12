@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 import { parseUserId } from '../../contracts/src/index.ts'
 import { createTokenIssuer } from '../src/tokens.ts'
-import { createAdmission, type AdmissionConfig } from '../src/admission.ts'
+import { createAdmission, estimateInputTokens, type AdmissionConfig } from '../src/admission.ts'
 import type { QuotaLedger, Reservation, ReservationId } from '../src/ledger.ts'
 
 const alice = parseUserId('alice')
@@ -10,7 +10,7 @@ const secret = randomBytes(32)
 const clock = () => new Date('2026-10-11T10:00:00.000Z')
 const body = (values: object = {}) => Buffer.from(JSON.stringify({ model: 'deepseek-test', max_tokens: 10, messages: [], ...values }))
 const config: AdmissionConfig = {
-  modelContextWindows: { 'deepseek-test': 100 },
+  modelContextWindows: { 'deepseek-test': 100 }, modelMaxOutputTokens: { 'deepseek-test': 100 },
   maxBodyBytes: 4096, maxImagesPerRequest: 2, maxInlineImageBytes: 1024,
 }
 
@@ -34,11 +34,44 @@ function setup() {
 }
 
 describe('model request admission', () => {
-  it('reserves the known context window plus requested output before forwarding', async () => {
+  it('reserves the estimated input plus requested output, not the whole context window', async () => {
     const { admission, request, reservations } = setup()
     const admitted = await admission.admit(request())
     expect(admitted.userId).toBe(alice)
-    expect(reservations).toEqual([{ userId: alice, maximumTokens: 110 }])
+    const input = Math.ceil(body().byteLength / 3)
+    expect(reservations).toEqual([{ userId: alice, maximumTokens: input + 10 }])
+    expect(admitted.reservation.estimatedInputTokens).toBe(input)
+    expect(Buffer.from(admitted.body).equals(body())).toBe(true)
+    expect(estimateInputTokens(10, 100)).toBe(4)
+    expect(estimateInputTokens(1_000_000, 100)).toBe(100)
+    expect(estimateInputTokens(0, 100)).toBe(1)
+  })
+
+  it('lowers max_tokens above the configured maximum output and forwards the lowered request', async () => {
+    const issuer = createTokenIssuer({ secret, issuer: 'test-dev', lifetimeMs: 60_000, clock })
+    const reservations: number[] = []
+    const ledger: QuotaLedger = { async reserve(userId, maximumTokens) { reservations.push(maximumTokens)
+      return { id: 'r' as ReservationId, userId, day: '2026-10-11', maximumTokens } }, async settle() {}, close() {} }
+    const admission = createAdmission({ issuer, ledger, config: { ...config,
+      modelContextWindows: { 'deepseek-test': 200_000 }, modelMaxOutputTokens: { 'deepseek-test': 1024 } } })
+    const token = issuer.issue(alice, 'instance-a').token
+    const admitted = await admission.admit({ method: 'POST', path: '/v1/messages', instanceId: 'instance-a', authorization: `Bearer ${token}`,
+      contentType: 'application/json', body: body({ max_tokens: 4096, messages: [{ role: 'user', content: 'hi' }] }) })
+    const forwarded = JSON.parse(Buffer.from(admitted.body).toString()) as Record<string, unknown>
+    expect(forwarded.max_tokens).toBe(1024)
+    expect(forwarded.messages).toEqual([{ role: 'user', content: 'hi' }])
+    // A short request against a 200k-token context reserves well under one hundred tokens plus the clamped output.
+    expect(reservations[0]).toBe(Math.ceil(admitted.body.byteLength / 3) + 1024)
+    expect(reservations[0]).toBeLessThan(1200)
+  })
+
+  it('requires a maximum output for every model and no unknown ones', () => {
+    const issuer = createTokenIssuer({ secret, issuer: 'test-dev', lifetimeMs: 60_000, clock })
+    const ledger = {} as QuotaLedger
+    expect(() => createAdmission({ issuer, ledger, config: { ...config, modelMaxOutputTokens: {} } })).toThrow(/maximum output/)
+    expect(() => createAdmission({ issuer, ledger, config: { ...config, modelMaxOutputTokens: { 'deepseek-test': 0 } } })).toThrow(/maximum output/)
+    expect(() => createAdmission({ issuer, ledger, config: { ...config,
+      modelMaxOutputTokens: { 'deepseek-test': 10, other: 10 } } })).toThrow(/unknown model/)
   })
 
   it('rejects expired and cross-instance credentials', async () => {

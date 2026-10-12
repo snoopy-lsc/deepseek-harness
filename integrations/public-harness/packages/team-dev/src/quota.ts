@@ -147,6 +147,7 @@ export async function startTeamDevQuota(options: {
       const listener = await startQuotaHttpServer({ host: '127.0.0.1', instanceId, issuer,
         admission: createAdmission({ issuer, ledger, config: {
           modelContextWindows: { [config.modelId]: config.contextWindow },
+          modelMaxOutputTokens: { [config.modelId]: config.maxTokens },
           maxBodyBytes: config.maxBodyBytes, maxImagesPerRequest: config.maxImagesPerRequest,
           maxInlineImageBytes: config.maxInlineImageBytes,
         } }),

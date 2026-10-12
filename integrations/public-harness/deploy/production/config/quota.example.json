@@ -8,6 +8,7 @@
     "healthSecretFile": "/etc/dsh-public/secrets/health-secret",
     "modelId": "platform-model",
     "contextWindow": 200000,
+    "maxOutputTokens": 16384,
     "personalDailyTokens": 2000000,
     "siteDailyTokens": 50000000,
     "personalConcurrency": 2,

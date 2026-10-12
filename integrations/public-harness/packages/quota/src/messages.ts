@@ -1,4 +1,4 @@
-/** Pinned-origin Messages forwarding with conservative stream settlement. */
+/** Pinned-origin Messages forwarding; settles by reported usage, or by what was received when a call is cut short. */
 import type { QuotaLedger, Reservation } from './ledger.ts'
 
 /** One configured upstream and the platform credential held only by the quota service. */
@@ -18,6 +18,7 @@ class UsageParser {
   private data = ''
   private stopped = false
   private readonly usage: Usage = {}
+  private outputBytes = 0
 
   constructor(private readonly maxEventBytes: number) {}
 
@@ -51,6 +52,12 @@ class UsageParser {
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('invalid Messages SSE event')
     const event = parsed as Record<string, unknown>
     if (event.type === 'message_stop') { this.stopped = true; return }
+    if (event.type === 'content_block_delta' && typeof event.delta === 'object' && event.delta !== null) {
+      const delta = event.delta as Record<string, unknown>
+      for (const key of ['text', 'partial_json', 'thinking'] as const) {
+        if (typeof delta[key] === 'string') this.outputBytes += Buffer.byteLength(delta[key], 'utf8')
+      }
+    }
     const candidate = event.type === 'message_start' && typeof event.message === 'object' && event.message !== null
       ? (event.message as Record<string, unknown>).usage
       : event.type === 'message_delta' ? event.usage : undefined
@@ -64,6 +71,13 @@ class UsageParser {
     }
   }
 
+  /** What arrived so far, without requiring a complete stream. */
+  partial(): { input: number | undefined; output: number; outputBytes: number } {
+    const input = this.usage.input_tokens === undefined ? undefined
+      : this.usage.input_tokens + (this.usage.cache_read_input_tokens ?? 0) + (this.usage.cache_creation_input_tokens ?? 0)
+    return { input, output: this.usage.output_tokens ?? 0, outputBytes: this.outputBytes }
+  }
+
   result(): number | undefined {
     this.decoder.decode()
     if (this.line || this.data) throw new Error('incomplete Messages SSE event')
@@ -73,6 +87,18 @@ class UsageParser {
     if (!Number.isSafeInteger(total)) throw new Error('invalid Messages SSE usage total')
     return total
   }
+}
+
+/**
+ * Charge for a call that ended without a complete usage report (client gone, stream error, upstream failure): reported
+ * input usage if it arrived, otherwise admission's input estimate, plus the larger of reported output so far and one
+ * token per three bytes of streamed text; never more than the reservation.
+ */
+function interruptedCharge(parser: UsageParser | undefined, reservation: Reservation): number {
+  const partial = parser?.partial()
+  const input = partial?.input ?? reservation.estimatedInputTokens ?? reservation.maximumTokens
+  const output = partial === undefined ? 0 : Math.max(partial.output, Math.ceil(partial.outputBytes / 3))
+  return Math.min(reservation.maximumTokens, input + output)
 }
 
 /** Build a forwarder that never accepts an upstream URL from the caller. */
@@ -105,17 +131,18 @@ export function createMessagesForwarder(config: MessagesForwarderConfig):
       if (upstream.status >= 300 && upstream.status < 400) throw new Error('Messages upstream redirect refused')
       if (!upstream.ok || upstream.body === null) throw new Error('Messages upstream failed')
     } catch (error) {
-      await settle()
+      await settle(interruptedCharge(undefined, reservation))
       throw error
     }
     const reader = upstream.body.getReader()
     const parser = new UsageParser(config.maxEventBytes)
+    const charge = (): number => interruptedCharge(parser, reservation)
     const output = new ReadableStream<Uint8Array>({
       async pull(controller) {
         try {
           const { done, value } = await reader.read()
           if (done) {
-            await settle(parser.result())
+            await settle(parser.result() ?? charge())
             controller.close()
           } else {
             parser.write(value)
@@ -123,11 +150,11 @@ export function createMessagesForwarder(config: MessagesForwarderConfig):
           }
         } catch (error) {
           try { await reader.cancel(error) } catch { /* The read failure remains the client-visible cause. */ }
-          try { await settle() } finally { controller.error(error) }
+          try { await settle(charge()) } finally { controller.error(error) }
         }
       },
       async cancel(reason) {
-        try { await reader.cancel(reason) } finally { await settle() }
+        try { await reader.cancel(reason) } finally { await settle(charge()) }
       },
     })
     return new Response(output, { status: upstream.status,

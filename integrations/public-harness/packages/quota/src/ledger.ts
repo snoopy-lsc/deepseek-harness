@@ -10,12 +10,14 @@ import { validateQuotaConfig, type QuotaConfig } from './config.ts'
 /** Opaque identity for one durable model reservation. */
 export type ReservationId = Branded<'PublicHarnessReservationId'>
 
-/** A reservation's upper bound is charged if final usage is missing. */
+/** A reservation's upper bound; an interrupted call is settled from what was actually received instead. */
 export interface Reservation {
   readonly id: ReservationId
   readonly userId: UserId
   readonly day: string
   readonly maximumTokens: number
+  /** Admission's input-size estimate, used to settle a call that ended before upstream reported usage. */
+  readonly estimatedInputTokens?: number
 }
 
 /** Durable personal and site quota operations. */
@@ -35,9 +37,21 @@ export interface QuotaAggregate {
 
 /** A specific capacity limit rejected admission before upstream access. */
 export class QuotaExceededError extends Error {
-  constructor(readonly reason: 'personal daily' | 'site daily' | 'personal concurrency' | 'site concurrency') {
+  /**
+   * @param reason Which limit refused the call.
+   * @param detail For daily limits: tokens still available today, tokens this call needed, and when the day resets (UTC).
+   */
+  constructor(readonly reason: 'personal daily' | 'site daily' | 'personal concurrency' | 'site concurrency',
+    readonly detail?: { readonly remainingTokens: number; readonly requestedTokens: number; readonly resetAt: string }) {
     super(`quota ${reason} limit exceeded`)
   }
+}
+
+/** Start of the next UTC quota day. */
+export function quotaResetAt(now: Date): string {
+  const next = new Date(now.valueOf())
+  next.setUTCHours(24, 0, 0, 0)
+  return next.toISOString()
 }
 
 function scalar(statement: StatementSync, ...values: (string | number)[]): number {
@@ -115,8 +129,12 @@ export function createQuotaLedger(config: QuotaConfig, clock: () => Date = () =>
       return transaction(database, () => {
         if (scalar(personalPending, userId) >= config.personalConcurrency) throw new QuotaExceededError('personal concurrency')
         if (scalar(sitePending) >= config.siteConcurrency) throw new QuotaExceededError('site concurrency')
-        if (scalar(personalTokens, day, userId) > config.personalDailyTokens - maximumTokens) throw new QuotaExceededError('personal daily')
-        if (scalar(siteTokens, day) > config.siteDailyTokens - maximumTokens) throw new QuotaExceededError('site daily')
+        const daily = (reason: 'personal daily' | 'site daily', used: number, limit: number): QuotaExceededError =>
+          new QuotaExceededError(reason, { remainingTokens: Math.max(0, limit - used), requestedTokens: maximumTokens, resetAt: quotaResetAt(now) })
+        const personalUsed = scalar(personalTokens, day, userId)
+        if (personalUsed > config.personalDailyTokens - maximumTokens) throw daily('personal daily', personalUsed, config.personalDailyTokens)
+        const siteUsed = scalar(siteTokens, day)
+        if (siteUsed > config.siteDailyTokens - maximumTokens) throw daily('site daily', siteUsed, config.siteDailyTokens)
         const id = randomUUID() as ReservationId
         insertion.run(id, userId, day, maximumTokens)
         return { id, userId, day, maximumTokens }
