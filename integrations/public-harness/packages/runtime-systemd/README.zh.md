@@ -30,6 +30,8 @@ kind: "package-library"
 
 `ensureNativeAccount` 使用锁定密码、nologin shell 和私有主用户组，不启用用户管理器 linger。已有原生账号必须保留密码锁定，且没有补充用户组。`prepareHost` 校验资源、应用 XFS 字节/inode 硬限制、准备存储并写入生成的 unit/策略文本。它不加载 AppArmor，也不启动系统 unit。调用方必须在任何用户代码执行前完成网络策略和实际强制执行检查，包括工作区初始化。
 
+`installNetwork(instance, config, runner, active)` 以一次 `nft -f` 事务写入自有的 `inet dsh_native` 表：该账户的 output 链（该 UID 的已建立连接、回环、解析器，随后拒绝私网、链路本地、元数据和 IPv6 本地范围，最后只放行配置的公网端口），以及为所有活动账户重建的 input 分发规则。回环在任意端口上都仅限属主：新回环连接在 `ct mark` 中携带发送方 UID，该账户 unit cgroup 中的 socket 只接受来自该 UID 的新连接，或来自 root 且目标为已分配 Web 端口的连接；该账户自己发起的回环连接在其 cgroup 之外只能到达自己的额度端口。加载脚本时，被安装账户及所有 `active` 账户的 unit cgroup 必须已存在。`removeNetwork` 先删除映射项，再删除链。`verifyEnforcement` 回读以下状态：账户及其浏览器子 profile 处于 enforce 模式、`kernel.apparmor_restrict_unprivileged_userns=1`、cgroup 控制器和有进程运行时实际生效的 CPU/内存/swap/任务限制、XFS 用户配额已强制执行且硬限制与配置一致，以及已安装的 nftables 链和映射项；任何不一致都会拒绝准入。
+
 <a id="understand-the-implementation"></a>
 ## 了解实现
 
