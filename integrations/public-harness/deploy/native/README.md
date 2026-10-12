@@ -51,10 +51,14 @@ Caddy removes caller identity and forwarding headers. It cannot reach the sessio
 
 Before any public account is admitted, a dedicated host must pass every check in [deployment plan Task 3](../../../../docs/superpowers/plans/2026-10-11-public-harness-native-deployment.md). The checks cover tools, files, processes, network, resources, recovery, failures and upgrade-restore. `validateNativeEvidence` in [release-check](../release-check.ts) accepts only evidence recorded on this host for this release, policy and toolchain, within the configured age. Simulated, skipped or stale evidence keeps enrollment closed.
 
+Native releases use a schema 2 manifest whose `runtime` is tagged `systemd` with policy and toolchain digests; a schema 1 manifest is read as container-only and can never admit a native host. `runNativeRehearsal` in [rehearse.ts](scripts/rehearse.ts) runs only with `DSH_NATIVE_REHEARSAL=dedicated-host`, refuses when the installed policy or toolchain digest differs from the manifest, and marks evidence `realHost: false` when any check has no runner or is skipped. The real-host check implementations themselves are not written yet.
+
 <a id="operate-the-host"></a>
 ## Operate the host
 
 Keep at least one instance's memory and CPU in reserve beyond `maxActiveInstances × limits`, so the services and the kernel never compete with tenants. Apply kernel and AppArmor updates through the same rehearsal: a host or policy change invalidates the recorded evidence. For abuse, suspend the account in the provisioner. The router denies the next request, and the session recheck closes open streams. Then review usage in the quota ledger before deleting anything. Deletion waits for the recovery period and a verified stop.
+
+[backup.ts](scripts/backup.ts) writes one tar archive with a consistent copy of the identity database (`VACUUM INTO`), provisioning and quota state, and tenant storage; secrets are never included. Restore lists the archive first and refuses missing members, absolute or `..` paths, hard links, devices and links outside `storage/`. It extracts only into an empty directory, so the operator moves restored trees into place with services stopped.
 
 <a id="further-exploration"></a>
 ## Further Exploration
