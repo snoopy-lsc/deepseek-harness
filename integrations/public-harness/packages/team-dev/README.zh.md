@@ -24,6 +24,8 @@ kind: "package-library"
 
 构建仓库中的 Harness CLI 和 Web 前端后，在集成项目根目录运行 `pnpm dev`。打开输出的 `/dev` 地址并选择测试用户。在模型选择器中选择 `Platform` → `Local mock model`。模拟模型返回文本及 token 用量，不生成工具调用，也不实现上游 Files API。Harness 的终端和文件系统功能使用本机开发执行环境。每位用户的数据保存在配置的 `storageRoot` 下。停止进程会关闭路由器和 Web 子进程。
 
+若要使用真实模型而不是模拟模型，请在 profile 配置中加入 `quota.upstream`：`root` 是以 `/v1` 结尾的固定 HTTPS Messages 根地址（与生产额度服务的 `upstreamRoot` 形式相同），`keyEnv` 指定一个包含 `KEY` 的大写环境变量名，例如 `DSH_TEAM_DEV_UPSTREAM_KEY`。只为 `pnpm dev` 进程在该变量中导出平台密钥。额度代理在启动时读取它，并以 `x-api-key` 发送给上游；开发运行时会从 Harness 子进程中去除所有 `*KEY*` 变量，密钥也不会写入任何补丁、凭据文件或实例。缺少该变量时启动失败。此时模型显示为 `Platform` → `Platform model`，预留、`maxTokens` 上限和拒绝消息与生产环境一致。
+
 <a id="configuration"></a>
 ## 配置
 

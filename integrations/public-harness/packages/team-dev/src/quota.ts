@@ -45,6 +45,38 @@ export interface TeamDevQuotaConfig {
   readonly maxFileBodyBytes: number
   readonly credentialLifetimeMs: number
   readonly credentialRotateMs: number
+  /**
+   * Optional real model upstream, mirroring the production quota service's `upstreamRoot`. Without it the built-in mock
+   * answers. The platform key is read only from the named environment variable of this (router) process; the name must
+   * contain `KEY` so the development runtime strips it from every Harness child, and the key is never written to a patch,
+   * credential file, or instance.
+   */
+  readonly upstream?: TeamDevUpstreamConfig
+}
+
+/** A pinned HTTPS Messages upstream and the environment variable holding its key. */
+export interface TeamDevUpstreamConfig {
+  /** HTTPS URL ending in `/v1`, without credentials, query, or fragment; `/messages` is appended. */
+  readonly root: string
+  /** Upper-case environment variable name containing `KEY`, for example `DSH_TEAM_DEV_UPSTREAM_KEY`. */
+  readonly keyEnv: string
+}
+
+/** Validate the upstream and read its key from the environment; nothing is returned when no upstream is configured. */
+export function resolveTeamDevUpstream(upstream: TeamDevUpstreamConfig | undefined,
+  env: Readonly<Record<string, string | undefined>> = process.env): { url: string; key: string } | undefined {
+  if (upstream === undefined) return undefined
+  let url: URL
+  try { url = new URL(upstream.root) } catch { throw new Error('team-dev upstream root must be an HTTPS URL ending in /v1') }
+  if (url.protocol !== 'https:' || !url.pathname.endsWith('/v1') || url.search || url.hash || url.username || url.password) {
+    throw new Error('team-dev upstream root must be an HTTPS URL ending in /v1')
+  }
+  if (!/^[A-Z][A-Z0-9_]{0,127}$/.test(upstream.keyEnv) || !upstream.keyEnv.includes('KEY')) {
+    throw new Error('team-dev upstream keyEnv must be an upper-case variable name containing KEY')
+  }
+  const key = env[upstream.keyEnv]?.trim()
+  if (key === undefined || key.length < 8) throw new Error(`team-dev upstream key is missing from ${upstream.keyEnv}`)
+  return { url: `${url.href}/messages`, key }
 }
 
 /** Running private model service and one Web patch per fixed user. */
@@ -83,6 +115,9 @@ export async function startTeamDevQuota(options: {
   readonly users: readonly UserId[]
   readonly config: TeamDevQuotaConfig
   readonly storageLock: StorageLockConfig
+  /** Test seam for the real-upstream path; production code uses global fetch. */
+  readonly fetcher?: typeof fetch
+  readonly env?: Readonly<Record<string, string | undefined>>
 }): Promise<TeamDevQuota> {
   const { config } = options
   validateDevUsers(options.users)
@@ -95,6 +130,7 @@ export async function startTeamDevQuota(options: {
     || config.credentialRotateMs >= config.credentialLifetimeMs) {
     throw new Error('invalid development quota model or credential rotation')
   }
+  const upstream = resolveTeamDevUpstream(config.upstream, options.env)
   const quotaHome = join(options.storageRoot, 'quota')
   await privateDirectory(options.storageRoot)
   await privateDirectory(quotaHome)
@@ -128,12 +164,16 @@ export async function startTeamDevQuota(options: {
   const patches = new Map<UserId, string>()
   let mockStarted = false
   try {
-    const mockPort = await listen(mock)
-    mockStarted = true
-    const forwardMessages = createMessagesForwarder({
-      upstreamUrl: `http://127.0.0.1:${mockPort}/v1/messages`, platformKey,
-      maxEventBytes: config.maxEventBytes, ledger,
-    })
+    let forwardMessages: ReturnType<typeof createMessagesForwarder>
+    if (upstream === undefined) {
+      const mockPort = await listen(mock)
+      mockStarted = true
+      forwardMessages = createMessagesForwarder({ upstreamUrl: `http://127.0.0.1:${mockPort}/v1/messages`, platformKey,
+        maxEventBytes: config.maxEventBytes, ledger })
+    } else {
+      forwardMessages = createMessagesForwarder({ upstreamUrl: upstream.url, platformKey: upstream.key,
+        maxEventBytes: config.maxEventBytes, ledger, ...options.fetcher === undefined ? {} : { fetcher: options.fetcher } })
+    }
     const parsed: unknown = JSON.parse(await readFile(options.baseWebPatch, 'utf8'))
     if (!Array.isArray(parsed)) throw new Error('development Web patch must contain a list')
     const providerUrl = import.meta.resolve('@public-harness/quota-provider')
@@ -175,7 +215,7 @@ export async function startTeamDevQuota(options: {
       await writeFile(patch, `${JSON.stringify([...parsed, { id: 'ui-brand-official', disabled: true }, { insert: [{
         id: 'public-harness-quota-provider', name: providerUrl,
         config: { proxyBaseUrl: `http://127.0.0.1:${listener.port}/v1`, credentialFile,
-          provider: 'platform', modelId: config.modelId, modelName: 'Local mock model',
+          provider: 'platform', modelId: config.modelId, modelName: upstream === undefined ? 'Local mock model' : 'Platform model',
           contextWindow: config.contextWindow, maxTokens: config.maxTokens },
       }, { id: 'public-harness-ui', name: uiUrl }] }])}\n`, { mode: 0o600 })
       patches.set(userId, patch)
@@ -185,7 +225,7 @@ export async function startTeamDevQuota(options: {
       for (const timer of timers) clearInterval(timer)
       await Promise.all(rotations)
       const outcomes = await Promise.allSettled(listeners.map(listener => listener.close()))
-      try { await closeServer(mock) } finally {
+      try { if (mockStarted) await closeServer(mock) } finally {
         try { ledger.close() } finally { await release() }
       }
       const failures = outcomes.filter((item): item is PromiseRejectedResult => item.status === 'rejected')

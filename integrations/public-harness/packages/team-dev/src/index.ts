@@ -63,6 +63,7 @@ export const Config: z<TeamDevConfig> = z.object({
     maxFileBodyBytes: z.number().step(1).min(1).required(),
     credentialLifetimeMs: z.number().step(1).min(1).required(),
     credentialRotateMs: z.number().step(1).min(1).required(),
+    upstream: z.object({ root: z.string().required(), keyEnv: z.string().required() }),
   }).required(),
   storageLock: z.object({ staleMs: z.number().step(1).min(5000).required(),
     updateMs: z.number().step(1).min(1000).required() }).required(),

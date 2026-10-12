@@ -24,6 +24,8 @@ The `team-dev` Cordis plugin starts a loopback router and one lazy Harness Web p
 
 From the integration root, run `pnpm dev` after building the repository's Harness CLI and Web frontend. Open the printed `/dev` URL and select a test user. In the model selector, choose `Platform` → `Local mock model`. The fixture returns text and token usage; it does not generate tool calls or implement the upstream Files API. Harness terminal and filesystem features use the local development execution environment. Each user's data lives under the configured `storageRoot`. Stop the process to close the router and Web children.
 
+To use a real model instead of the fixture, add `quota.upstream` to the profile configuration: `root` is a pinned HTTPS Messages root ending in `/v1` (the same form as the production quota service's `upstreamRoot`), and `keyEnv` names an upper-case environment variable containing `KEY`, for example `DSH_TEAM_DEV_UPSTREAM_KEY`. Export the platform key in that variable for the `pnpm dev` process only. The quota proxy reads it at startup and sends it upstream as `x-api-key`; the development runtime strips every `*KEY*` variable from Harness children, and the key is never written to a patch, credential file, or instance. Startup fails if the variable is missing. The model then appears as `Platform` → `Platform model`, with the same reservations, `maxTokens` limit, and refusal messages as production.
+
 <a id="configuration"></a>
 ## Configuration
 
