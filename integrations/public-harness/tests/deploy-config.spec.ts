@@ -14,6 +14,9 @@ import { networkArgument } from '../packages/provisioner/src/limits.ts'
 import { parseProvisionerProfileConfig } from '../packages/production/src/provisioner-service.ts'
 import { parseQuotaProfileConfig } from '../packages/production/src/quota-service.ts'
 import { parseTeamRouterConfig } from '../packages/production/src/team-router.ts'
+import { parseIdentityConfig } from '../packages/identity/src/config.ts'
+import { parseSystemdConfig } from '../packages/runtime-systemd/src/config.ts'
+import { preflight } from '../deploy/native/scripts/host-preflight.ts'
 
 const root = new URL('../', import.meta.url).pathname
 const text = (path: string): Promise<string> => readFile(join(root, path), 'utf8')
@@ -448,5 +451,77 @@ describe('install-browser.sh', () => {
     expect(tampered.status).not.toBe(0); expect(tampered.stderr).toContain('missing pin record')
     const relative = spawnSync('bash', [script, 'verify', 'browser'], { encoding: 'utf8' })
     expect(relative.stderr).toContain('plain absolute path')
+  })
+})
+
+describe('native deployment composition', () => {
+  const native = async () => ({
+    provisioner: await json('deploy/native/config/provisioner.json.example') as { provisioner: Record<string, unknown> },
+    nativeOptions: await json('deploy/native/config/native.json.example'),
+  })
+
+  it('native_profile_omits_container_requirements', async () => {
+    const { provisioner, nativeOptions } = await native()
+    const parsed = parseProvisionerProfileConfig(provisioner)
+    expect(parsed.provisioner.runtime.kind).toBe('systemd')
+    const config = parseSystemdConfig({ common: provisioner.provisioner, native: nativeOptions })
+    expect(JSON.stringify([provisioner, nativeOptions])).not.toMatch(/podman|runsc|"image"|gvisor/i)
+    expect(config.tools.systemdRun).toBe('/usr/bin/systemd-run')
+    const home = await mkdtemp(join(tmpdir(), 'dsh-native-profile-'))
+    const profile = await writeProductionProfile(home, 'provisioner', { configFile: '/etc/dsh-public/provisioner.json', installRoot: '/opt/dsh-public/integration/', runtime: 'systemd' })
+    const patch = JSON.parse(await readFile(join(profile, 'cordis.patch.yml'), 'utf8')) as Array<{ insert: Array<{ id: string; name: string }> }>
+    expect(patch[0]!.insert.map(row => row.name.split('/').at(-1))).toEqual(['systemd-runtime.js', 'provisioner-service.js'])
+    expect(patch[0]!.insert[0]!.id).toBe('public-harness-systemd-runtime')
+    await expect(writeProductionProfile(home, 'identity', { configFile: '/etc/dsh-public/identity.json', runtime: 'podman-gvisor' })).rejects.toThrow(/native/)
+  })
+
+  it('all_services_launch_through_dsh', async () => {
+    for (const [unit, profile] of [['dsh-identity', 'identity'], ['dsh-router', 'team-router'], ['dsh-provisioner', 'provisioner'], ['dsh-quota', 'quota']] as const) {
+      const text_ = await text(`deploy/native/systemd/${unit}.service`)
+      expect(text_).toMatch(new RegExp(`^ExecStart=/usr/bin/node /opt/dsh-public/harness/apps/cli/lib/bin\\.js --profile ${profile}$`, 'm'))
+      expect(profile in PRODUCTION_PROFILES).toBe(true)
+    }
+  })
+
+  it('private_services_are_not_public', async () => {
+    const units = Object.fromEntries(await Promise.all(['dsh-identity', 'dsh-router', 'dsh-quota', 'dsh-provisioner'].map(async unit => [unit, await text(`deploy/native/systemd/${unit}.service`)])))
+    // Separate service accounts; only the provisioner is root, and it never runs tenant code.
+    expect(units['dsh-identity']).toMatch(/^User=dsh-identity$/m)
+    expect(units['dsh-router']).toMatch(/^User=dsh-router$/m)
+    expect(units['dsh-quota']).toMatch(/^User=dsh-quota$/m)
+    expect(units['dsh-router']).toMatch(/^RestrictAddressFamilies=AF_UNIX$/m)
+    expect(units['dsh-identity']).toMatch(/^UnsetEnvironment=BETTER_AUTH_TELEMETRY$/m)
+    const identity = parseIdentityConfig(await json('deploy/native/config/identity.json.example'))
+    expect(identity.mode).toBe('production')
+    expect(identity.enrollmentOpen).toBe(false)
+    const router = parseTeamRouterConfig(await json('deploy/native/config/router.json.example'))
+    expect(router.identity).toMatchObject({ kind: 'better-auth', sessionSocket: identity.sessionSocket })
+    expect(identity.sessionSocketGid).toBe(router.routerSocketGid)
+    // Caddy reaches the identity public socket; only the router group reaches the session socket.
+    const tmpfiles = await text('deploy/native/systemd/tmpfiles.conf')
+    expect(tmpfiles).toMatch(/^d \/run\/dsh-public\/identity\s+0750 dsh-identity dsh-ingress$/m)
+    expect(tmpfiles).toMatch(/^d \/run\/dsh-public\/identity-session\s+0750 dsh-identity dsh-router$/m)
+    expect(identity.publicSocket.startsWith('/run/dsh-public/identity/')).toBe(true)
+    expect(identity.sessionSocket.startsWith('/run/dsh-public/identity-session/')).toBe(true)
+    const caddy = await text('deploy/native/Caddyfile')
+    expect(caddy).not.toContain('identity-session')
+    expect(caddy).not.toMatch(/forward_auth/)
+    for (const header of ['X-Authentik-Uid', 'X-Authentik-Jwt', 'Forwarded', 'X-Dsh-Client-Ip']) expect(caddy).toContain(`request_header -${header}`)
+    expect(caddy).toMatch(/@account path \/account\/\* \/api\/auth\/\*/)
+    expect(caddy).toMatch(/header_up Host \{hostport\}/)
+    expect(caddy).toMatch(/admin unix\/\/run\/caddy\/admin\.sock\|0600/)
+    expect(caddy).toMatch(/trusted_proxies static\n/)
+  })
+
+  it('host preflight reports failures without touching the host', async () => {
+    const { provisioner, nativeOptions } = await native()
+    const reads: string[] = [], runs: string[] = []
+    const results = await preflight(provisioner.provisioner, nativeOptions, {
+      read: async path => { reads.push(path); return path.endsWith('os-release') ? 'ID=debian\n' : path.endsWith('enabled') ? 'Y\n' : path.endsWith('userns') ? '0\n' : 'cpu memory pids\n' },
+      run: (command, args) => { runs.push(`${command} ${args.join(' ')}`); return 'Enforcement: ON' },
+    })
+    const byName = Object.fromEntries(results.map(result => [result.check, result.ok]))
+    expect(byName).toMatchObject({ os: false, cgroup2: true, apparmor: false, 'xfs-quota': true, nftables: true })
+    expect(runs.every(line => /xfs_quota -x -c state -u|nft --version|--version$/.test(line))).toBe(true)
   })
 })

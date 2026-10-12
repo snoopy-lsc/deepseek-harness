@@ -1,0 +1,37 @@
+{
+  "paths": {
+    "release": "/opt/dsh-public/release",
+    "releaseManifest": "/opt/dsh-public/release/release-manifest.json",
+    "toolchain": "/opt/dsh-public/toolchain",
+    "dsh": "/opt/dsh-public/release/dsh.mjs",
+    "launchPatch": "/opt/dsh-public/release/native.yml",
+    "browserRoot": "/opt/dsh-public/browser",
+    "browser": "/opt/dsh-public/browser/chrome-linux64/chrome"
+  },
+  "tools": {
+    "node": "/opt/dsh-public/toolchain/node",
+    "systemctl": "/usr/bin/systemctl",
+    "apparmorParser": "/usr/sbin/apparmor_parser",
+    "xfsQuota": "/usr/sbin/xfs_quota",
+    "nft": "/usr/sbin/nft",
+    "systemdRun": "/usr/bin/systemd-run",
+    "git": "/usr/bin/git"
+  },
+  "profile": "public-user",
+  "diskInodes": 500000,
+  "shmBytes": 268435456,
+  "shmInodes": 4096,
+  "operationTimeoutMs": 30000,
+  "web": {
+    "min": 22000,
+    "max": 22199
+  },
+  "resolver": "1.1.1.1",
+  "publicEgress": {
+    "tcp": [
+      80,
+      443
+    ],
+    "udp": []
+  }
+}

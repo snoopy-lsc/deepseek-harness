@@ -1,0 +1,34 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write integrations/public-harness/deploy/native/README.md
+/:
+  en: 7f1b7d1658f61a17
+  zh: 6f4fc3fb78563b78
+/native-deployment:
+  en: 3a569866cab54303
+  zh: 7b7d12d3b95361cb
+/native-deployment/summary:
+  en: bb10012fccd936cc
+  zh: 6f0ccb5c0c53b278
+/native-deployment/table-of-contents:
+  en: 6d02787d2197f99c
+  zh: a289c2592e0adf06
+/native-deployment/install-on-a-dedicated-host:
+  en: de2d5aef3cb8bfa8
+  zh: ceb3545dba4f835c
+/native-deployment/service-boundaries:
+  en: abd1d212d9fce500
+  zh: a835cd411d365390
+/native-deployment/validate-before-admission:
+  en: 3f4e065089f4a30f
+  zh: 19f3fa414a104c29
+/native-deployment/operate-the-host:
+  en: 5ea614eccc6cd835
+  zh: d967a920fea60788
+/native-deployment/further-exploration:
+  en: a94918713d3023d8
+  zh: 76489e71b5d81add
+/native-deployment/dev-note:
+  en: ce41d9525220599b
+  zh: c3d2397efae0d3d5

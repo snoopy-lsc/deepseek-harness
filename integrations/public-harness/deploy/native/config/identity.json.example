@@ -1,0 +1,16 @@
+{
+  "mode": "production",
+  "publicOrigin": "https://harness.example.com",
+  "publicSocket": "/run/dsh-public/identity/public.sock",
+  "sessionSocket": "/run/dsh-public/identity-session/session.sock",
+  "sessionSocketGid": 991,
+  "databaseFile": "/var/lib/dsh-public/identity/identity.db",
+  "secretFile": "/etc/dsh-public/identity-secrets/better-auth.secret",
+  "mail": { "kind": "sendmail", "command": "/usr/sbin/sendmail", "from": "noreply@harness.example.com" },
+  "captcha": { "kind": "turnstile", "secretFile": "/etc/dsh-public/identity-secrets/turnstile.secret" },
+  "limits": { "signupPerIpPerHour": 3, "signupPerDay": 100, "resetPerEmailPerHour": 3, "loginPerIpPerMinute": 10 },
+  "sessionTtlSeconds": 604800,
+  "verificationTtlSeconds": 3600,
+  "clientIpHeader": "x-forwarded-for",
+  "enrollmentOpen": false
+}

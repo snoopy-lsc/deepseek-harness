@@ -72,6 +72,9 @@ importers:
       '@public-harness/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@public-harness/identity':
+        specifier: workspace:*
+        version: link:../identity
       '@public-harness/provisioner':
         specifier: workspace:*
         version: link:../provisioner

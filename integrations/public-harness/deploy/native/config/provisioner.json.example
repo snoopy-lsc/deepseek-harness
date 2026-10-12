@@ -1,0 +1,44 @@
+{
+  "controlSocket": "/run/dsh-public/control/provisioner.sock",
+  "adminSocket": "/run/dsh-public/admin/admin.sock",
+  "quotaSocket": "/var/lib/dsh-public/quota-control/quota.sock",
+  "publicHost": "harness.example.com",
+  "reconcileIntervalMs": 60000,
+  "provisioner": {
+    "paths": {
+      "storageRoot": "/srv/dsh-public/storage",
+      "stateDir": "/var/lib/dsh-public/state",
+      "socketDir": "/run/dsh-public/instances",
+      "quotaMount": "/srv/dsh-public"
+    },
+    "tools": {
+      "getent": "/usr/bin/getent",
+      "useradd": "/usr/sbin/useradd",
+      "userdel": "/usr/sbin/userdel",
+      "nologin": "/usr/sbin/nologin"
+    },
+    "socketGid": 990,
+    "maxActiveInstances": 40,
+    "idleStopMs": 1800000,
+    "deletionRecoveryMs": 2592000000,
+    "limits": {
+      "cpus": 2,
+      "memoryBytes": 4294967296,
+      "pids": 2048,
+      "openFiles": 8192,
+      "diskBytes": 10737418240
+    },
+    "readyTimeoutMs": 120000,
+    "stopTimeoutMs": 20000,
+    "ports": {
+      "quota": {
+        "min": 20000,
+        "max": 20199
+      }
+    },
+    "runtime": {
+      "kind": "systemd",
+      "configFile": "/etc/dsh-public/native.json"
+    }
+  }
+}

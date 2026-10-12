@@ -1,0 +1,27 @@
+[Unit]
+Description=Native public Harness provisioner (privileged: accounts, XFS quotas, AppArmor, nftables, per-account system units)
+PartOf=dsh-public.target
+After=network-online.target dsh-quota.service nftables.service apparmor.service
+Requires=dsh-quota.service
+
+[Service]
+Type=simple
+User=root
+Environment=DSH_HOME=/var/lib/dsh-public/profiles/provisioner-home
+ExecStart=/usr/bin/node /opt/dsh-public/harness/apps/cli/lib/bin.js --profile provisioner
+Restart=on-failure
+RestartSec=3
+# Root is required to create accounts, load AppArmor profiles, edit the owned nftables table and start system units.
+# It never runs tenant code: instances run as their own accounts in their own units and slices.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelModules=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+LockPersonality=yes
+UMask=0077
+ReadWritePaths=/var/lib/dsh-public /srv/dsh-public /run/dsh-public /etc/passwd /etc/group /etc/shadow /etc/gshadow /etc/subuid /etc/subgid
+ReadOnlyPaths=/etc/dsh-public /opt/dsh-public
+
+[Install]
+WantedBy=dsh-public.target

@@ -1,0 +1,71 @@
+# Requires Caddy 2.7 or newer; the configuration is verified with Caddy 2.11.7.
+# Native public Harness edge. Caddy terminates TLS and forwards account pages and the Better Auth API to the identity
+# service's public socket, and everything else to the router's socket. It performs no authentication itself: the router
+# verifies the Better Auth session on every request and WebSocket handshake through the identity service's private
+# session socket, which Caddy cannot reach. Environment values are set in the systemd unit, never here.
+#   DSH_PUBLIC_HOST       public host name, e.g. harness.example.com
+#   DSH_ACME_EMAIL        contact for the certificate authority
+#   DSH_IDENTITY_SOCKET   e.g. /run/dsh-public/identity/public.sock
+#   DSH_ROUTER_SOCKET     e.g. /run/dsh-public/router/router.sock
+{
+	email {$DSH_ACME_EMAIL}
+	admin unix//run/caddy/admin.sock|0600
+	# Caddy is the first hop: it trusts no forwarded headers and sets X-Forwarded-For to the client address only.
+	servers {
+		trusted_proxies static
+		timeouts {
+			read_header 10s
+			idle 120s
+		}
+	}
+}
+
+{$DSH_PUBLIC_HOST} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy same-origin
+		-Server
+	}
+
+	# Caller headers can never name a user or choose an upstream.
+	request_header -X-Authentik-Uid
+	request_header -X-Authentik-Jwt
+	request_header -X-Forwarded-User
+	request_header -X-Real-Ip
+	request_header -Forwarded
+	request_header -X-Original-Url
+	request_header -X-Original-Uri
+	request_header -X-Dsh-Client-Ip
+
+	@account path /account/* /api/auth/*
+	handle @account {
+		reverse_proxy unix/{$DSH_IDENTITY_SOCKET} {
+			header_up Host {hostport}
+		}
+	}
+
+	handle {
+		reverse_proxy unix/{$DSH_ROUTER_SOCKET} {
+			# The router compares the Host, port included, with `publicAuthority`.
+			header_up Host {hostport}
+			flush_interval -1
+			transport http {
+				response_header_timeout 120s
+			}
+		}
+	}
+
+	log {
+		# Access logs carry no query strings (verification and reset tokens), cookies, or identity headers.
+		output file /var/log/caddy/dsh-public-access.log
+		format filter {
+			wrap json
+			request>uri delete
+			request>headers delete
+			resp_headers>Set-Cookie delete
+		}
+	}
+}

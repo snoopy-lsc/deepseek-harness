@@ -1,0 +1,21 @@
+{
+  "publicAuthority": "harness.example.com",
+  "routerSocket": "/run/dsh-public/router/router.sock",
+  "routerSocketGid": 991,
+  "healthSocket": "/run/dsh-public/router-private/health.sock",
+  "provisionerSocket": "/run/dsh-public/control/provisioner.sock",
+  "identity": {
+    "kind": "better-auth",
+    "sessionSocket": "/run/dsh-public/identity-session/session.sock",
+    "timeoutMs": 2000,
+    "maxResponseBytes": 4096,
+    "sessionRecheckMs": 30000
+  },
+  "routeWaitMs": 90000,
+  "provisionerEnsureTimeoutMs": 1200000,
+  "retryAfterSeconds": 2,
+  "launchExchangeMs": 10000,
+  "socketLifetimeMs": 60000,
+  "maxRequestBodyBytes": 33554432,
+  "maxHeaderBytes": 16384
+}

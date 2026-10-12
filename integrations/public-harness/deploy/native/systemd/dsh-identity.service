@@ -1,0 +1,37 @@
+[Unit]
+Description=Native public Harness identity (Better Auth registration and sessions)
+PartOf=dsh-public.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=dsh-identity
+Group=dsh-identity
+Environment=DSH_HOME=/var/lib/dsh-public/identity-home
+ExecStart=/usr/bin/node /opt/dsh-public/harness/apps/cli/lib/bin.js --profile identity
+Restart=on-failure
+RestartSec=3
+# Outbound HTTPS is needed only for CAPTCHA verification; mail goes through the local sendmail command.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+StateDirectory=dsh-public/identity-home dsh-public/identity
+StateDirectoryMode=0700
+ReadWritePaths=/run/dsh-public/identity /run/dsh-public/identity-session
+ReadOnlyPaths=/etc/dsh-public /opt/dsh-public
+UnsetEnvironment=BETTER_AUTH_TELEMETRY
+
+[Install]
+WantedBy=dsh-public.target

@@ -1,0 +1,37 @@
+[Unit]
+Description=Native public Harness router (unprivileged; Unix-socket ingress for Caddy)
+PartOf=dsh-public.target
+After=dsh-provisioner.service dsh-identity.service
+Requires=dsh-provisioner.service dsh-identity.service
+
+[Service]
+Type=simple
+User=dsh-router
+Group=dsh-router
+Environment=DSH_HOME=/var/lib/dsh-public/router-home
+ExecStart=/usr/bin/node /opt/dsh-public/harness/apps/cli/lib/bin.js --profile team-router
+Restart=on-failure
+RestartSec=3
+# The router has no model key and never opens a TCP socket: only Unix sockets to Caddy, the provisioner, and instances.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+StateDirectory=dsh-public/router-home
+StateDirectoryMode=0700
+ReadWritePaths=/run/dsh-public/router /run/dsh-public/router-private
+ReadOnlyPaths=/etc/dsh-public /opt/dsh-public /run/dsh-public/control /run/dsh-public/instances /run/dsh-public/identity-session
+
+[Install]
+WantedBy=dsh-public.target
