@@ -50,7 +50,7 @@ export async function makeConfig(overrides: Partial<ProvisionerConfig> = {}): Pr
     paths: { storageRoot: paths.storageRoot, stateDir: paths.stateDir, socketDir: paths.socketDir, quotaMount: paths.quotaMount },
     socketGid: gid, maxActiveInstances: 2, idleStopMs: 600_000, deletionRecoveryMs: 7 * 86_400_000,
     readyTimeoutMs: 5000, stopTimeoutMs: 5000, ports: { quota: { min: 29100, max: 29109 } },
-    limits: { cpus: 1, memoryBytes: 1 << 30, pids: 256, openFiles: 4096, diskBytes: 5 * 2 ** 30 },
+    limits: { cpus: 1, memoryBytes: 1 << 30, pids: 512, openFiles: 4096, diskBytes: 5 * 2 ** 30 },
     tools: { getent: tool('getent'), useradd: tool('useradd'), userdel: tool('userdel'), nologin: '/usr/sbin/nologin' },
     ...overrides,
     runtime: { kind: 'podman-gvisor', runtimeAssets: paths.runtimeAssets, image: 'localhost/dsh-instance:1',

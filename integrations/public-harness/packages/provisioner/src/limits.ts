@@ -22,10 +22,11 @@ export class LimitsError extends Error {
 /**
  * Smallest accepted limits. Under gVisor the pids limit counts the sandbox's own host threads (about 45 idle, roughly
  * 2-3 more per guest process), not guest processes, and exhausting the pids limit killed the whole sandbox in lab
- * runs (exceeding memory did so in one run but not another). Values below these leave no room for the Harness itself.
+ * runs (exceeding memory did so in one run but not another). A real idle Harness instance measured about 48-52 pids and
+ * 175-200 MiB (peak 216 MiB), so the floors leave roughly ten times and five times that for work.
  */
-export const MIN_PIDS = 256
-export const MIN_MEMORY_BYTES = 512 << 20
+export const MIN_PIDS = 512
+export const MIN_MEMORY_BYTES = 1 << 30
 
 /** cgroup v2 controllers the account's user manager must delegate; rootless podman with runsc did not start without all six. */
 export const REQUIRED_CONTROLLERS = ['cpu', 'cpuset', 'hugetlb', 'io', 'memory', 'pids'] as const
@@ -41,7 +42,7 @@ export function validateLimits(value: unknown): Limits {
     if (typeof field !== 'number' || !Number.isFinite(field) || field <= 0) throw new LimitsError(`${key} must be positive`)
     if (key !== 'cpus' && !Number.isSafeInteger(field)) throw new LimitsError(`${key} must be an integer`)
   }
-  if (Number(record.memoryBytes) < MIN_MEMORY_BYTES) throw new LimitsError('memoryBytes below 512 MiB')
+  if (Number(record.memoryBytes) < MIN_MEMORY_BYTES) throw new LimitsError('memoryBytes below 1 GiB')
   if (Number(record.pids) < MIN_PIDS) throw new LimitsError(`pids below ${MIN_PIDS}`)
   const network = record.network
   if (network !== 'pasta' && network !== 'slirp4netns') throw new LimitsError('network must be exactly pasta or slirp4netns')

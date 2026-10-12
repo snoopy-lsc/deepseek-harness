@@ -55,15 +55,15 @@ async function setup(options: { quotaHealthy?: boolean; busyPorts?: number[]; im
 }
 
 describe('mandatory limits', () => {
-  const good = { cpus: 1, memoryBytes: 1 << 30, pids: 256, openFiles: 4096, diskBytes: 5 * 2 ** 30, network: 'pasta' }
-  it('accepts a complete set', () => expect(validateLimits(good)).toMatchObject({ pids: 256 }))
+  const good = { cpus: 1, memoryBytes: 1 << 30, pids: 512, openFiles: 4096, diskBytes: 5 * 2 ** 30, network: 'pasta' }
+  it('accepts a complete set', () => expect(validateLimits(good)).toMatchObject({ pids: 512 }))
   it.each(['cpus', 'memoryBytes', 'pids', 'openFiles', 'diskBytes', 'network'])('rejects a missing %s', key => {
     expect(() => validateLimits({ ...good, [key]: undefined })).toThrow(LimitsError)
   })
   it.each([0, -1, Number.NaN])('rejects a non-positive limit %s', value => {
     expect(() => validateLimits({ ...good, pids: value })).toThrow(LimitsError)
   })
-  it.each([[255, 1 << 30], [4096, (512 << 20) - 1]])('rejects limits that leave no room for the Harness (pids %s, memory %s)', (pids, memoryBytes) => {
+  it.each([[511, 1 << 30], [4096, (1 << 30) - 1], [256, 512 << 20]])('rejects limits that leave no room for the Harness (pids %s, memory %s)', (pids, memoryBytes) => {
     expect(() => validateLimits({ ...good, pids, memoryBytes })).toThrow(LimitsError)
   })
   it('requires every delegated controller the rootless gVisor runtime needs', async () => {
@@ -108,7 +108,7 @@ describe('confined container launch', () => {
     expect(volumes).toEqual([`${record.layout.home}:/home/harness:rw,Z`, `${record.layout.workspace}:/workspace:rw,Z`,
       `${record.layout.ctl}:/run/harness-ctl:rw,Z`, `${config.paths.runtimeAssets}:/opt/public-harness:ro,Z`])
     expect(argv).toEqual(expect.arrayContaining(['--cap-drop', 'all', '--read-only', '--publish', `127.0.0.1:29200:${SIDECAR_PORT}`,
-      '--pids-limit', '256', '--memory', String(1 << 30), '--memory-swap', String(1 << 30), '--cpus', '1']))
+      '--pids-limit', '512', '--memory', String(1 << 30), '--memory-swap', String(1 << 30), '--cpus', '1']))
     expect(argv[argv.indexOf('--network') + 1]).toBe('pasta:--map-host-loopback,10.0.2.2,--no-splice')
     expect(argv.slice(-3)).toEqual([config.image, 'node', '/opt/public-harness/container-entry.js'])
     const text = argv.join(' ')
