@@ -4,7 +4,7 @@ import { createServer } from 'node:net'
 import { chmod, chown, rename, writeFile } from 'node:fs/promises'
 import { request as httpRequest } from 'node:http'
 import { join } from 'node:path'
-import { parseInstanceId, portsFrom, type InstanceEndpoint, type InstanceId, type RuntimeInstance, type UserId } from '@public-harness/contracts'
+import { parseInstanceId, platformModelRows, portsFrom, type InstanceEndpoint, type InstanceId, type RuntimeInstance, type UserId } from '@public-harness/contracts'
 import type { ContainerConfig } from './config.ts'
 import { startUnixForwarder, type Forwarder } from './forwarder.ts'
 import { enforceLimits, LimitsError, networkArgument, type EnforcementProbe } from './limits.ts'
@@ -189,6 +189,8 @@ function webPatch(config: ContainerConfig, publicHost: string, proxyPort: number
   return `${JSON.stringify([
     { id: 'web-runtime', config: { openBrowser: false, printUrl: false, publicUrl: null, surfaceContext: true, trustedHosts: [publicHost] } },
     { id: 'ui-brand-official', disabled: true },
+    // Containers receive no official model key: fresh agents start on the platform model and the keyless official route is hidden.
+    ...platformModelRows({ provider: 'platform', model: modelId }),
     { insert: [{ id: 'public-harness-web-token', name: bundle('web-token') },
       { id: 'public-harness-quota-provider', name: bundle('quota-provider'), config: {
         proxyBaseUrl: `http://${config.quota.hostAddress}:${proxyPort}/v1`, credentialFile: `${CONTAINER.home}/quota-credential.json`,

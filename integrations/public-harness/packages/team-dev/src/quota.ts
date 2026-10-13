@@ -4,7 +4,7 @@ import { createServer, type Server } from 'node:http'
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { AddressInfo } from 'node:net'
-import type { UserId } from '@public-harness/contracts'
+import { platformModelRows, type UserId } from '@public-harness/contracts'
 import { createQuotaLedger } from '@public-harness/quota/ledger'
 import { createTokenIssuer } from '@public-harness/quota/tokens'
 import { createAdmission } from '@public-harness/quota/admission'
@@ -213,7 +213,8 @@ export async function startTeamDevQuota(options: {
         rotations.add(active)
       }, config.credentialRotateMs))
       const patch = join(home, 'team-dev-web.patch.yml')
-      await writeFile(patch, `${JSON.stringify([...parsed, { id: 'ui-brand-official', disabled: true }, { insert: [{
+      // Child processes never inherit model keys, so the official route has none: start on the platform model and hide it.
+      await writeFile(patch, `${JSON.stringify([...parsed, { id: 'ui-brand-official', disabled: true }, ...platformModelRows({ provider: 'platform', model: config.modelId }), { insert: [{
         id: 'public-harness-quota-provider', name: providerUrl,
         config: { proxyBaseUrl: `http://127.0.0.1:${listener.port}/v1`, credentialFile,
           provider: 'platform', modelId: config.modelId, modelName: upstream === undefined ? 'Local mock model' : 'Platform model',

@@ -103,6 +103,8 @@ describe('team-dev dsh profile', () => {
         const patch = JSON.parse(await readFile(join(userHome, 'team-dev-web.patch.yml'), 'utf8')) as
           Array<{ insert?: Array<{ config?: { proxyBaseUrl?: string } }> }>
         const proxyBaseUrl = patch.at(-1)?.insert?.[0]?.config?.proxyBaseUrl
+        expect(patch).toContainEqual({ id: 'agent-default-model', config: { provider: 'platform', model: 'team-dev-mock' } })
+        expect(patch).toContainEqual({ id: 'llm-deepseek', disabled: true })
         const credential = JSON.parse(await readFile(join(userHome, 'quota-credential.json'), 'utf8')) as { token: string }
         if (userId === 'alice') aliceToken = credential.token
         else {
