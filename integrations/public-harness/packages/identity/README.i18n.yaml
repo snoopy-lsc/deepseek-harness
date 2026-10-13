@@ -3,29 +3,35 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write integrations/public-harness/packages/identity/README.md
 /:
-  en: c101ad01746f3381
-  zh: fe30f97956720bf2
+  en: 658ab96dac7d5b2a
+  zh: b13fb8790daebdba
 /public-harness-identity:
   en: 82aab96ae1a3cb6c
   zh: 494f7d4f3a760236
 /public-harness-identity/summary:
-  en: 98681dda2f999060
-  zh: 8b61893f338da78e
+  en: 7e3bb63d3877da87
+  zh: dd7ba8f903fe2f02
 /public-harness-identity/table-of-contents:
   en: 80b31a934611cb4a
   zh: 5b70060b514cf1f4
 /public-harness-identity/use-this-package:
-  en: 090c21f0a725c608
-  zh: 10dbaea158db30fe
+  en: 56ec1d57ac675e11
+  zh: 13ef3000dddd8bb2
+/public-harness-identity/use-this-package/providers:
+  en: 766d9cb4f77d65a8
+  zh: eced2bb81d81b51c
+/public-harness-identity/use-this-package/invite-only-registration:
+  en: 3f7b76dae4e98f5c
+  zh: e134771780500af2
 /public-harness-identity/understand-the-implementation:
-  en: e3785c4e6764cf99
-  zh: c85b2d5ae6075ee5
+  en: 9ca273ce3bb588f4
+  zh: fd09eb7b6847c825
 /public-harness-identity/further-exploration:
   en: eb11d4045a131239
   zh: 7bcd3fd5985ac3be
 /public-harness-identity/known-limitations-and-deferred-work:
-  en: f8090a37422a83c6
-  zh: 1b1e415ed11f4d2b
+  en: a0f8316cdd471e5a
+  zh: 6aa4bfb74fc2db4f
 /public-harness-identity/dev-note:
-  en: 929b373ee85afa7e
-  zh: a6f8051ba2852706
+  en: 90ec244437cc8965
+  zh: 1ed7bc8f2ce7898a

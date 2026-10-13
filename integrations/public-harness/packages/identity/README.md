@@ -1,5 +1,5 @@
 ---
-description: "Better Auth registration, verified email sessions and account pages for native public Harness, with a private session socket for the router."
+description: "Better Auth registration, verified email sessions and account pages for native public Harness, with pluggable mainland-China-ready CAPTCHA and mail providers, invite-only mode and a private session socket for the router."
 kind: "package-library"
 ---
 
@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Run public registration and browser sessions for a native Harness deployment. Better Auth stores accounts and sessions in a private SQLite file. Email verification is required before sign-in, and verification and reset links are single-use. Admission limits persist in the database. The router checks the live session on every request and WebSocket handshake through a private Unix socket. Website signup alone creates no Linux account, instance or model grant, and public enrollment is closed unless an operator opens it.
+Run public registration and browser sessions for a native Harness deployment. Better Auth stores accounts and sessions in a private SQLite file. Email verification is required before sign-in, and verification and reset links are single-use. Admission limits persist in the database. The router checks the live session on every request and WebSocket handshake through a private Unix socket. Human verification and mail are pluggable providers chosen by environment variables: Alibaba Cloud Captcha 2.0, Tencent Cloud TianYu Captcha, Cloudflare Turnstile, or invite-only registration, and sendmail or an authenticated TLS SMTP relay such as Alibaba Cloud DirectMail or Tencent Cloud SES. Website signup alone creates no Linux account, instance or model grant, and public enrollment is closed unless an operator opens it.
 
 ## Table of Contents
 
@@ -24,7 +24,41 @@ Run public registration and browser sessions for a native Harness deployment. Be
 <a id="use-this-package"></a>
 ## Use this package
 
-`parseIdentityConfig` takes `mode` (`production` or `local`), the exact `publicOrigin`, two Unix sockets (`publicSocket` for the HTTPS proxy, `sessionSocket` for the router, with `sessionSocketGid`), `databaseFile`, `secretFile`, `mail`, `captcha`, `limits`, session and verification lifetimes, the trusted proxy's `clientIpHeader`, and optional `enrollmentOpen` (default false). Production requires an HTTPS origin, `sendmail` delivery and Cloudflare Turnstile. It rejects the `mailbox` and `test` transports, which exist only for loopback local runs. `startIdentity(config)` opens or creates the database with mode 0600, applies the Better Auth schema migration, and listens on both sockets. The Cordis `apply` reads the same JSON from `configFile`.
+`parseIdentityConfig(file, env)` takes the JSON file and the process environment. The file holds `mode` (`production` or `local`), the exact `publicOrigin`, two Unix sockets (`publicSocket` for the HTTPS proxy, `sessionSocket` for the router, with `sessionSocketGid`), `databaseFile`, `secretFile`, `limits`, session and verification lifetimes, the trusted proxy's `clientIpHeader`, and optional `enrollmentOpen` (default false). Mail and CAPTCHA settings come only from the environment, and the file refuses `mail` or `captcha` keys. Production requires an HTTPS origin and refuses the `mailbox` mail provider and the `test` CAPTCHA, which exist only for loopback local runs. `startIdentity(config)` opens or creates the database with mode 0600, applies the Better Auth schema migration, and listens on both sockets. The Cordis `apply` reads the JSON from `configFile` and the providers from `process.env`. On the native host, systemd loads them from the operator-created `/etc/dsh-public/identity-secrets/identity.env` (root, 0600); see [identity.env.example](../../deploy/native/config/identity.env.example).
+
+### Providers
+
+An unknown provider, a missing or malformed variable, or a mismatched endpoint refuses startup. The error names the variable and never its value. Secrets never appear in the repository, the configuration file or the rendered pages.
+
+| `DSH_CAPTCHA_PROVIDER` | Variables | Server check |
+| --- | --- | --- |
+| `aliyun` | `DSH_ALIYUN_CAPTCHA_ACCESS_KEY_ID`, `DSH_ALIYUN_CAPTCHA_ACCESS_KEY_SECRET`, `DSH_ALIYUN_CAPTCHA_SCENE_ID`, `DSH_ALIYUN_CAPTCHA_PREFIX` (instance identity), optional `DSH_ALIYUN_CAPTCHA_REGION` (`cn` default, or `sgp`) and `DSH_ALIYUN_CAPTCHA_ENDPOINT` (the region's IPv4, dual-stack or VPC host) | [`VerifyIntelligentCaptcha`](https://help.aliyun.com/zh/captcha/captcha2-0/user-guide/server-access) 2023-03-05, form body `CaptchaVerifyParam` + `SceneId`, signed with [ACS3-HMAC-SHA256](https://help.aliyun.com/zh/sdk/product-overview/v3-request-structure-and-signature); passes only on `Result.VerifyResult === true` |
+| `tencent` | `DSH_TENCENT_CAPTCHA_SECRET_ID`, `DSH_TENCENT_CAPTCHA_SECRET_KEY` (CAM API key), `DSH_TENCENT_CAPTCHA_APP_ID`, `DSH_TENCENT_CAPTCHA_APP_SECRET_KEY` | [`DescribeCaptchaResult`](https://cloud.tencent.com/document/product/1110/36926) 2019-07-22 at `captcha.tencentcloudapi.com`, `CaptchaType` 9 with ticket, randstr and client address, signed with [TC3-HMAC-SHA256](https://www.tencentcloud.com/document/product/1080/38766); passes only on `CaptchaCode === 1` |
+| `turnstile` | `DSH_TURNSTILE_SITE_KEY`, `DSH_TURNSTILE_SECRET_KEY` | [siteverify](https://developers.cloudflare.com/turnstile/get-started/server-side-validation/) |
+| `none` | none | Invite-only: sign-up needs a valid invite code instead of a CAPTCHA |
+| `test` | `DSH_CAPTCHA_TEST_TOKEN` | Local mode only |
+
+`DSH_CAPTCHA_TIMEOUT_MS` (default 5000) bounds each verification call. A timeout, a transport failure, an HTTP error or an API-level error (bad signature, unpaid instance) answers 503 and admits nothing. A wrong, expired or reused ticket answers 400.
+
+| `DSH_MAIL_PROVIDER` | Variables |
+| --- | --- |
+| `smtp` | `DSH_SMTP_HOST`, `DSH_SMTP_PORT`, `DSH_SMTP_SECURITY` (`tls` for implicit TLS or `starttls`; there is no plaintext mode), `DSH_SMTP_USER`, `DSH_SMTP_PASSWORD`, `DSH_MAIL_FROM`, optional `DSH_SMTP_TIMEOUT_MS` (default 15000) |
+| `sendmail` | `DSH_SENDMAIL_COMMAND`, `DSH_MAIL_FROM` |
+| `mailbox` | `DSH_MAILBOX_DIR`, `DSH_MAIL_FROM`; local mode only |
+
+SMTP endpoints: [Alibaba Cloud DirectMail](https://help.aliyun.com/zh/direct-mail/smtp-endpoints) uses `smtpdm.aliyun.com` on 465 with `tls`, or 80/25 with `starttls`; the user is the sender address and the password is the SMTP password set in the console. [Tencent Cloud SES](https://cloud.tencent.com/document/product/1288/65750) uses `smtp.qcloudmail.com` (or `gz-smtp.qcloudmail.com`) on 465 with `tls`, or 25 with `starttls`. Cloud servers in both clouds block outbound port 25 by default.
+
+### Invite-only registration
+
+With `DSH_CAPTCHA_PROVIDER=none`, the register page asks for an invite code and sends it as `X-Invite-Code`. Registration is never public in this mode, so `enrollmentOpen` does not apply. Each code admits one account, and the per-address and daily signup limits still apply. Mint codes as the service account:
+
+```sh
+sudo -u dsh-identity node /opt/dsh-public/integration/packages/identity/lib/invite-cli.js --config /etc/dsh-public/identity.json mint --ttl-hours 72 --count 5 --note "wave 1"
+sudo -u dsh-identity node …/invite-cli.js --config /etc/dsh-public/identity.json list
+sudo -u dsh-identity node …/invite-cli.js --config /etc/dsh-public/identity.json revoke <id>
+```
+
+`mint` prints each code once. The database keeps only a SHA-256 hash, an ID, the expiry, the note and, after use, the time and the registering email. `list` never shows codes.
 
 The proxy forwards `/api/auth/*` and `/account/*` to `publicSocket` and never exposes `sessionSocket`. The router selects this mode with `identity.kind: better-auth` in its production file; see [router native identity](../router/src/native-identity.ts).
 
@@ -34,9 +68,9 @@ The proxy forwards `/api/auth/*` and `/account/*` to `publicSocket` and never ex
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-Before Better Auth sees a request, the public listener checks that Host equals the configured origin, rejects a foreign `X-Forwarded-Host` or any `Forwarded` header, refuses more than one session cookie, and requires the exact Origin on every state-changing request. Signup checks the enrollment switch, the CAPTCHA response and two persistent fixed-window counters (per client address and per day). Sign-in and reset requests have their own counters. Counters use `BEGIN IMMEDIATE`, so two service processes cannot both take the last unit. Verification links are signed and stateless in Better Auth, so the service records a hash of each one used and refuses a replay. Reset tokens are deleted on use, and a reset revokes the account's sessions.
+Before Better Auth sees a request, the public listener checks that Host equals the configured origin, rejects a foreign `X-Forwarded-Host` or any `Forwarded` header, refuses more than one session cookie, and requires the exact Origin on every state-changing request. Signup checks the enrollment switch and the CAPTCHA response, or in invite mode the invite code, and two persistent fixed-window counters (per client address and per day). An invite is claimed with one conditional `UPDATE` (unused, unrevoked, unexpired), so concurrent signups cannot share a code. It is released when Better Auth rejects the registration, the same way a used verification link is released when its request fails. Sign-in and reset requests have their own counters. Counters use `BEGIN IMMEDIATE`, so two service processes cannot both take the last unit. Verification links are signed and stateless in Better Auth, so the service records a hash of each one used and refuses a replay. Reset tokens are deleted on use, and a reset revokes the account's sessions.
 
-Sessions are database rows with cookie caching disabled, so sign-out and revocation apply on the next lookup. `POST /internal/session` takes `{ cookie }` (at most 8 KiB) and answers `{ userId, sessionId, expiresAt }` only for a live session of a verified user. It answers 401 for anything else and 503 when the store fails. Telemetry is disabled, and startup refuses `BETTER_AUTH_TELEMETRY`, because that variable would override the option. Account pages are server-rendered with an escaped English/Chinese dictionary and one nonce-bound script under a strict Content-Security-Policy. After sign-in they link only to the user's own `/u/<id>/` route; see `safeReturnPath`.
+Sessions are database rows with cookie caching disabled, so sign-out and revocation apply on the next lookup. `POST /internal/session` takes `{ cookie }` (at most 8 KiB) and answers `{ userId, sessionId, expiresAt }` only for a live session of a verified user. It answers 401 for anything else and 503 when the store fails. Telemetry is disabled, and startup refuses `BETTER_AUTH_TELEMETRY`, because that variable would override the option. Account pages are server-rendered with an escaped English/Chinese dictionary and one nonce-bound script under a strict Content-Security-Policy. The script loads the configured provider's SDK and sends its result as `X-Captcha-Response`: the Turnstile token, the Alibaba Cloud `captchaVerifyParam` unchanged, or Tencent's `{ticket, randstr}` as JSON. Tencent disaster-recovery tickets (`trerror…`) are not sent, and the server would refuse them. The page embeds only public widget parameters. The CSP adds exactly the SDK, frame, connect and image sources of that provider. Alibaba's API hosts are derived from the instance identity per the [allowlist](https://help.aliyun.com/zh/captcha/captcha2-0/user-guide/captcha-2-0-client-access-faq), and the [Tencent](https://cloud.tencent.com/document/product/1110/36828) SDK host is `turing.captcha.qcloud.com`. The Alibaba and Tencent SDKs inject inline styles, so those pages allow `'unsafe-inline'` styles and drop the style nonce. Scripts stay nonce-bound. After sign-in they link only to the user's own `/u/<id>/` route; see `safeReturnPath`.
 
 </details>
 
@@ -49,10 +83,11 @@ See the [native deployment design](../../../../docs/superpowers/specs/2026-10-11
 ## Known Limitations and Deferred Work
 
 - Account pages are server-rendered HTML rather than a React bundle. They contribute no Harness UI changes.
-- The `sendmail` transport and Turnstile verification have not been exercised against real providers. Local tests use the in-memory mailbox and the fixed test CAPTCHA.
+- No provider has been exercised against a real account. Tests mock provider HTTP and use a local TLS SMTP relay. The signing code matches the providers' published known-answer examples. The live API responses, the widget SDKs and the CSP source lists still need verification on a real host.
+- With `none`, signing up with an already registered email address can consume an invite if Better Auth answers success to avoid revealing the account.
 - `node:sqlite` is still marked experimental in Node 22 and prints a warning at startup.
 
 <a id="dev-note"></a>
 ## Dev Note
 
-`registration.spec.ts` runs the real service on temporary sockets. `registration.e2e.ts` drives a real Chrome through register, verify, sign-in, Harness entry and sign-out when `PUBLIC_HARNESS_E2E_BROWSER` names a Chrome executable.
+`registration.spec.ts` runs the real service on temporary sockets. `providers.spec.ts` covers mocked Alibaba Cloud, Tencent Cloud and Turnstile calls, fail-closed parsing, timeouts and the page CSP. `signing.spec.ts` holds the signature known-answer tests. `smtp.spec.ts` uses a local TLS and STARTTLS relay with a throwaway certificate, and `invite.spec.ts` covers single use, expiry, revocation, concurrency and the CLI. When `PUBLIC_HARNESS_E2E_BROWSER` names a Chrome executable, `registration.e2e.ts` drives a real Chrome through register, verify, sign-in, Harness entry and sign-out. `widgets.e2e.ts` runs each widget's glue in Chrome against intercepted SDK stubs.

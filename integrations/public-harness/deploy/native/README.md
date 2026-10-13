@@ -25,7 +25,7 @@ This directory holds the native deployment of public Harness. Each user runs as 
 <a id="install-on-a-dedicated-host"></a>
 ## Install on a dedicated host
 
-Installation is operator work, and every step needs root on a dedicated Ubuntu 24.04 host that runs nothing else. Mount an XFS filesystem with user quotas at `/srv/dsh-public`. Set `kernel.apparmor_restrict_unprivileged_userns=1`, and make `/etc/resolv.conf` a regular root-owned file. Install the release, toolchain and pinned browser as root-owned, read-only trees, and verify the browser with `install-browser.sh verify`. Copy `systemd/sysusers.conf` and `systemd/tmpfiles.conf` to `/etc/sysusers.d/dsh-public.conf` and `/etc/tmpfiles.d/dsh-public.conf`, then apply them. Copy the four `config/*.json.example` files to `/etc/dsh-public/` and fill in the host name, group IDs and secrets. Write the profiles with `writeProductionProfile(home, name, { runtime: 'systemd' })` for `identity`, `team-router`, `provisioner` and `quota`. Install the units and the [Caddyfile](Caddyfile), then run the preflight:
+Installation is operator work, and every step needs root on a dedicated Ubuntu 24.04 host that runs nothing else. Mount an XFS filesystem with user quotas at `/srv/dsh-public`. Set `kernel.apparmor_restrict_unprivileged_userns=1`, and make `/etc/resolv.conf` a regular root-owned file. Install the release, toolchain and pinned browser as root-owned, read-only trees, and verify the browser with `install-browser.sh verify`. Copy `systemd/sysusers.conf` and `systemd/tmpfiles.conf` to `/etc/sysusers.d/dsh-public.conf` and `/etc/tmpfiles.d/dsh-public.conf`, then apply them. Copy the four `config/*.json.example` files to `/etc/dsh-public/` and fill in the host name and group IDs. Create `/etc/dsh-public/identity-secrets/identity.env` (root, 0600) from [identity.env.example](config/identity.env.example) with the mail and CAPTCHA providers and their secrets. The identity unit loads it with `EnvironmentFile=`, and a missing variable refuses startup. Write the profiles with `writeProductionProfile(home, name, { runtime: 'systemd' })` for `identity`, `team-router`, `provisioner` and `quota`. Install the units and the [Caddyfile](Caddyfile), then run the preflight:
 
 ```bash
 tsx deploy/native/scripts/host-preflight.ts /etc/dsh-public/provisioner.json /etc/dsh-public/native.json
@@ -39,7 +39,7 @@ The preflight only reads the host. It reports the OS version, cgroup controllers
 | Service | Account | Listens on | Reaches |
 | --- | --- | --- | --- |
 | Caddy | `caddy` | public 443 | identity public socket, router socket |
-| `dsh-identity` | `dsh-identity` | `identity/public.sock`, `identity-session/session.sock` | its SQLite file, sendmail, CAPTCHA provider |
+| `dsh-identity` | `dsh-identity` | `identity/public.sock`, `identity-session/session.sock` | its SQLite file, sendmail or SMTP relay, CAPTCHA provider (Alibaba Cloud, Tencent Cloud or Turnstile) |
 | `dsh-router` | `dsh-router` | `router/router.sock` | identity session socket, provisioner socket, instance sockets |
 | `dsh-provisioner` | root | `control/provisioner.sock` | accounts, quotas, AppArmor, nftables, system units |
 | `dsh-quota` | `dsh-quota` | quota control socket and per-instance loopback ports | the model provider |

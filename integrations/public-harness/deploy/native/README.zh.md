@@ -25,7 +25,7 @@ kind: "package-library"
 <a id="install-on-a-dedicated-host"></a>
 ## 在专用主机上安装
 
-安装由运维人员完成，每一步都需要在不运行其他服务的专用 Ubuntu 24.04 主机上使用 root 权限。在 `/srv/dsh-public` 挂载启用用户配额的 XFS 文件系统。设置 `kernel.apparmor_restrict_unprivileged_userns=1`，并让 `/etc/resolv.conf` 成为 root 拥有的普通文件。把发布包、工具链和固定版本浏览器安装为 root 拥有的只读目录树，并用 `install-browser.sh verify` 校验浏览器。把 `systemd/sysusers.conf` 和 `systemd/tmpfiles.conf` 复制为 `/etc/sysusers.d/dsh-public.conf` 和 `/etc/tmpfiles.d/dsh-public.conf` 并应用。把四个 `config/*.json.example` 复制到 `/etc/dsh-public/`，填入主机名、组 ID 和密钥。用 `writeProductionProfile(home, name, { runtime: 'systemd' })` 为 `identity`、`team-router`、`provisioner` 和 `quota` 写入 profile。安装 unit 和 [Caddyfile](Caddyfile)，然后运行预检：
+安装由运维人员完成，每一步都需要在不运行其他服务的专用 Ubuntu 24.04 主机上使用 root 权限。在 `/srv/dsh-public` 挂载启用用户配额的 XFS 文件系统。设置 `kernel.apparmor_restrict_unprivileged_userns=1`，并让 `/etc/resolv.conf` 成为 root 拥有的普通文件。把发布包、工具链和固定版本浏览器安装为 root 拥有的只读目录树，并用 `install-browser.sh verify` 校验浏览器。把 `systemd/sysusers.conf` 和 `systemd/tmpfiles.conf` 复制为 `/etc/sysusers.d/dsh-public.conf` 和 `/etc/tmpfiles.d/dsh-public.conf` 并应用。把四个 `config/*.json.example` 复制到 `/etc/dsh-public/`，填入主机名和组 ID。参照 [identity.env.example](config/identity.env.example) 创建 `/etc/dsh-public/identity-secrets/identity.env`（root，0600），写入邮件和 CAPTCHA 服务及其密钥。identity unit 通过 `EnvironmentFile=` 加载该文件，缺少变量时拒绝启动。用 `writeProductionProfile(home, name, { runtime: 'systemd' })` 为 `identity`、`team-router`、`provisioner` 和 `quota` 写入 profile。安装 unit 和 [Caddyfile](Caddyfile)，然后运行预检：
 
 ```bash
 tsx deploy/native/scripts/host-preflight.ts /etc/dsh-public/provisioner.json /etc/dsh-public/native.json
@@ -39,7 +39,7 @@ tsx deploy/native/scripts/host-preflight.ts /etc/dsh-public/provisioner.json /et
 | 服务 | 账号 | 监听 | 可访问 |
 | --- | --- | --- | --- |
 | Caddy | `caddy` | 公网 443 | 身份公共 socket、路由器 socket |
-| `dsh-identity` | `dsh-identity` | `identity/public.sock`、`identity-session/session.sock` | 自己的 SQLite 文件、sendmail、CAPTCHA 服务 |
+| `dsh-identity` | `dsh-identity` | `identity/public.sock`、`identity-session/session.sock` | 自己的 SQLite 文件、sendmail 或 SMTP 中继、CAPTCHA 服务（阿里云、腾讯云或 Turnstile） |
 | `dsh-router` | `dsh-router` | `router/router.sock` | 身份会话 socket、配置服务 socket、实例 socket |
 | `dsh-provisioner` | root | `control/provisioner.sock` | 账号、配额、AppArmor、nftables、system unit |
 | `dsh-quota` | `dsh-quota` | 额度控制 socket 和每实例回环端口 | 模型服务商 |
