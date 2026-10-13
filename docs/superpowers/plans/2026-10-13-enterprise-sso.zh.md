@@ -170,3 +170,12 @@ export interface SsoStore {
 
 - [ ] **步骤 1：编写失败的测试**，密钥每次运行由 openssl 生成：环境变量解析（固定证书文件、拒绝私钥、NameID 格式、偏差上限）；Redirect binding 的 AuthnRequest；Response 签名、Assertion 签名和两者都签名；未签名、外部密钥和被包装的响应；Issuer、Audience、Recipient、Destination 和 InResponseTo；带偏差的时间窗口；assertion 重放、transient NameID 和 IdP 错误状态；SP metadata；经过监听器的跨站 POST 回弹、缺失 cookie、IdP 发起的 POST 和群组允许列表；IdP 位于另一站点时的 Chrome 运行。
 - [ ] **步骤 2：运行**，预期失败。**步骤 3：实现** provider、ACS 和接线。**步骤 4：运行**单元、类型检查、e2e 和文档门禁；提交；推送。
+
+### 任务 12：LDAP / AD 提供方
+
+**文件：** 新建 `src/sso/ldap.ts`、`tests/mock-ldap.ts`、`tests/ldap.spec.ts`、`tests/ldap-flow.spec.ts`；修改 `src/sso/config.ts`、`src/sso/provider.ts`、`src/sso/plugin.ts`、`src/pages.ts`、`src/index.ts`、`src/auth.ts`、`package.json`、`tests/sso-config.spec.ts`、`tests/sso.e2e.ts`、README、环境变量示例和设计文档。
+
+**接口：** 在跳转式 `SsoProvider` 之外新增 `PasswordSsoProvider`（`kind: 'ldap'`，`authenticate({ username, password })`），并在任务 5 的插件中新增 `POST /api/auth/sso/ldap/sign-in`，复用同一套允许列表、绑定和会话步骤。产出 `createLdapProvider(config)`、`escapeFilterValue`、`escapeDnValue`、`formatObjectGuid`、`ldapPlaceholderEmail`、`normalizeDn`，以及 `SsoConfig` 的 `ldap` 变体。subject 为 `SERVER_ID|objectGUID` 或 `SERVER_ID|entryUUID`。
+
+- [ ] **步骤 1：编写失败的测试**，使用 127.0.0.1 上的 mock LDAP 服务器和每次运行生成的 CA：环境变量解析（必须 TLS、明文 LDAP 仅限回环、CA 文件、过滤器括号平衡、nested 仅限 AD）；RFC 4515 与 RFC 4514 转义；使用固定 CA 的 LDAPS 和 StartTLS；注入尝试；空口令；禁用的 AD 账户；memberOf、nested 和 search 三种组模式；经由监听器的统一错误、锁定和超时 503；在 Chrome 中运行登录表单。
+- [ ] **步骤 2：运行**，预期失败。**步骤 3：实现**提供方、端点、表单和接线。**步骤 4：运行**单元测试、类型检查、e2e 和文档门禁；提交；推送。

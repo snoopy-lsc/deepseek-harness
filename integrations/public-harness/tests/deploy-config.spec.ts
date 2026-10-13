@@ -529,6 +529,12 @@ describe('native deployment composition', () => {
         ...Object.fromEntries(samlPairs), DSH_SAML_IDP_CERT_FILE: join(certDir, 'c') })
       expect(saml.sso).toMatchObject({ kind: 'saml', nameIdFormat: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent', wantAssertionsSigned: false, clockSkewMs: 60_000 })
     } finally { rmSync(certDir, { recursive: true, force: true }) }
+    const ldapPairs = (await text('deploy/native/config/identity.env.example')).split('\n').filter(line => /^# DSH_LDAP_[A-Z_]+=/.test(line))
+      .map(line => { const [key, ...rest] = line.slice(2).split('='); return [key!, rest.join('=')] as [string, string] })
+    expect(ldapPairs.map(([key]) => key)).toContain('DSH_LDAP_CA_FILE')
+    const ldap = parseIdentityConfig(await json('deploy/native/config/identity.json.example'), { ...env, DSH_SSO_PROVIDER: 'ldap', DSH_SSO_ALLOWED_GROUPS: 'CN=Harness,OU=Groups,DC=corp,DC=example',
+      ...Object.fromEntries(ldapPairs), DSH_LDAP_CA_FILE: undefined, DSH_LDAP_BIND_PASSWORD: 'placeholder0' })
+    expect(ldap.sso).toMatchObject({ kind: 'ldap', startTls: false, groupMode: 'nested', activeDirectory: true, serverId: 'dc1.corp.example:636', timeoutMs: 5000 })
     expect(units['dsh-identity']).toMatch(/^EnvironmentFile=\/etc\/dsh-public\/identity-secrets\/identity\.env$/m)
     expect(identity.mode).toBe('production')
     expect(identity.enrollmentOpen).toBe(false)

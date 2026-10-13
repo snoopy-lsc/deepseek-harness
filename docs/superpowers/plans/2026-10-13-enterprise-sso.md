@@ -170,3 +170,12 @@ export interface SsoStore {
 
 - [ ] **Step 1: Write failing tests** with keys generated per run by openssl: environment parsing (pinned certificate file, refused private key, NameID formats, skew bound); the Redirect-binding AuthnRequest; signed Response, signed Assertion and both; unsigned, foreign-key and wrapped responses; Issuer, Audience, Recipient, Destination and InResponseTo; the time window with skew; assertion replay, transient NameID and IdP error status; SP metadata; the cross-site post bounce, missing cookie, IdP-initiated post and the group allow-list through the listener; a Chrome run with the IdP on another site.
 - [ ] **Step 2: Run**; expect failure. **Step 3: Implement** the provider, ACS and wiring. **Step 4: Run** unit, typecheck, e2e and doc gates; commit; push.
+
+### Task 12: LDAP / AD Provider
+
+**Files:** Create `src/sso/ldap.ts`, `tests/mock-ldap.ts`, `tests/ldap.spec.ts`, `tests/ldap-flow.spec.ts`; modify `src/sso/config.ts`, `src/sso/provider.ts`, `src/sso/plugin.ts`, `src/pages.ts`, `src/index.ts`, `src/auth.ts`, `package.json`, `tests/sso-config.spec.ts`, `tests/sso.e2e.ts`, the README, the env example and the design.
+
+**Interfaces:** Adds `PasswordSsoProvider` (`kind: 'ldap'`, `authenticate({ username, password })`) beside the redirect `SsoProvider`, and `POST /api/auth/sso/ldap/sign-in` to the Task 5 plugin, which feeds the same allow-list, binding and session step. Produces `createLdapProvider(config)`, `escapeFilterValue`, `escapeDnValue`, `formatObjectGuid`, `ldapPlaceholderEmail`, `normalizeDn` and the `ldap` variant of `SsoConfig`. The subject is `SERVER_ID|objectGUID` or `SERVER_ID|entryUUID`.
+
+- [ ] **Step 1: Write failing tests** against a 127.0.0.1 mock LDAP server with a CA generated per run: environment parsing (TLS required, loopback-only plain LDAP, CA file, filter balance, AD-only nested mode); RFC 4515 and RFC 4514 escaping; LDAPS and StartTLS with the pinned CA; injection attempts; empty password; disabled AD account; memberOf, nested and search group modes; generic errors, lockout and 503 on timeout through the listener; a Chrome run of the login form.
+- [ ] **Step 2: Run**; expect failure. **Step 3: Implement** the provider, endpoint, form and wiring. **Step 4: Run** unit, typecheck, e2e and doc gates; commit; push.

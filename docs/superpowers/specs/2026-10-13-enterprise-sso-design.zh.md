@@ -162,11 +162,17 @@ EnterpriseAuthProvider
 
 ### LDAP / AD（`ldap`）
 
-1. 登录页收集用户名（非密码表单进前端日志）；服务端对 `DSH_LDAP_URL` 建立连接，优先 StartTLS 或 LDAPS，校验证书。
-2. 用搜索账户或 DN 模板定位用户 DN，再以用户 DN + 口令 bind；bind 成功即认证成功，**口令不落盘、不记入日志**。
-3. 可选检索 `memberOf` / 组过滤器，做只读组映射。
-4. `subject` 使用 objectGUID、`entryUUID` 或稳定的 `sAMAccountName@domain` 策略（部署时固定一种，禁止漂移）。
-5. 不支持把 LDAP 口令同步成 Better Auth 本地密码哈希，除非紧急管理路径显式开通且与目录无关。
+服务按 [RFC 4511](https://datatracker.ietf.org/doc/html/rfc4511) 与 [RFC 4513](https://datatracker.ietf.org/doc/html/rfc4513) 通过固定版本的 [ldapts](https://github.com/ldapts/ldapts) 9.2.0 访问目录。登录是登录页上的表单，把 `{ username, password }` 提交到 `/api/auth/sso/ldap/sign-in`，不经过跳转。
+
+1. **传输**：`DSH_LDAP_URL` 为 `ldaps://`，或 `ldap://` 加 `DSH_LDAP_STARTTLS=true`（[RFC 4511 §4.14](https://datatracker.ietf.org/doc/html/rfc4511#section-4.14)）。明文 `ldap://` 只在本地模式且主机为回环地址时启动。TLS 1.2 及以上；`DSH_LDAP_CA_FILE` 固定可信 CA（只能是 PEM 证书，含私钥则拒绝启动），否则使用系统证书库。校验主机名。
+2. **先搜索再 bind**：每次登录一条连接，不复用连接池，因此一个用户的 bind 不会泄漏到另一次登录。服务账户（环境变量 `DSH_LDAP_BIND_DN`、`DSH_LDAP_BIND_PASSWORD`）在 `DSH_LDAP_BASE_DN` 下搜索 `(&<DSH_LDAP_USER_FILTER>(<用户名属性>=<转义值>))`，值按 [RFC 4515](https://datatracker.ietf.org/doc/html/rfc4515) §3 转义，必须恰好匹配一个条目。然后用该条目的 DN 和提交的口令 bind。DN 来自服务器，不由输入拼接（RFC 4514 转义函数已实现，留作后用）。任何情况下都会 unbind。
+3. **空口令**在任何网络调用前拒绝：[RFC 4513 §5.1.2](https://datatracker.ietf.org/doc/html/rfc4513#section-5.1.2) 规定带 DN 的空口令 bind 是未认证 bind，很多服务器会接受。
+4. **Subject**：`<DSH_LDAP_SERVER_ID>|<不可变 ID>`。AD 用 `objectGUID`（[objectGUID](https://learn.microsoft.com/en-us/windows/win32/adschema/a-objectguid)，格式化为 GUID 字符串），OpenLDAP 用 `entryUUID`（[RFC 4530](https://datatracker.ietf.org/doc/html/rfc4530)）；`DSH_LDAP_ID_ATTRIBUTE` 可覆盖。服务器 ID 默认是 URL 的主机和端口。用户改名或移动后账户不变。
+5. **组（D7）**：`DSH_LDAP_GROUP_MODE` 为 `memberOf`（直接所属组）、`nested`（仅 AD：`LDAP_MATCHING_RULE_IN_CHAIN`，见[搜索过滤器语法](https://learn.microsoft.com/en-us/windows/win32/adsi/search-filter-syntax)）或 `search`（在 `DSH_LDAP_GROUP_BASE_DN` 下搜索 `(&(objectClass=<类>)(member=<用户 DN>))`）。`DSH_SSO_ALLOWED_GROUPS` 列出组 DN，以 `;` 分隔，规范化大小写和空格后比较。
+6. **禁用账户（AD）**：`userAccountControl` 含 `ACCOUNTDISABLE`（0x2）则拒绝（[userAccountControl](https://learn.microsoft.com/en-us/troubleshoot/windows-server/active-directory/useraccountcontrol-manipulate-account-properties)）。AD 对禁用、过期或锁定账户也会拒绝 bind。
+7. **邮箱（D2/D4）**：`DSH_LDAP_EMAIL_ATTRIBUTE`（默认 `mail`），否则为 `ldap-<subject 哈希>@sso.invalid`。
+8. **不可枚举用户**：口令错误、用户不存在、多个匹配和账户禁用都在至少 300 ms 后返回相同的 401。15 分钟内同一用户名加 IP 失败 5 次，或同一用户名失败 20 次，在窗口结束前返回 429（保存在内存中，重启清零）。组不在允许列表时，只有口令正确才返回 403。
+9. **故障**：服务账户 bind 失败、超时（`DSH_LDAP_TIMEOUT_MS`，默认 5000）或任何意外错误返回 503。口令从不记录或存储，也不会复制成 Better Auth 口令哈希。
 
 <a id="better-auth-integration"></a>
 ## 与 Better Auth 及现有身份的集成
@@ -286,4 +292,4 @@ EnterpriseAuthProvider
 - 钉钉：[授权链接](https://open.dingtalk.com/document/development/obtain-identity-credentials)、[用户 token](https://open.dingtalk.com/document/development/obtain-user-token)、[当前用户](https://open.dingtalk.com/document/development/dingtalk-retrieve-user-information)、[应用 token](https://open.dingtalk.com/document/development/obtain-the-access-token-of-an-internal-app)、[unionId 查 userid](https://open.dingtalk.com/document/development/query-a-user-by-the-union-id)、[成员详情](https://open.dingtalk.com/document/development/query-user-details)、[子部门 ID](https://open.dingtalk.com/document/development/obtain-a-sub-department-id-list-v2)
 - OIDC / OAuth：[OpenID Connect Core](https://openid.net/specs/openid-connect-core-1_0.html)、[RFC 7636 PKCE](https://datatracker.ietf.org/doc/html/rfc7636)
 - SAML：[OASIS SAML 2.0 技术概述](http://docs.oasis-open.org/security/saml/Post2.0/sstc-saml-tech-overview-2.0.html)、[Core](https://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf)、[Bindings](https://docs.oasis-open.org/security/saml/v2.0/saml-bindings-2.0-os.pdf)、[Profiles](https://docs.oasis-open.org/security/saml/v2.0/saml-profiles-2.0-os.pdf)、[@node-saml/node-saml](https://github.com/node-saml/node-saml)
-- LDAP：部署侧使用 LDAPS / StartTLS；具体属性映射依客户目录而定
+- LDAP：[RFC 4511](https://datatracker.ietf.org/doc/html/rfc4511)、[RFC 4513](https://datatracker.ietf.org/doc/html/rfc4513)、[RFC 4514](https://datatracker.ietf.org/doc/html/rfc4514)、[RFC 4515](https://datatracker.ietf.org/doc/html/rfc4515)、[RFC 4530](https://datatracker.ietf.org/doc/html/rfc4530)、[AD 搜索过滤器语法](https://learn.microsoft.com/en-us/windows/win32/adsi/search-filter-syntax)、[objectGUID](https://learn.microsoft.com/en-us/windows/win32/adschema/a-objectguid)、[userAccountControl](https://learn.microsoft.com/en-us/troubleshoot/windows-server/active-directory/useraccountcontrol-manipulate-account-properties)、[ldapts](https://github.com/ldapts/ldapts)
