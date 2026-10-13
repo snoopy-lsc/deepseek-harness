@@ -8,6 +8,7 @@ import type { IdentityDatabase } from './database.ts'
 import { MAX_SESSION_WIRE_BYTES, SESSION_PATH } from './session-wire.ts'
 import type { CaptchaProvider } from './captcha.ts'
 import { IdentityUnavailableError } from './transports.ts'
+import { checkEmergency, EmergencyDeniedError } from './sso/emergency.ts'
 import { parseUserId } from '@public-harness/contracts'
 
 const MAX_BODY = 64 * 1024
@@ -76,6 +77,8 @@ export interface PublicDeps {
   readonly captcha: CaptchaProvider
   readonly pages?: PagesHandler
   readonly clock?: () => number
+  /** Better Auth secret, used to open sealed emergency TOTP secrets. */
+  readonly serviceSecret?: string
 }
 
 /** Handle one public request: origin checks, admission gates, then Better Auth.
@@ -113,10 +116,30 @@ export function publicHandler(deps: PublicDeps): (req: IncomingMessage, res: Ser
       const url = new URL(req.url ?? '/', config.publicOrigin)
       if (deps.pages !== undefined && await deps.pages(req, res, url)) return
       if (!url.pathname.startsWith('/api/auth/')) throw new HttpError(404, 'not-found')
-      const ip = clientIp(req, config.clientIpHeader), route = url.pathname.slice('/api/auth'.length)
-      const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : await readBody(req, MAX_BODY)
+      const ip = clientIp(req, config.clientIpHeader)
+      let route = url.pathname.slice('/api/auth'.length)
+      let body = req.method === 'GET' || req.method === 'HEAD' ? undefined : await readBody(req, MAX_BODY)
       // Undo a single-use claim when the request it admitted does not complete, so a failure never burns a valid token or invite.
       let release: (() => void) | undefined
+      let emergency: { userId: string; email: string } | undefined
+      if (route === '/emergency/sign-in') {
+        if (!config.emergency.enabled || deps.serviceSecret === undefined) throw new HttpError(404, 'not-found')
+        limit(`emergency-ip:${ip}`, HOUR, 20)
+        let parsed: unknown
+        try { parsed = JSON.parse(body?.toString('utf8') ?? '') } catch { parsed = undefined }
+        try {
+          const admitted = checkEmergency({ config: config.emergency, store: database.sso, serviceSecret: deps.serviceSecret, userIdByEmail, clock }, ip, parsed)
+          emergency = { userId: admitted.userId, email: admitted.email }
+          // Only now does the request reach Better Auth, as an ordinary password sign-in that also requires a verified email (D4).
+          body = Buffer.from(JSON.stringify({ email: admitted.email, password: admitted.password }))
+          route = '/sign-in/email'
+          url.pathname = '/api/auth/sign-in/email'
+        } catch (error) {
+          if (!(error instanceof EmergencyDeniedError)) throw error
+          database.sso.audit({ event: 'emergency-sign-in', outcome: 'denied', ip, detail: error.detail, ...error.email === undefined ? {} : { email: error.email } }, clock())
+          throw new HttpError(403, 'emergency-denied')
+        }
+      }
       const sso = config.sso.kind !== 'off'
       if (route === '/sign-up/email') {
         // SSO mode: employees arrive through the IdP; only invited contractors may register (decision D3).
@@ -138,7 +161,7 @@ export function publicHandler(deps: PublicDeps): (req: IncomingMessage, res: Ser
       } else if (route === '/sign-in/email') {
         limit(`login-ip:${ip}`, 60_000, config.limits.loginPerIpPerMinute)
         // SSO mode: the password form serves invited contractors only; SSO and emergency accounts are refused here.
-        if (sso && origin(jsonEmail(body)) !== 'invite') throw new HttpError(403, 'sso-only')
+        if (sso && emergency === undefined && origin(jsonEmail(body)) !== 'invite') throw new HttpError(403, 'sso-only')
       } else if (route === '/request-password-reset') {
         if (deps.captcha.invites) limit(`reset-ip:${ip}`, HOUR, config.limits.signupPerIpPerHour)
         else await captcha(req, ip)
@@ -167,6 +190,14 @@ export function publicHandler(deps: PublicDeps): (req: IncomingMessage, res: Ser
       } catch (error) {
         release?.()
         throw error
+      }
+      if (emergency !== undefined) {
+        database.sso.audit({ event: 'emergency-sign-in', outcome: response.status < 400 ? 'ok' : 'denied', ip, ...emergency, ...response.status < 400 ? {} : { detail: 'password' } }, clock())
+        if (response.status >= 400) {
+          // Same answer as every other refusal, so the reply never tells which factor failed.
+          for (const name of [...response.headers.keys()]) if (name !== 'set-cookie') response.headers.delete(name)
+          throw new HttpError(403, 'emergency-denied')
+        }
       }
       if (response.status >= 400) release?.()
       // Invite registrations are recorded so SSO mode can tell contractors from employees and never bind them to a subject.

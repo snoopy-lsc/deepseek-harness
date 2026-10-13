@@ -1,7 +1,8 @@
 /** Identity service entry: Better Auth registration and sessions, the private session socket and account pages. */
 import type { Context, Fiber } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { readFile, stat } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
+import { readSecret } from './secret.ts'
 import type { Server } from 'node:http'
 import { createAuth } from './auth.ts'
 import { parseIdentityConfig, type IdentityConfig } from './config.ts'
@@ -17,18 +18,7 @@ import type { SsoProvider } from './sso/provider.ts'
 export { parseIdentityConfig, parseProviderEnv, type IdentityConfig } from './config.ts'
 export { createCaptchaProvider, type CaptchaProvider } from './captcha.ts'
 export { createMailTransport } from './mail.ts'
-
-/** Read the signing secret from a private file; it is never logged.
- * @param file Secret file path.
- * @returns Secret text.
- */
-export async function readSecret(file: string): Promise<string> {
-  const info = await stat(file)
-  if (!info.isFile() || (info.mode & 0o077) !== 0) throw new Error('identity secret file must be private')
-  const secret = (await readFile(file, 'utf8')).trim()
-  if (secret.length < 32) throw new Error('identity secret is too short')
-  return secret
-}
+export { readSecret } from './secret.ts'
 
 /** Start both listeners; signup alone allocates no account, instance or model grant.
  * @param config Validated settings.
@@ -42,9 +32,10 @@ export async function startIdentity(config: IdentityConfig, overrides: { mail?: 
   const servers: Server[] = []
   try {
     const sso = overrides.sso ?? (config.sso.kind === 'oidc' ? createOidcProvider(config.sso) : undefined)
-    const auth = await createAuth(config, database, await readSecret(config.secretFile), overrides.mail ?? createMailTransport(config.mail), sso, overrides.clock)
+    const serviceSecret = await readSecret(config.secretFile)
+    const auth = await createAuth(config, database, serviceSecret, overrides.mail ?? createMailTransport(config.mail), sso, overrides.clock)
     const captcha = overrides.captcha ?? createCaptchaProvider(config.captcha)
-    servers.push(await listenUnix(publicHandler({ config, auth, database, captcha, pages: createAccountPages(config, captcha),
+    servers.push(await listenUnix(publicHandler({ config, auth, database, captcha, serviceSecret, pages: createAccountPages(config, captcha),
       ...overrides.clock === undefined ? {} : { clock: overrides.clock } }), config.publicSocket, 0o660))
     servers.push(await listenUnix(sessionHandler(auth), config.sessionSocket, 0o660, config.sessionSocketGid))
   } catch (error) {
