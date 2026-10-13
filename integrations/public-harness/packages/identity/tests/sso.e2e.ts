@@ -6,6 +6,7 @@ import { chromium, type Browser } from 'playwright-core'
 import { startIdentity } from '../src/index.ts'
 import { call, mailbox, setup } from './helpers.ts'
 import { MOCK_CLIENT_ID, MOCK_CLIENT_SECRET, startMockIdp, type MockIdp } from './mock-oidc.ts'
+import { MOCK_AGENT_ID, MOCK_CORP_ID, MOCK_WECOM_SECRET, startMockWecom } from './mock-wecom.ts'
 
 const executable = process.env.PUBLIC_HARNESS_E2E_BROWSER
 // Its own port, so this file can run in parallel with registration.e2e.ts, which owns 18443.
@@ -13,14 +14,14 @@ const ORIGIN = 'http://127.0.0.1:18444'
 const cleanups: Array<() => Promise<void>> = []
 
 /** Stand-in for the HTTPS proxy: every path goes to the identity socket. */
-async function front(identitySocket: string): Promise<Server> {
+async function front(identitySocket: string, origin = ORIGIN): Promise<Server> {
   const server = createServer((req, res) => {
     const upstream = httpRequest({ socketPath: identitySocket, method: req.method, path: req.url, headers: { ...req.headers, 'x-forwarded-for': '127.0.0.1' }, agent: false },
       reply => { res.writeHead(reply.statusCode ?? 502, reply.headers); reply.pipe(res) })
     upstream.once('error', () => { if (!res.headersSent) res.writeHead(502); res.end() })
     req.pipe(upstream)
   })
-  await new Promise<void>(resolve => server.listen(Number(new URL(ORIGIN).port), '127.0.0.1', resolve))
+  await new Promise<void>(resolve => server.listen(Number(new URL(origin).port), '127.0.0.1', resolve))
   return server
 }
 
@@ -66,6 +67,33 @@ describe.skipIf(executable === undefined)('enterprise SSO in a real browser', ()
     await page.waitForURL(/\/account\/login\?sso_error=group/)
     await page.waitForFunction(() => /群组/.test(document.querySelector('[role=alert]')?.textContent ?? ''))
     expect((await context.cookies(ORIGIN)).some(entry => entry.name === 'dsh-account.session_token')).toBe(false)
+    await context.close()
+  })
+})
+
+describe.skipIf(executable === undefined)('WeCom QR login in a real browser', () => {
+  const WECOM_ORIGIN = 'http://127.0.0.1:18445'
+  const local: Array<() => Promise<void>> = []
+  let browser: Browser
+  beforeAll(async () => {
+    const mock = await startMockWecom(); local.push(() => mock.close())
+    const { config } = await setup({ publicOrigin: WECOM_ORIGIN }, { DSH_SSO_PROVIDER: 'wecom', DSH_WECOM_CORP_ID: MOCK_CORP_ID, DSH_WECOM_AGENT_ID: MOCK_AGENT_ID,
+      DSH_WECOM_SECRET: MOCK_WECOM_SECRET, DSH_WECOM_API_BASE: mock.base, DSH_WECOM_LOGIN_URL: mock.loginUrl, DSH_SSO_ALLOWED_GROUPS: '2' })
+    const identity = await startIdentity(config, { mail: mailbox().mail }); local.push(() => identity.close())
+    const proxy = await front(config.publicSocket, WECOM_ORIGIN); local.push(async () => { proxy.closeAllConnections(); proxy.close() })
+    browser = await chromium.launch({ executablePath: executable!, headless: true, chromiumSandbox: false })
+    local.push(() => browser.close())
+  })
+  afterAll(async () => { for (const cleanup of local.splice(0).reverse()) await cleanup() })
+
+  it('scan_lands_on_the_account_page', async () => {
+    // The mock login page stands in for the QR scan and redirects straight back with a code.
+    const context = await browser.newContext({ locale: 'zh-CN' }), page = await context.newPage()
+    await page.goto(`${WECOM_ORIGIN}/account/login`)
+    await page.click('[data-sso-start]')
+    await page.waitForURL(/\/account\/\?return=%2Fu%2F/)
+    await page.waitForFunction(() => /@sso\.invalid$/.test(document.querySelector('[data-session] p')?.textContent ?? ''))
+    expect((await context.cookies(WECOM_ORIGIN)).some(entry => entry.name === 'dsh-account.session_token')).toBe(true)
     await context.close()
   })
 })
