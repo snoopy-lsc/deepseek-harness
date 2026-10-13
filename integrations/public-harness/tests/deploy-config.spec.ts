@@ -1,5 +1,6 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdir, mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { isMap, isScalar, isSeq, parse, parseDocument, type Document } from 'yaml'
@@ -518,6 +519,16 @@ describe('native deployment composition', () => {
     const ding = parseIdentityConfig(await json('deploy/native/config/identity.json.example'), { ...env, DSH_SSO_PROVIDER: 'dingtalk', DSH_SSO_ALLOWED_GROUPS: '2',
       ...Object.fromEntries(dingPairs.map(([key, value]) => [key, value || 'placeholder0'])) })
     expect(ding.sso).toMatchObject({ kind: 'dingtalk', oapiBase: 'https://oapi.dingtalk.com', exclusiveLogin: false, recursiveDepartments: true })
+    const samlPairs = (await text('deploy/native/config/identity.env.example')).split('\n').filter(line => /^# DSH_SAML_[A-Z_]+=/.test(line))
+      .map(line => { const [key, ...rest] = line.slice(2).split('='); return [key!, rest.join('=')] as [string, string] })
+    expect(samlPairs.map(([key]) => key)).toContain('DSH_SAML_IDP_CERT_FILE')
+    const certDir = mkdtempSync(join(tmpdir(), 'dsh-saml-example-'))
+    try {
+      execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=example-idp.test', '-keyout', join(certDir, 'k'), '-out', join(certDir, 'c')], { stdio: 'ignore' })
+      const saml = parseIdentityConfig(await json('deploy/native/config/identity.json.example'), { ...env, DSH_SSO_PROVIDER: 'saml', DSH_SSO_ALLOWED_GROUPS: 'engineering',
+        ...Object.fromEntries(samlPairs), DSH_SAML_IDP_CERT_FILE: join(certDir, 'c') })
+      expect(saml.sso).toMatchObject({ kind: 'saml', nameIdFormat: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent', wantAssertionsSigned: false, clockSkewMs: 60_000 })
+    } finally { rmSync(certDir, { recursive: true, force: true }) }
     expect(units['dsh-identity']).toMatch(/^EnvironmentFile=\/etc\/dsh-public\/identity-secrets\/identity\.env$/m)
     expect(identity.mode).toBe('production')
     expect(identity.enrollmentOpen).toBe(false)

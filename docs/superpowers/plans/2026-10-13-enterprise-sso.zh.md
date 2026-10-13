@@ -161,3 +161,12 @@ export interface SsoStore {
 
 - [ ] **步骤 1：编写失败的测试**：环境变量解析（必填 app key、secret、企业 ID 和数字部门；私有化 URL 只允许 HTTPS；专属账号登录）；官方授权链接参数；应用 token 缓存和失效时重取一次；其他组织、非成员、外部联系人、未激活成员和被拒绝的 code；有无递归时的子部门遍历；目录邮箱优先于占位地址；超时、HTTP 错误、未预期 errcode 和缺失部门时返回 503；经过监听器的完整流程；Chrome 对 mock 授权页的运行。
 - [ ] **步骤 2：运行**，预期失败。**步骤 3：实现** provider 和接线。**步骤 4：运行**单元、类型检查、e2e 和文档门禁；提交；推送。
+
+### 任务 11：SAML 2.0 Service Provider
+
+**文件：** 新建 `src/sso/saml.ts`、`tests/mock-saml.ts`、`tests/saml.spec.ts`、`tests/saml-flow.spec.ts`；修改 `src/sso/config.ts`、`src/sso/provider.ts`、`src/sso/store.ts`、`src/server.ts`、`src/index.ts`、`tests/helpers.ts`、`tests/sso-config.spec.ts`、`tests/sso.e2e.ts`、`package.json`（精确版本的 `@node-saml/node-saml`、`@xmldom/xmldom`、`xpath`；`xml-crypto` 只用于 mock）、env 示例和 README 中英文对。
+
+**接口：** 通过 ACS 使用任务 5 的插件：`/api/auth/sso/acs` 从服务自己的源重新提交 IdP 的跨站表单，再把 `SAMLResponse` 与 `RelayState` 作为 `code` 和 `state` 交给共享回调。产出 `createSamlProvider(config, { acsUrl, replay, clock? }): SsoProvider`（`kind: 'saml'`，带 `metadata()`）、`samlPlaceholderEmail(subject): string`、`SsoStore.useAssertion(id, expiresAt, now)`，以及 `SsoConfig` 的 `saml` 变体。subject 为 `IDP_ENTITY_ID|NameID`。
+
+- [ ] **步骤 1：编写失败的测试**，密钥每次运行由 openssl 生成：环境变量解析（固定证书文件、拒绝私钥、NameID 格式、偏差上限）；Redirect binding 的 AuthnRequest；Response 签名、Assertion 签名和两者都签名；未签名、外部密钥和被包装的响应；Issuer、Audience、Recipient、Destination 和 InResponseTo；带偏差的时间窗口；assertion 重放、transient NameID 和 IdP 错误状态；SP metadata；经过监听器的跨站 POST 回弹、缺失 cookie、IdP 发起的 POST 和群组允许列表；IdP 位于另一站点时的 Chrome 运行。
+- [ ] **步骤 2：运行**，预期失败。**步骤 3：实现** provider、ACS 和接线。**步骤 4：运行**单元、类型检查、e2e 和文档门禁；提交；推送。

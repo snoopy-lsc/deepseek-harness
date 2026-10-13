@@ -65,7 +65,7 @@
 | `wecom` | 企业微信网站扫码 | `DSH_WECOM_CORP_ID`、`DSH_WECOM_AGENT_ID`、`DSH_WECOM_SECRET` |
 | `dingtalk` | 钉钉网站扫码 | `DSH_DINGTALK_CLIENT_ID`、`DSH_DINGTALK_CLIENT_SECRET`、`DSH_DINGTALK_CORP_ID` |
 | `oidc` | OpenID Connect Authorization Code + PKCE | `DSH_OIDC_ISSUER`、`DSH_OIDC_CLIENT_ID`、`DSH_OIDC_CLIENT_SECRET`（若 IdP 要求）、`DSH_OIDC_SCOPES` |
-| `saml` | SAML 2.0 Service Provider | `DSH_SAML_SP_ENTITY_ID`、`DSH_SAML_IDP_METADATA_URL` 或元数据文件路径、`DSH_SAML_SP_CERT_FILE`、`DSH_SAML_SP_KEY_FILE` |
+| `saml` | SAML 2.0 Service Provider | `DSH_SAML_SP_ENTITY_ID`、`DSH_SAML_IDP_ENTITY_ID`、`DSH_SAML_IDP_SSO_URL`、`DSH_SAML_IDP_CERT_FILE` |
 | `ldap` | LDAP / Active Directory 绑定 | `DSH_LDAP_URL`、`DSH_LDAP_BIND_DN` 模板或搜索基、`DSH_LDAP_START_TLS`、可选 `DSH_LDAP_GROUP_FILTER` |
 
 生产模式拒绝把企业密钥写进 JSON；本地测试可用 mock provider（名称待定，例如 `test`），且不得在 `mode=production` 下启用。
@@ -144,13 +144,21 @@ EnterpriseAuthProvider
 
 ### SAML 2.0 SP（`saml`）
 
-身份服务作为 Service Provider（[SAML 2.0](http://docs.oasis-open.org/security/saml/Post2.0/sstc-saml-tech-overview-2.0.html)）：
+身份服务依据 [SAML 2.0 Core](https://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf)、[Bindings](https://docs.oasis-open.org/security/saml/v2.0/saml-bindings-2.0-os.pdf) 和 [Profiles](https://docs.oasis-open.org/security/saml/v2.0/saml-profiles-2.0-os.pdf) §4.1 中的 Web Browser SSO profile 充当 Service Provider。实现使用精确锁定版本的 [@node-saml/node-saml](https://github.com/node-saml/node-saml) 5.1.0：该库仍在维护、不含原生代码、只返回已验签的 XML，并拒绝含多个 assertion 的响应。库没有覆盖的 profile 检查由服务补上。
 
-1. 启动时加载 IdP 元数据（URL 仅 HTTPS 且校验证书，或 root 只读文件）；配置 SP entityID、ACS URL（例如 `https://<publicOrigin>/api/auth/sso/saml/acs`）。
-2. 登录：签发 AuthnRequest，`RelayState` 绑定短期服务端记录（防 CSRF），重定向至 IdP SSO URL。
-3. ACS 接收 Response：验签、校时、Audience、Recipient、InResponseTo；拒绝未签名或签名不匹配的断言。
-4. NameID 或约定 Attribute 作为 `subject`；可选 Attribute → 组映射。
-5. SP 签名证书与私钥仅来自 `*_CERT_FILE` / `*_KEY_FILE`（0600），从不进仓库。
+1. `/api/auth/sso/start` 保存一次性、绑定浏览器的 `state` 和 AuthnRequest ID，然后带着 deflate 压缩、不签名的 AuthnRequest（HTTP-Redirect binding）、`RelayState=state`、ACS URL 和所配置的 NameID 格式跳转到 `DSH_SAML_IDP_SSO_URL`。
+2. IdP 把 `SAMLResponse` 和 `RelayState` POST 到 `/api/auth/sso/acs`（HTTP-POST binding）。这个 POST 是跨站的，所以 SameSite=Lax 的绑定 cookie 不会带上。服务此时不做任何验证，只返回一个小页面（nonce CSP、`form-action 'self'`），从本站源重新提交同样的字段，这时 cookie 会被发送。重新提交仍然跨源时返回 403。
+3. 同源提交经过共享回调：state 连同浏览器 cookie 被消费一次，然后检查：
+   - **签名**：IdP 证书固定来自 `DSH_SAML_IDP_CERT_FILE`（一个或多个 PEM 证书；文件中出现私钥会拒绝启动）。Response 或 Assertion 至少一个必须签名；`DSH_SAML_WANT_ASSERTIONS_SIGNED=true` 时要求 Assertion 签名。未签名、签名错误和被包装（签名的 assertion 被移到一边、换上伪造的 assertion）的响应都会被拒绝。运行时从不拉取 metadata。
+   - **Profile 检查**：Issuer 等于 `DSH_SAML_IDP_ENTITY_ID`；Audience 等于 `DSH_SAML_SP_ENTITY_ID`；bearer SubjectConfirmation 的 Recipient 等于 ACS URL、InResponseTo 等于保存的请求 ID；Response 带 Destination 时必须等于 ACS URL；Status 为 Success；NotBefore 与 NotOnOrAfter 在 `DSH_SAML_CLOCK_SKEW_MS`（默认 60 秒，最多 300 秒）的偏差内成立。
+   - **重放**：每个 Assertion ID 记录在 `dsh_sso_assertion` 中直到过期，第二次使用会被拒绝。
+4. 实现决定：
+   - **Subject**：`IDP_ENTITY_ID|NameID`，保留大小写。`DSH_SAML_NAMEID_FORMAT` 取 `persistent`（默认）、`emailAddress` 或 `unspecified`，收到的格式必须与之相同。transient ID 每次登录都会变化，因此总是被拒绝。
+   - **群组（D7）**：取 `DSH_SAML_GROUP_ATTRIBUTE`（默认 `groups`；Azure AD 用对象 ID 发送 `http://schemas.microsoft.com/ws/2008/06/identity/claims/groups`）的值。
+   - **邮箱（D2/D4）**：取 `DSH_SAML_EMAIL_ATTRIBUTE`（默认 `email`），否则与企业微信、钉钉一样使用 `saml-<subject 哈希>@sso.invalid`。邮箱从不合并账户。
+   - **IdP 发起的 SSO**：拒绝，因为未经请求的响应没有可绑定浏览器的 RelayState 或 InResponseTo。
+   - **SP metadata**：`/api/auth/sso/metadata` 发布 entity ID、HTTP-POST ACS 和 NameID 格式。
+   - **失败**：所有无效响应都返回登录页错误，只有存储故障返回 503；服务端从不联系 IdP，因此不存在网络超时。
 
 ### LDAP / AD（`ldap`）
 
@@ -277,5 +285,5 @@ EnterpriseAuthProvider
 - 企业微信：[Web 登录链接](https://developer.work.weixin.qq.com/document/path/98152)、[获取用户登录身份](https://developer.work.weixin.qq.com/document/path/98176)、[gettoken](https://developer.work.weixin.qq.com/document/path/91039)、[读取成员](https://developer.work.weixin.qq.com/document/path/90196)、[获取子部门 ID 列表](https://developer.work.weixin.qq.com/document/path/95350)
 - 钉钉：[授权链接](https://open.dingtalk.com/document/development/obtain-identity-credentials)、[用户 token](https://open.dingtalk.com/document/development/obtain-user-token)、[当前用户](https://open.dingtalk.com/document/development/dingtalk-retrieve-user-information)、[应用 token](https://open.dingtalk.com/document/development/obtain-the-access-token-of-an-internal-app)、[unionId 查 userid](https://open.dingtalk.com/document/development/query-a-user-by-the-union-id)、[成员详情](https://open.dingtalk.com/document/development/query-user-details)、[子部门 ID](https://open.dingtalk.com/document/development/obtain-a-sub-department-id-list-v2)
 - OIDC / OAuth：[OpenID Connect Core](https://openid.net/specs/openid-connect-core-1_0.html)、[RFC 7636 PKCE](https://datatracker.ietf.org/doc/html/rfc7636)
-- SAML：[OASIS SAML 2.0 技术概述](http://docs.oasis-open.org/security/saml/Post2.0/sstc-saml-tech-overview-2.0.html)
+- SAML：[OASIS SAML 2.0 技术概述](http://docs.oasis-open.org/security/saml/Post2.0/sstc-saml-tech-overview-2.0.html)、[Core](https://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf)、[Bindings](https://docs.oasis-open.org/security/saml/v2.0/saml-bindings-2.0-os.pdf)、[Profiles](https://docs.oasis-open.org/security/saml/v2.0/saml-profiles-2.0-os.pdf)、[@node-saml/node-saml](https://github.com/node-saml/node-saml)
 - LDAP：部署侧使用 LDAPS / StartTLS；具体属性映射依客户目录而定

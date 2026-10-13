@@ -161,3 +161,12 @@ export interface SsoStore {
 
 - [ ] **Step 1: Write failing tests**: environment parsing (required app key, secret, corp ID and numeric departments; HTTPS-only private URLs; exclusive login); the official authorize link parameters; app-token caching and one refetch when revoked; another organization, non-members, external contacts, inactive members and refused codes; sub-department walk with and without recursion; directory email preferred over the placeholder; 503 on timeouts, HTTP errors, unexpected errcodes and missing departments; the whole flow through the listener; a Chrome run against the mock authorize page.
 - [ ] **Step 2: Run**; expect failure. **Step 3: Implement** the provider and wiring. **Step 4: Run** unit, typecheck, e2e and doc gates; commit; push.
+
+### Task 11: SAML 2.0 Service Provider
+
+**Files:** Create `src/sso/saml.ts`, `tests/mock-saml.ts`, `tests/saml.spec.ts`, `tests/saml-flow.spec.ts`; modify `src/sso/config.ts`, `src/sso/provider.ts`, `src/sso/store.ts`, `src/server.ts`, `src/index.ts`, `tests/helpers.ts`, `tests/sso-config.spec.ts`, `tests/sso.e2e.ts`, `package.json` (exact `@node-saml/node-saml`, `@xmldom/xmldom`, `xpath`; `xml-crypto` for the mock only), the env example and the README pair.
+
+**Interfaces:** Consumes the Task 5 plugin through the ACS: `/api/auth/sso/acs` re-posts the IdP's cross-site form from the service origin, then hands `SAMLResponse` and `RelayState` to the shared callback as `code` and `state`. Produces `createSamlProvider(config, { acsUrl, replay, clock? }): SsoProvider` with `kind: 'saml'` and `metadata()`, `samlPlaceholderEmail(subject): string`, `SsoStore.useAssertion(id, expiresAt, now)`, and the `saml` variant of `SsoConfig`. The subject is `IDP_ENTITY_ID|NameID`.
+
+- [ ] **Step 1: Write failing tests** with keys generated per run by openssl: environment parsing (pinned certificate file, refused private key, NameID formats, skew bound); the Redirect-binding AuthnRequest; signed Response, signed Assertion and both; unsigned, foreign-key and wrapped responses; Issuer, Audience, Recipient, Destination and InResponseTo; the time window with skew; assertion replay, transient NameID and IdP error status; SP metadata; the cross-site post bounce, missing cookie, IdP-initiated post and the group allow-list through the listener; a Chrome run with the IdP on another site.
+- [ ] **Step 2: Run**; expect failure. **Step 3: Implement** the provider, ACS and wiring. **Step 4: Run** unit, typecheck, e2e and doc gates; commit; push.

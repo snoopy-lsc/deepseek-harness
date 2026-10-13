@@ -27,8 +27,8 @@
   en: b0d1b5db811d4f6f
   zh: f64b6b9c0a19cb44
 /enterprise-on-prem-identity-design/provider-interface-and-configuration/suggested-provider-enum:
-  en: 2154cc7b0723ec32
-  zh: be872178705cbe6c
+  en: dcab56f7bba7557d
+  zh: e7ade2fec98cec47
 /enterprise-on-prem-identity-design/provider-interface-and-configuration/relation-to-captcha-and-mail:
   en: ea14b0a7a3b83fbd
   zh: 128e8bb7cc3dabab
@@ -48,8 +48,8 @@
   en: c5a099251b74a7ab
   zh: e25690dbd36ef5b6
 /enterprise-on-prem-identity-design/per-provider-flow-outlines/saml-2-0-sp-saml:
-  en: 766518df37e5eb2a
-  zh: 32ae445cf7dbed6c
+  en: 193341547672abd8
+  zh: 170002ac5cb76a09
 /enterprise-on-prem-identity-design/per-provider-flow-outlines/ldap-ad-ldap:
   en: b8862e0821b53db6
   zh: 2281a826f0ff0392
@@ -93,5 +93,5 @@
   en: 869c3083983cf62a
   zh: e41cdbc9dad4d658
 /enterprise-on-prem-identity-design/sources:
-  en: 9831ac1217f351e8
-  zh: a50e173e8a06ae58
+  en: 34ad68a4933acf80
+  zh: 6850eda157453901

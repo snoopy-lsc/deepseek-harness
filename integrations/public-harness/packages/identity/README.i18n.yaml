@@ -30,8 +30,11 @@
   en: b9084a8986234bc7
   zh: 1b983cbacf827c9c
 /public-harness-identity/use-this-package/enterprise-sso/dingtalk:
-  en: 7334b2923573591f
-  zh: 17db555c6505f883
+  en: 50951a23eb57314d
+  zh: b47b39a056160107
+/public-harness-identity/use-this-package/enterprise-sso/saml-2-0:
+  en: 5462094ec76e304a
+  zh: c17150eee599ca68
 /public-harness-identity/understand-the-implementation:
   en: 9ca273ce3bb588f4
   zh: fd09eb7b6847c825
@@ -39,8 +42,8 @@
   en: eb11d4045a131239
   zh: 7bcd3fd5985ac3be
 /public-harness-identity/known-limitations-and-deferred-work:
-  en: c1136ca6bdf79b0b
-  zh: 85982f0c8847b044
+  en: c3f21aa9be814138
+  zh: dfdd0e2a014c5b7e
 /public-harness-identity/dev-note:
-  en: 4f1a678297aa4c69
-  zh: af94839f643d82ff
+  en: 6a9dd9afea0283d7
+  zh: 6b3158a952c30694

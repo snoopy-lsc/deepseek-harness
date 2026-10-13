@@ -65,7 +65,7 @@ Suggested prefix: `DSH_SSO_*`, loaded from the same `identity.env` as `DSH_CAPTC
 | `wecom` | WeCom website QR login | `DSH_WECOM_CORP_ID`, `DSH_WECOM_AGENT_ID`, `DSH_WECOM_SECRET` |
 | `dingtalk` | DingTalk website QR login | `DSH_DINGTALK_CLIENT_ID`, `DSH_DINGTALK_CLIENT_SECRET`, `DSH_DINGTALK_CORP_ID` |
 | `oidc` | OpenID Connect Authorization Code + PKCE | `DSH_OIDC_ISSUER`, `DSH_OIDC_CLIENT_ID`, `DSH_OIDC_CLIENT_SECRET` (if required), `DSH_OIDC_SCOPES` |
-| `saml` | SAML 2.0 Service Provider | `DSH_SAML_SP_ENTITY_ID`, `DSH_SAML_IDP_METADATA_URL` or metadata file path, `DSH_SAML_SP_CERT_FILE`, `DSH_SAML_SP_KEY_FILE` |
+| `saml` | SAML 2.0 Service Provider | `DSH_SAML_SP_ENTITY_ID`, `DSH_SAML_IDP_ENTITY_ID`, `DSH_SAML_IDP_SSO_URL`, `DSH_SAML_IDP_CERT_FILE` |
 | `ldap` | LDAP / Active Directory bind | `DSH_LDAP_URL`, bind DN template or search base, `DSH_LDAP_START_TLS`, optional `DSH_LDAP_GROUP_FILTER` |
 
 Production refuses enterprise secrets in JSON. Local runs may use a mock provider (name TBD, e.g. `test`) that production mode must reject.
@@ -144,13 +144,21 @@ Works with public or customer-hosted IdPs (Keycloak, Authing private cloud, clou
 
 ### SAML 2.0 SP (`saml`)
 
-Identity service as Service Provider ([SAML 2.0](http://docs.oasis-open.org/security/saml/Post2.0/sstc-saml-tech-overview-2.0.html)):
+The identity service is a Service Provider per [SAML 2.0 Core](https://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf), [Bindings](https://docs.oasis-open.org/security/saml/v2.0/saml-bindings-2.0-os.pdf) and the Web Browser SSO profile in [Profiles](https://docs.oasis-open.org/security/saml/v2.0/saml-profiles-2.0-os.pdf) §4.1. It uses [@node-saml/node-saml](https://github.com/node-saml/node-saml) 5.1.0, pinned exactly; the library is maintained, has no native code, verifies only the signed XML it returns and refuses responses with more than one assertion. The service adds the profile checks the library leaves out.
 
-1. At startup, load IdP metadata (HTTPS URL with certificate checks, or a root-owned read-only file); configure SP entityID and ACS (e.g. `https://<publicOrigin>/api/auth/sso/saml/acs`).
-2. Login: emit AuthnRequest with `RelayState` bound to short-lived server storage (CSRF defence); redirect to IdP SSO URL.
-3. ACS: verify signature, expiry, Audience, Recipient, InResponseTo; reject unsigned or mismatched assertions.
-4. NameID or a configured Attribute becomes `subject`; optional attribute → group mapping.
-5. SP signing cert/key only from `*_CERT_FILE` / `*_KEY_FILE` (mode 0600), never from the repo.
+1. `/api/auth/sso/start` stores a single-use, browser-bound `state` and the AuthnRequest ID, then redirects to `DSH_SAML_IDP_SSO_URL` with a deflated, unsigned AuthnRequest (HTTP-Redirect binding), `RelayState=state`, the ACS URL and the configured NameID format.
+2. The IdP posts `SAMLResponse` and `RelayState` to `/api/auth/sso/acs` (HTTP-POST binding). That post is cross-site, so the SameSite=Lax binding cookie is missing. The service verifies nothing yet and answers a small page (nonce CSP, `form-action 'self'`) that re-posts the same fields from its own origin, where the cookie is sent. A re-post that still arrives cross-origin answers 403.
+3. The same-origin post goes through the shared callback: the state is consumed once with its browser cookie, then:
+   - **Signature**: the IdP certificates are pinned from `DSH_SAML_IDP_CERT_FILE` (one or more PEM certificates; a private key in that file refuses start). Either the Response or the Assertion must be signed; `DSH_SAML_WANT_ASSERTIONS_SIGNED=true` requires the Assertion. Unsigned, wrongly signed and wrapped responses (a signed assertion moved aside and a forged one put in its place) are refused. Metadata is never fetched at runtime.
+   - **Profile checks**: Issuer equals `DSH_SAML_IDP_ENTITY_ID`; Audience equals `DSH_SAML_SP_ENTITY_ID`; a bearer SubjectConfirmation has Recipient equal to the ACS URL and InResponseTo equal to the stored request ID; a Response Destination, when present, equals the ACS URL; Status is Success; NotBefore and NotOnOrAfter hold within `DSH_SAML_CLOCK_SKEW_MS` (default 60 s, at most 300 s).
+   - **Replay**: each Assertion ID is recorded in `dsh_sso_assertion` until it expires, and a second use is refused.
+4. Implementation decisions:
+   - **Subject**: `IDP_ENTITY_ID|NameID`, case kept. `DSH_SAML_NAMEID_FORMAT` is `persistent` (default), `emailAddress` or `unspecified`, and the received format must equal it. Transient IDs are always refused because they change on every login.
+   - **Groups (D7)**: values of `DSH_SAML_GROUP_ATTRIBUTE` (default `groups`; Azure AD sends `http://schemas.microsoft.com/ws/2008/06/identity/claims/groups` with object IDs).
+   - **Email (D2/D4)**: `DSH_SAML_EMAIL_ATTRIBUTE` (default `email`), otherwise `saml-<hash of subject>@sso.invalid` as for WeCom and DingTalk. Email never merges accounts.
+   - **IdP-initiated SSO**: refused, because an unsolicited response has no RelayState or InResponseTo to bind to a browser.
+   - **SP metadata**: `/api/auth/sso/metadata` publishes the entity ID, the HTTP-POST ACS and the NameID format.
+   - **Failures**: every invalid response answers a login-page error, and only store failures answer 503; the IdP is never contacted by the server, so there is no network timeout.
 
 ### LDAP / AD (`ldap`)
 
@@ -277,5 +285,5 @@ Status: **Decided** (2026-10-13). These decisions replace the earlier open check
 - WeCom: [web login link](https://developer.work.weixin.qq.com/document/path/98152), [login identity](https://developer.work.weixin.qq.com/document/path/98176), [gettoken](https://developer.work.weixin.qq.com/document/path/91039), [read member](https://developer.work.weixin.qq.com/document/path/90196), [sub-department IDs](https://developer.work.weixin.qq.com/document/path/95350)
 - DingTalk: [authorize link](https://open.dingtalk.com/document/development/obtain-identity-credentials), [user token](https://open.dingtalk.com/document/development/obtain-user-token), [current user](https://open.dingtalk.com/document/development/dingtalk-retrieve-user-information), [app token](https://open.dingtalk.com/document/development/obtain-the-access-token-of-an-internal-app), [unionId to userid](https://open.dingtalk.com/document/development/query-a-user-by-the-union-id), [member details](https://open.dingtalk.com/document/development/query-user-details), [sub-department IDs](https://open.dingtalk.com/document/development/obtain-a-sub-department-id-list-v2)
 - OIDC / OAuth: [OpenID Connect Core](https://openid.net/specs/openid-connect-core-1_0.html), [RFC 7636 PKCE](https://datatracker.ietf.org/doc/html/rfc7636)
-- SAML: [OASIS SAML 2.0 technical overview](http://docs.oasis-open.org/security/saml/Post2.0/sstc-saml-tech-overview-2.0.html)
+- SAML: [OASIS SAML 2.0 technical overview](http://docs.oasis-open.org/security/saml/Post2.0/sstc-saml-tech-overview-2.0.html), [Core](https://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf), [Bindings](https://docs.oasis-open.org/security/saml/v2.0/saml-bindings-2.0-os.pdf), [Profiles](https://docs.oasis-open.org/security/saml/v2.0/saml-profiles-2.0-os.pdf), [@node-saml/node-saml](https://github.com/node-saml/node-saml)
 - LDAP: LDAPS / StartTLS on the deployment side; attribute mapping is customer-specific
