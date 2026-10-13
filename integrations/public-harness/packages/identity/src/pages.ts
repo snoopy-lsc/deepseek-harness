@@ -25,7 +25,7 @@ const copy = {
     ssoRetry: 'The sign-in expired or was interrupted. Try again.', ssoFailed: 'Company sign-in failed. Try again or ask your administrator.',
     emergency: 'Administrator emergency sign-in', code: 'Authenticator code',
     username: 'Company username', brand: 'Team Harness', badLogin: 'Sign-in failed: wrong email or password.', orEmail: 'or sign in with email', forgot: 'Forgot password?', signInTitle: 'Sign in', signInSub: 'Welcome back to Team Harness',
-    registerSub: 'Create your Team Harness account', resetSub: 'We will email you a reset link', sendReset: 'Send reset link', haveAccount: 'Already have an account?', noAccount: 'New here?', backToLogin: 'Back to sign in', emergencySub: 'For administrators when company sign-in is down', homeTitle: 'Your account', ldapFailed: 'Sign-in failed. Check your username and password, or ask your administrator.', ldapLocked: 'Too many failed attempts. Try again later.' },
+    registerSub: 'Create your Team Harness account', resetSub: 'We will email you a reset link', newPasswordSub: 'Choose a new password for your account', sendReset: 'Send reset link', haveAccount: 'Already have an account?', noAccount: 'New here?', backToLogin: 'Back to sign in', emergencySub: 'For administrators when company sign-in is down', homeTitle: 'Your account', ldapFailed: 'Sign-in failed. Check your username and password, or ask your administrator.', ldapLocked: 'Too many failed attempts. Try again later.' },
   zh: { title: 'Team Harness 账户', register: '创建账户', login: '登录', logout: '退出登录', reset: '重置密码',
     email: '邮箱', password: '密码', name: '名称', newPassword: '新密码', submit: '继续', loading: '处理中…',
     checkMail: '请查收邮件中的验证链接。', verified: '邮箱已验证，现在可以登录。', resetSent: '如果该地址存在，重置链接已发送。',
@@ -38,7 +38,7 @@ const copy = {
     ssoRetry: '登录已过期或被中断，请重试。', ssoFailed: '企业登录失败，请重试或联系管理员。',
     emergency: '管理员紧急登录', code: '验证器动态码',
     username: '企业用户名', brand: 'Team Harness', badLogin: '登录失败：邮箱或密码不正确。', orEmail: '或使用邮箱登录', forgot: '忘记密码', signInTitle: '登录', signInSub: '欢迎回到 Team Harness',
-    registerSub: '创建 Team Harness 账户', resetSub: '我们会向你的邮箱发送重置链接', sendReset: '发送重置链接', haveAccount: '已有账户？', noAccount: '还没有账户？', backToLogin: '返回登录', emergencySub: '仅在企业登录不可用时供管理员使用', homeTitle: '我的账户', ldapFailed: '登录失败。请检查用户名和密码，或联系管理员。', ldapLocked: '失败次数过多，请稍后再试。' },
+    registerSub: '创建 Team Harness 账户', resetSub: '我们会向你的邮箱发送重置链接', newPasswordSub: '为你的账户设置新密码', sendReset: '发送重置链接', haveAccount: '已有账户？', noAccount: '还没有账户？', backToLogin: '返回登录', emergencySub: '仅在企业登录不可用时供管理员使用', homeTitle: '我的账户', ldapFailed: '登录失败。请检查用户名和密码，或联系管理员。', ldapLocked: '失败次数过多，请稍后再试。' },
 } satisfies Record<Locale, Record<string, string>>
 /** Page copy keys, identical in every locale. */
 export type CopyKey = keyof typeof copy.en
@@ -193,7 +193,7 @@ for(const f of document.querySelectorAll('form'))f.addEventListener('submit',asy
   else if(a==='reset'){await call('/reset-password',{newPassword:d.newPassword,token:new URLSearchParams(location.search).get('token')});say(L.resetDone)}
  }catch(err){say(err.message)}finally{b.disabled=false;if(used)resetHuman()}});
 const sso=document.querySelector('[data-sso-start]');if(sso){const r=new URLSearchParams(location.search).get('return');if(r)sso.href='/api/auth/sso/start?return='+encodeURIComponent(r)}
-const token=new URLSearchParams(location.search).get('token');if(token&&document.querySelector('[data-action=reset]')){document.querySelector('[data-action=reset]').hidden=false;document.querySelector('[data-action=reset-request]').hidden=true}
+const token=new URLSearchParams(location.search).get('token');if(token&&document.querySelector('[data-action=reset]')){document.querySelector('[data-action=reset]').hidden=false;document.querySelector('[data-action=reset-request]').hidden=true;for(const p of document.querySelectorAll('[data-step]'))p.hidden=p.dataset.step!=='new'}
 const s=document.querySelector('[data-session]');
 if(s){call('/get-session').then(j=>{if(!j){s.innerHTML='';const a=document.createElement('a');a.className='btn primary block';a.href='/account/login';a.textContent=L.login;s.append(a);return}
  const p=document.createElement('p');p.textContent=j.user.email;const h=document.createElement('a');h.className='btn primary block';h.textContent=L.openHarness;h.href=document.body.dataset.harness.replace('{id}',j.user.id);s.append(p,h);
@@ -224,7 +224,7 @@ export function renderPage(locale: Locale, view: View, nonce: string, notice = '
   const widget = JSON.stringify('csp' in captcha ? { provider: captcha.provider, script: captcha.script, params: captcha.params } : { provider: captcha.provider }).replace(/</g, '\\u003c')
   return `<!doctype html><html lang="${locale === 'zh' ? 'zh-CN' : 'en'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${t('title')}</title>
 <style nonce="${nonce}">${THEME}</style></head>
-<body data-harness="/u/{id}/">${lang}<main class="card">${brand}<h1>${t(title)}</h1>${sub === undefined ? '' : `<p class="sub">${view === 'register' && notice ? escapeHtml(notice) : t(sub)}</p>`}${form(locale, view, captcha, mode)}<p role="alert">${view === 'register' ? '' : escapeHtml(notice)}</p></main>
+<body data-harness="/u/{id}/">${lang}<main class="card">${brand}<h1>${t(title)}</h1>${view === 'reset' ? `<p class="sub" data-step="request">${t('resetSub')}</p><p class="sub" data-step="new" hidden>${t('newPasswordSub')}</p>` : sub === undefined ? '' : `<p class="sub">${view === 'register' && notice ? escapeHtml(notice) : t(sub)}</p>`}${form(locale, view, captcha, mode)}<p role="alert">${view === 'register' ? '' : escapeHtml(notice)}</p></main>
 <script type="application/json" id="copy">${json}</script><script type="application/json" id="captcha">${widget}</script><script nonce="${nonce}">${SCRIPT}</script></body></html>`
 }
 

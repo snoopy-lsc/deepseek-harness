@@ -79,6 +79,14 @@ describe('enterprise sign-in card', () => {
     expect(css).not.toMatch(/url\(|@import|https?:/)
   })
 
+  it('new_password_step_has_its_own_subtitle', () => {
+    for (const locale of ['en', 'zh'] as const) {
+      const page = renderPage(locale, 'reset', 'n0nce', '', { provider: 'test' }, { sso: false, emergency: false })
+      expect(page).toContain(`<p class="sub" data-step="request">${text(locale, 'resetSub')}</p>`)
+      expect(page).toContain(`<p class="sub" data-step="new" hidden>${text(locale, 'newPasswordSub')}</p>`)
+    }
+  })
+
   it('every_view_renders_one_card_with_its_own_title', () => {
     for (const view of ['login', 'register', 'reset', 'verified', 'emergency', 'home'] as const) {
       const page = renderPage('zh', view, 'n0nce', '', { provider: 'test' }, { sso: false, emergency: true, registration: true })
