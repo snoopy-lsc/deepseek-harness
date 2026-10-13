@@ -26,7 +26,7 @@ describe('SSO environment', () => {
 
   it('invalid_settings_refuse_start_naming_the_variable', () => {
     const cases: Array<[Record<string, string | undefined>, string, 'production' | 'local']> = [
-      [{ DSH_SSO_PROVIDER: 'wecom' }, 'DSH_SSO_PROVIDER', 'production'],
+      [{ DSH_SSO_PROVIDER: 'dingtalk' }, 'DSH_SSO_PROVIDER', 'production'],
       [{ DSH_SSO_PROVIDER: 'OIDC' }, 'DSH_SSO_PROVIDER', 'production'],
       [oidc({ DSH_OIDC_CLIENT_ID: undefined }), 'DSH_OIDC_CLIENT_ID', 'production'],
       [oidc({ DSH_OIDC_CLIENT_SECRET: '' }), 'DSH_OIDC_CLIENT_SECRET', 'production'],
@@ -64,5 +64,42 @@ describe('SSO environment', () => {
     expect(config.emergency).toEqual({ enabled: false })
     await expect(setup({ sso: { kind: 'oidc' } })).rejects.toBeInstanceOf(IdentityConfigError)
     expect((await setup()).config.sso).toEqual({ kind: 'off' })
+  })
+})
+
+describe('WeCom environment', () => {
+  const WECOM_SECRET = 'placeholder-wecom-app-secret'
+  const wecom = (extra: Record<string, string | undefined> = {}) => ({ DSH_SSO_PROVIDER: 'wecom', DSH_WECOM_CORP_ID: 'wwplaceholdercorp', DSH_WECOM_AGENT_ID: '1000002',
+    DSH_WECOM_SECRET: WECOM_SECRET, DSH_SSO_ALLOWED_GROUPS: '2, 15', ...extra })
+
+  it('wecom_settings_parse_with_public_defaults', () => {
+    expect(parseSsoEnv(wecom(), 'production').sso).toEqual({ kind: 'wecom', corpId: 'wwplaceholdercorp', agentId: '1000002', secret: WECOM_SECRET,
+      apiBase: 'https://qyapi.weixin.qq.com', loginUrl: 'https://login.work.weixin.qq.com/wwlogin/sso/login', allowedGroups: ['2', '15'], recursiveDepartments: true, timeoutMs: 5000 })
+    // A private (私有化) deployment points both URLs at the intranet server.
+    expect(parseSsoEnv(wecom({ DSH_WECOM_API_BASE: 'https://wecom.corp.example/', DSH_WECOM_LOGIN_URL: 'https://wecom.corp.example/wwopen/sso/qrConnect',
+      DSH_WECOM_DEPARTMENT_RECURSIVE: 'false' }), 'production').sso).toMatchObject({ apiBase: 'https://wecom.corp.example', loginUrl: 'https://wecom.corp.example/wwopen/sso/qrConnect', recursiveDepartments: false })
+    expect(parseSsoEnv(wecom({ DSH_WECOM_API_BASE: 'http://127.0.0.1:9100', DSH_WECOM_LOGIN_URL: 'http://127.0.0.1:9100/wwlogin/sso/login' }), 'local').sso).toMatchObject({ apiBase: 'http://127.0.0.1:9100' })
+  })
+
+  it('invalid_wecom_settings_refuse_start', () => {
+    const cases: Array<[Record<string, string | undefined>, string, 'production' | 'local']> = [
+      [wecom({ DSH_WECOM_CORP_ID: undefined }), 'DSH_WECOM_CORP_ID', 'production'],
+      [wecom({ DSH_WECOM_CORP_ID: 'ww corp' }), 'DSH_WECOM_CORP_ID', 'production'],
+      [wecom({ DSH_WECOM_AGENT_ID: 'abc' }), 'DSH_WECOM_AGENT_ID', 'production'],
+      [wecom({ DSH_WECOM_SECRET: '' }), 'DSH_WECOM_SECRET', 'production'],
+      [wecom({ DSH_SSO_ALLOWED_GROUPS: 'engineering' }), 'DSH_SSO_ALLOWED_GROUPS', 'production'],
+      [wecom({ DSH_SSO_ALLOWED_GROUPS: undefined }), 'DSH_SSO_ALLOWED_GROUPS', 'production'],
+      [wecom({ DSH_WECOM_API_BASE: 'http://wecom.corp.example' }), 'DSH_WECOM_API_BASE', 'production'],
+      [wecom({ DSH_WECOM_API_BASE: 'https://wecom.corp.example/x?y=1' }), 'DSH_WECOM_API_BASE', 'production'],
+      [wecom({ DSH_WECOM_LOGIN_URL: 'http://127.0.0.1:9100/login' }), 'DSH_WECOM_LOGIN_URL', 'production'],
+      [wecom({ DSH_WECOM_LOGIN_URL: 'https://login.example/?appid=x' }), 'DSH_WECOM_LOGIN_URL', 'production'],
+      [wecom({ DSH_WECOM_DEPARTMENT_RECURSIVE: 'yes' }), 'DSH_WECOM_DEPARTMENT_RECURSIVE', 'production'],
+      [wecom({ DSH_WECOM_TIMEOUT_MS: '99' }), 'DSH_WECOM_TIMEOUT_MS', 'production'],
+    ]
+    for (const [env, field, mode] of cases) {
+      const error = failure(() => parseSsoEnv(env, mode))
+      expect((error as IdentityConfigError).field, field).toBe(field)
+      expect((error as Error).message).not.toContain(WECOM_SECRET)
+    }
   })
 })
