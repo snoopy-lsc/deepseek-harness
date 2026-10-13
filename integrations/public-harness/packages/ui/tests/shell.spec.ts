@@ -9,7 +9,6 @@ function fakeContext() {
   const live = new Map<string, unknown>(), disposers: Array<() => void> = []
   const invoked: string[] = []
   const ctx = {
-    get: (name: string) => name === 'shortcuts' ? { invoke: (id: string) => { invoked.push(id) } } : undefined,
     effect(fn: () => () => void) { disposers.push(fn()) },
     locale: { register: () => () => undefined, bind: () => (key: string) => key },
     slots: { register(options: { name: string; key?: string; id?: string }) {
@@ -38,8 +37,10 @@ describe('unified shell entries', () => {
     await installShell(shell.ctx, async () => profile('member'))
     const injected = (shell.live.get('main:team.profile') as { inject: () => { api: object; openSettings: () => void } }).inject()
     expect(Object.keys(injected.api).sort()).toEqual(['changePassword', 'revoke', 'revokeOthers', 'security', 'sessions', 'usage'])
+    vi.stubGlobal('document', { querySelector: (selector: string) => ({ click: () => { shell.invoked.push(selector) } }) })
     injected.openSettings()
-    expect(shell.invoked).toEqual(['settings.open'])
+    vi.unstubAllGlobals()
+    expect(shell.invoked).toEqual(['[data-slot="sidebar.settings"] button[aria-haspopup="dialog"]'])
   })
 
   it('no_profile_or_a_late_answer_registers_nothing', async () => {

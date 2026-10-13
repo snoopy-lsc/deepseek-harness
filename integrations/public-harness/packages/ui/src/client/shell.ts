@@ -9,8 +9,8 @@ import { PersonalCenter, personalDictionaries } from './personal.tsx'
 import { ADMIN_PANEL, AdminIcon, AdminPage, PROFILE_PANEL, ProfileIcon, navDictionaries } from './nav.tsx'
 
 const NS = 'publicHarnessNav'
-/** The one call used from Harness's shortcut registry (`@deepseek-ai/dsh-client-shortcuts`): run a registered command as a menu selection. */
-interface CommandInvoker { invoke(id: string, context: { region: 'page'; modal: null; target: null }): void }
+/** Harness's own settings trigger: the dialog button inside the published `sidebar.settings` slot. */
+export const SETTINGS_TRIGGER = '[data-slot="sidebar.settings"] button[aria-haspopup="dialog"]'
 
 /** Register one profile's entries; the administration entry exists only for the server-decided `admin` role.
  * @param ctx - browser root carrying slots and locale.
@@ -19,8 +19,8 @@ interface CommandInvoker { invoke(id: string, context: { region: 'page'; modal: 
  */
 export function registerEntries(ctx: Context, profile: AccountProfile, api: AccountApi = createAccountApi()): Array<() => void> {
   const t = ctx.locale.bind(NS)
-  // Appearance and language live in the Harness settings dialog; its own command opens it, so no settings UI is duplicated here.
-  const openSettings = () => { (ctx.get('shortcuts') as CommandInvoker | undefined)?.invoke('settings.open', { region: 'page', modal: null, target: null }) }
+  // Appearance and language live in the Harness settings dialog; pressing its own trigger opens it, so no settings UI is duplicated here.
+  const openSettings = () => { globalThis.document?.querySelector<HTMLElement>(SETTINGS_TRIGGER)?.click() }
   const off = [
     ctx.slots.register({ name: 'main', key: PROFILE_PANEL, locale: 'publicHarnessPersonal', inject: () => ({ profile, api, openSettings }) }, PersonalCenter),
     ctx.slots.register({ name: 'sidebar.panellist', id: PROFILE_PANEL, order: 80, locale: NS, label: () => t('profile') }, ProfileIcon),
