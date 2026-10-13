@@ -70,6 +70,10 @@ sudo -u dsh-identity node …/invite-cli.js --config /etc/dsh-public/identity.js
 
 `DSH_SSO_PROVIDER=wecom` 为自建应用启用企业微信 Web 登录。必须提供 `DSH_WECOM_CORP_ID`、`DSH_WECOM_AGENT_ID`、`DSH_WECOM_SECRET` 和 `DSH_SSO_ALLOWED_GROUPS`（部门 ID）。把应用的可信域名设为公开主机。除非设置 `DSH_WECOM_DEPARTMENT_RECURSIVE=false`，允许部门的子部门成员也会被放行。私有化部署把 `DSH_WECOM_API_BASE` 与 `DSH_WECOM_LOGIN_URL` 设为自己的 HTTPS 服务器。账户绑定到 `CORPID:userid`（小写）。应用读不到成员邮箱时，账户使用唯一的 `@sso.invalid` 占位地址；注册会拒绝 `.invalid` 地址。access token 只保存在内存中，企业微信使其失效时重新获取一次。超时和未预期错误返回 503。
 
+#### 钉钉
+
+`DSH_SSO_PROVIDER=dingtalk` 为企业内部应用启用钉钉 OAuth 2.0 网页登录。必须提供 `DSH_DINGTALK_CLIENT_ID`（AppKey）、`DSH_DINGTALK_CLIENT_SECRET`、`DSH_DINGTALK_CORP_ID` 和 `DSH_SSO_ALLOWED_GROUPS`（部门 ID）。把 `<publicOrigin>/api/auth/sso/callback` 登记为应用的重定向 URL，并授予成员信息读权限。只有在授权页选择所配置组织的用户才能进入。除非设置 `DSH_DINGTALK_DEPARTMENT_RECURSIVE=false`，子部门成员也会被放行。账户绑定到 `CORPID:unionId`。邮箱和 `@sso.invalid` 占位地址沿用企业微信的规则。私有化部署设置 `DSH_DINGTALK_LOGIN_URL`、`DSH_DINGTALK_API_BASE` 与 `DSH_DINGTALK_OAPI_BASE`，`DSH_DINGTALK_EXCLUSIVE_LOGIN=true` 打开专属账号登录页。超时和未预期错误返回 503。
+
 `DSH_SSO_EMERGENCY_ALLOWED_IPS`（IP 或 CIDR 前缀）为 IdP 故障时的管理员开启 `/account/emergency`。登记需要一个邮箱已验证的现有密码账户（例如受邀账户），并只打印一次 TOTP URI：
 
 ```sh
@@ -104,6 +108,7 @@ sudo -u dsh-identity node …/emergency-cli.js --config /etc/dsh-public/identity
 - 账户页面是服务器渲染的 HTML，而不是 React 打包产物，不改动 Harness UI。
 - 所有服务都尚未在真实账号上运行过。测试模拟服务商 HTTP，并使用本地 TLS SMTP 中继。签名代码与服务商公布的已知答案示例一致。真实 API 响应、组件 SDK 和 CSP 来源列表仍需在真实主机上验证。
 - 使用 `none` 时，如果 Better Auth 为避免泄露账户存在而对已注册邮箱返回成功，用该邮箱注册可能会消耗一个邀请码。
+- 钉钉只在本地 mock 上运行过；真实应用、重定向 URL 和私有化或专属部署仍需检查。
 - 企业微信只在本地 mock 上运行过；真实企业、其可信域名和私有化部署仍需检查。读不到邮箱的企业微信成员会在账户页看到 `@sso.invalid` 占位地址。
 - OIDC 只在本地 mock IdP 上运行过，Keycloak、Authing 或 Azure AD 仍需在真实主机上检查。群组成员资格在登录时检查，因此把用户移出群组会阻止新会话，但不会结束已有会话。启用 SSO 之前通过公开注册创建的账户在 SSO 模式下不能用密码登录。
 - `node:sqlite` 在 Node 22 中仍标记为实验特性，启动时会打印警告。
@@ -111,4 +116,4 @@ sudo -u dsh-identity node …/emergency-cli.js --config /etc/dsh-public/identity
 <a id="dev-note"></a>
 ## 开发说明
 
-`registration.spec.ts` 在临时 socket 上运行真实服务。`providers.spec.ts` 覆盖模拟的阿里云、腾讯云和 Turnstile 调用、失败即拒绝的解析、超时和页面 CSP。`signing.spec.ts` 包含签名已知答案测试。`smtp.spec.ts` 使用带临时证书的本地 TLS 和 STARTTLS 中继，`invite.spec.ts` 覆盖单次使用、过期、吊销、并发和 CLI。当 `PUBLIC_HARNESS_E2E_BROWSER` 指向 Chrome 可执行文件时，`registration.e2e.ts` 用真实 Chrome 完成注册、验证、登录、进入 Harness 和退出登录。`widgets.e2e.ts` 在 Chrome 中用拦截的 SDK 桩运行每个组件的前端逻辑。`sso-config`、`sso-store`、`totp`、`jwt`、`oidc`、`sso-flow` 和 `emergency` 测试针对 127.0.0.1 上使用临时密钥的 mock IdP（`mock-oidc.ts`）覆盖企业 SSO，`wecom` 与 `wecom-flow` 测试针对 `mock-wecom.ts` 覆盖企业微信，`sso.e2e.ts` 用 Chrome 走完 OIDC 与企业微信登录。
+`registration.spec.ts` 在临时 socket 上运行真实服务。`providers.spec.ts` 覆盖模拟的阿里云、腾讯云和 Turnstile 调用、失败即拒绝的解析、超时和页面 CSP。`signing.spec.ts` 包含签名已知答案测试。`smtp.spec.ts` 使用带临时证书的本地 TLS 和 STARTTLS 中继，`invite.spec.ts` 覆盖单次使用、过期、吊销、并发和 CLI。当 `PUBLIC_HARNESS_E2E_BROWSER` 指向 Chrome 可执行文件时，`registration.e2e.ts` 用真实 Chrome 完成注册、验证、登录、进入 Harness 和退出登录。`widgets.e2e.ts` 在 Chrome 中用拦截的 SDK 桩运行每个组件的前端逻辑。`sso-config`、`sso-store`、`totp`、`jwt`、`oidc`、`sso-flow` 和 `emergency` 测试针对 127.0.0.1 上使用临时密钥的 mock IdP（`mock-oidc.ts`）覆盖企业 SSO，`wecom` 与 `wecom-flow` 测试针对 `mock-wecom.ts` 覆盖企业微信，`dingtalk` 与 `dingtalk-flow` 测试针对 `mock-dingtalk.ts` 覆盖钉钉，`sso.e2e.ts` 用 Chrome 走完 OIDC、企业微信与钉钉登录。

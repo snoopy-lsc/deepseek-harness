@@ -63,7 +63,7 @@
 | --- | --- | --- |
 | `off`（默认） | 不启用企业登录；保持现有邮箱 / 邀请行为 | 无 |
 | `wecom` | 企业微信网站扫码 | `DSH_WECOM_CORP_ID`、`DSH_WECOM_AGENT_ID`、`DSH_WECOM_SECRET` |
-| `dingtalk` | 钉钉网站扫码 | `DSH_DINGTALK_APP_KEY`、`DSH_DINGTALK_APP_SECRET` |
+| `dingtalk` | 钉钉网站扫码 | `DSH_DINGTALK_CLIENT_ID`、`DSH_DINGTALK_CLIENT_SECRET`、`DSH_DINGTALK_CORP_ID` |
 | `oidc` | OpenID Connect Authorization Code + PKCE | `DSH_OIDC_ISSUER`、`DSH_OIDC_CLIENT_ID`、`DSH_OIDC_CLIENT_SECRET`（若 IdP 要求）、`DSH_OIDC_SCOPES` |
 | `saml` | SAML 2.0 Service Provider | `DSH_SAML_SP_ENTITY_ID`、`DSH_SAML_IDP_METADATA_URL` 或元数据文件路径、`DSH_SAML_SP_CERT_FILE`、`DSH_SAML_SP_KEY_FILE` |
 | `ldap` | LDAP / Active Directory 绑定 | `DSH_LDAP_URL`、`DSH_LDAP_BIND_DN` 模板或搜索基、`DSH_LDAP_START_TLS`、可选 `DSH_LDAP_GROUP_FILTER` |
@@ -114,12 +114,21 @@ EnterpriseAuthProvider
 
 ### 钉钉扫码（`dingtalk`）
 
-依据[扫码登录第三方网站](https://open.dingtalk.com/document/orgapp/scan-qr-code-to-log-on-to-third-party-websites)与[根据 sns 临时授权码获取用户信息](https://open.dingtalk.com/document/orgapp/obtain-the-user-information-based-on-the-sns-temporary-authorization)：
+依据钉钉当前文档中的[授权链接](https://open.dingtalk.com/document/development/obtain-identity-credentials)、[用户 token](https://open.dingtalk.com/document/development/obtain-user-token)、[当前用户](https://open.dingtalk.com/document/development/dingtalk-retrieve-user-information)、[应用 token](https://open.dingtalk.com/document/development/obtain-the-access-token-of-an-internal-app)、[unionId 查 userid](https://open.dingtalk.com/document/development/query-a-user-by-the-union-id)、[成员详情](https://open.dingtalk.com/document/development/query-user-details)与[子部门 ID](https://open.dingtalk.com/document/development/obtain-a-sub-department-id-list-v2)：
 
-1. 重定向到 `https://oapi.dingtalk.com/connect/qrconnect?appid=APPID&response_type=code&scope=snsapi_login&state=STATE&redirect_uri=...`。
-2. 回调携带一次性 `code`；服务校验 `state` 后，服务端对 `https://oapi.dingtalk.com/sns/getuserinfo_bycode` 做带 `accessKey` / 时间戳 / HMAC 签名的请求，换取 `unionid` / `openid`。
-3. 若需企业内 `userid`，再用企业应用 `access_token` 调用 `topapi/user/getbyunionid` 等接口；**以企业内稳定 `userid` 或文档明确的唯一键作为 `subject`**，避免仅用可变昵称。
-4. 签名密钥与 AppSecret 仅存环境变量；时间窗与官方要求对齐（文档对 timestamp 偏差有限制）。
+1. `/api/auth/sso/start` 保存一次性、绑定浏览器的 `state`，跳转到 `https://login.dingtalk.com/oauth2/auth?redirect_uri=...&response_type=code&client_id=APPKEY&scope=openid%20corpid&prompt=consent&corpId=CORPID&state=STATE`。不再使用旧的 `oapi.dingtalk.com/connect/qrconnect` 链接和签名的 `sns/getuserinfo_bycode`。
+2. 用户扫码并同意后，钉钉带 `authCode` 与 `state` 跳回 `redirect_uri`；回调把 `authCode` 当作 code。重定向 URL 必须登记在应用的安全设置里。
+3. 服务消费一次 `state`，把 code 提交给 `v1.0/oauth2/userAccessToken`。4xx 表示 code 被拒绝。返回的 `corpId` 必须等于 `DSH_DINGTALK_CORP_ID`，因为授权页允许用户选择其他组织。
+4. 用用户 token 调 `v1.0/contact/users/me` 得到 `unionId`。`v1.0/oauth2/accessToken` 取得的应用 token 缓存在内存中，直到 `expireIn` 前五分钟；同一时间只发一个请求，errcode 40001/40014/42001 时重取一次。`topapi/user/getbyunionid` 给出 `userid`（60121 或外部联系人被拒绝），`topapi/v2/user/get` 必须返回 `active = true`，并给出 `dept_id_list`。
+5. 实现决定：
+   - **Subject**：`CORPID:unionId`。钉钉文档说明 `unionId` 由系统生成、在开发者组织内不会改变，而 `userid` 可以由管理员指定。企业前缀让 `(dingtalk, subject)` 在每个组织内唯一。
+   - **CSRF**：钉钉没有为该流程提供 PKCE 或 nonce，因此一次性、绑定浏览器的 `state` 是防护；provider 生成的 nonce 与 verifier 只用于填充共享存储。
+   - **部门（D7）**：`DSH_SSO_ALLOWED_GROUPS` 填部门 ID。`DSH_DINGTALK_DEPARTMENT_RECURSIVE=true`（默认）时放行子部门成员。`listsubid` 只返回直接子部门，所以服务从每个允许部门遍历部门树（最多 5000 个部门），结果缓存十分钟。
+   - **邮箱（D2/D4）**：应用可读时依次用 `org_email`、`email`；否则用 `dingtalk-<subject 哈希>@sso.invalid`，规则与企业微信相同。邮箱从不合并账户。
+   - **私有化或专属部署**：`DSH_DINGTALK_LOGIN_URL`、`DSH_DINGTALK_API_BASE` 与 `DSH_DINGTALK_OAPI_BASE` 指向其他 HTTPS 主机。`DSH_DINGTALK_EXCLUSIVE_LOGIN=true` 为专属账号加上 `exclusiveLogin=true&exclusiveCorpId=CORPID`。
+   - **失败**：超时、5xx、未预期 errcode 和部门查询失败返回 503；code 被拒、其他组织、非成员、外部联系人或未激活成员返回登录页错误。
+
+不使用内嵌的 `DTFrameLogin` 二维码组件：普通跳转不需要在页面 CSP 中放行第三方脚本。
 
 ### OIDC（`oidc`）
 
@@ -266,7 +275,7 @@ EnterpriseAuthProvider
 
 - 现有身份与可插拔验证码 / 邮件：[identity README](../../../integrations/public-harness/packages/identity/README.zh.md)、原生部署设计[身份与注册](2026-10-11-public-harness-native-design.zh.md#identity-and-registration)
 - 企业微信：[Web 登录链接](https://developer.work.weixin.qq.com/document/path/98152)、[获取用户登录身份](https://developer.work.weixin.qq.com/document/path/98176)、[gettoken](https://developer.work.weixin.qq.com/document/path/91039)、[读取成员](https://developer.work.weixin.qq.com/document/path/90196)、[获取子部门 ID 列表](https://developer.work.weixin.qq.com/document/path/95350)
-- 钉钉：[扫码登录第三方网站](https://open.dingtalk.com/document/orgapp/scan-qr-code-to-log-on-to-third-party-websites)、[sns/getuserinfo_bycode](https://open.dingtalk.com/document/orgapp/obtain-the-user-information-based-on-the-sns-temporary-authorization)
+- 钉钉：[授权链接](https://open.dingtalk.com/document/development/obtain-identity-credentials)、[用户 token](https://open.dingtalk.com/document/development/obtain-user-token)、[当前用户](https://open.dingtalk.com/document/development/dingtalk-retrieve-user-information)、[应用 token](https://open.dingtalk.com/document/development/obtain-the-access-token-of-an-internal-app)、[unionId 查 userid](https://open.dingtalk.com/document/development/query-a-user-by-the-union-id)、[成员详情](https://open.dingtalk.com/document/development/query-user-details)、[子部门 ID](https://open.dingtalk.com/document/development/obtain-a-sub-department-id-list-v2)
 - OIDC / OAuth：[OpenID Connect Core](https://openid.net/specs/openid-connect-core-1_0.html)、[RFC 7636 PKCE](https://datatracker.ietf.org/doc/html/rfc7636)
 - SAML：[OASIS SAML 2.0 技术概述](http://docs.oasis-open.org/security/saml/Post2.0/sstc-saml-tech-overview-2.0.html)
 - LDAP：部署侧使用 LDAPS / StartTLS；具体属性映射依客户目录而定

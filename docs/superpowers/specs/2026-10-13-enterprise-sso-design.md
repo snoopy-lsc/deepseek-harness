@@ -63,7 +63,7 @@ Suggested prefix: `DSH_SSO_*`, loaded from the same `identity.env` as `DSH_CAPTC
 | --- | --- | --- |
 | `off` (default) | Enterprise login disabled; keep email / invite behaviour | none |
 | `wecom` | WeCom website QR login | `DSH_WECOM_CORP_ID`, `DSH_WECOM_AGENT_ID`, `DSH_WECOM_SECRET` |
-| `dingtalk` | DingTalk website QR login | `DSH_DINGTALK_APP_KEY`, `DSH_DINGTALK_APP_SECRET` |
+| `dingtalk` | DingTalk website QR login | `DSH_DINGTALK_CLIENT_ID`, `DSH_DINGTALK_CLIENT_SECRET`, `DSH_DINGTALK_CORP_ID` |
 | `oidc` | OpenID Connect Authorization Code + PKCE | `DSH_OIDC_ISSUER`, `DSH_OIDC_CLIENT_ID`, `DSH_OIDC_CLIENT_SECRET` (if required), `DSH_OIDC_SCOPES` |
 | `saml` | SAML 2.0 Service Provider | `DSH_SAML_SP_ENTITY_ID`, `DSH_SAML_IDP_METADATA_URL` or metadata file path, `DSH_SAML_SP_CERT_FILE`, `DSH_SAML_SP_KEY_FILE` |
 | `ldap` | LDAP / Active Directory bind | `DSH_LDAP_URL`, bind DN template or search base, `DSH_LDAP_START_TLS`, optional `DSH_LDAP_GROUP_FILTER` |
@@ -114,12 +114,21 @@ The embedded `ww.createWWLoginPanel` component is not used: the plain redirect n
 
 ### DingTalk QR login (`dingtalk`)
 
-Per [scan QR to log on to third-party websites](https://open.dingtalk.com/document/orgapp/scan-qr-code-to-log-on-to-third-party-websites) and [get user info by sns temporary code](https://open.dingtalk.com/document/orgapp/obtain-the-user-information-based-on-the-sns-temporary-authorization):
+Per the current DingTalk docs on the [authorize link](https://open.dingtalk.com/document/development/obtain-identity-credentials), [user token](https://open.dingtalk.com/document/development/obtain-user-token), [current user](https://open.dingtalk.com/document/development/dingtalk-retrieve-user-information), [app token](https://open.dingtalk.com/document/development/obtain-the-access-token-of-an-internal-app), [unionId to userid](https://open.dingtalk.com/document/development/query-a-user-by-the-union-id), [member details](https://open.dingtalk.com/document/development/query-user-details) and [sub-department IDs](https://open.dingtalk.com/document/development/obtain-a-sub-department-id-list-v2):
 
-1. Redirect to `https://oapi.dingtalk.com/connect/qrconnect?appid=APPID&response_type=code&scope=snsapi_login&state=STATE&redirect_uri=...`.
-2. On callback, validate `state`, then call `https://oapi.dingtalk.com/sns/getuserinfo_bycode` with `accessKey`, timestamp, and HMAC signature to obtain `unionid` / `openid`.
-3. If a corporate `userid` is required, call `topapi/user/getbyunionid` (and related APIs) with the enterprise app token; **prefer the stable corporate userid documented by DingTalk as `subject`**, not a mutable nickname.
-4. Keep AppSecret only in the environment; honour the documented timestamp skew limits.
+1. `/api/auth/sso/start` stores a single-use, browser-bound `state` and redirects to `https://login.dingtalk.com/oauth2/auth?redirect_uri=...&response_type=code&client_id=APPKEY&scope=openid%20corpid&prompt=consent&corpId=CORPID&state=STATE`. The older `oapi.dingtalk.com/connect/qrconnect` link with signed `sns/getuserinfo_bycode` is not used.
+2. After the user scans and consents, DingTalk redirects to `redirect_uri` with `authCode` and `state`; the callback accepts `authCode` as the code. The redirect URL must be registered in the app's security settings.
+3. The service consumes `state` once and posts the code to `v1.0/oauth2/userAccessToken`. A 4xx answer is a refused code. The returned `corpId` must equal `DSH_DINGTALK_CORP_ID`, because the consent page lets the user pick another organization.
+4. `v1.0/contact/users/me` with the user token gives the `unionId`. The app token from `v1.0/oauth2/accessToken` is cached in memory until five minutes before `expireIn`, fetched by one request at a time and refetched once on errcode 40001/40014/42001. `topapi/user/getbyunionid` gives the `userid` (60121 or an external contact is refused) and `topapi/v2/user/get` must answer `active = true` and gives `dept_id_list`.
+5. Implementation decisions:
+   - **Subject**: `CORPID:unionId`. DingTalk documents `unionId` as system-generated and unchanging within the developer organization, while `userid` can be chosen by the administrator. The corp prefix keeps `(dingtalk, subject)` unique per organization.
+   - **CSRF**: DingTalk documents neither PKCE nor a nonce for this flow, so the single-use browser-bound `state` is the defense; the provider generates the unused nonce and verifier only to fill the shared store.
+   - **Departments (D7)**: `DSH_SSO_ALLOWED_GROUPS` holds department IDs. With `DSH_DINGTALK_DEPARTMENT_RECURSIVE=true` (default) members of sub-departments are admitted. `listsubid` returns direct children only, so the service walks the tree from each allowed department (at most 5000 departments) and caches the result ten minutes.
+   - **Email (D2/D4)**: `org_email`, then `email`, when the app may read them; otherwise `dingtalk-<hash of subject>@sso.invalid`, under the same rules as WeCom. Email never merges accounts.
+   - **Private or exclusive deployment**: `DSH_DINGTALK_LOGIN_URL`, `DSH_DINGTALK_API_BASE` and `DSH_DINGTALK_OAPI_BASE` point at other HTTPS hosts. `DSH_DINGTALK_EXCLUSIVE_LOGIN=true` adds `exclusiveLogin=true&exclusiveCorpId=CORPID` for exclusive (专属) accounts.
+   - **Failures**: timeouts, 5xx, unexpected errcodes and department lookup failures answer 503; a refused code, another organization, a non-member, an external contact or an inactive member answers a login-page error.
+
+The embedded `DTFrameLogin` QR component is not used: the plain redirect needs no third-party script in the page CSP.
 
 ### OIDC (`oidc`)
 
@@ -266,7 +275,7 @@ Status: **Decided** (2026-10-13). These decisions replace the earlier open check
 
 - Existing identity and pluggable CAPTCHA/mail: [identity README](../../../integrations/public-harness/packages/identity/README.md), native design [Identity and registration](2026-10-11-public-harness-native-design.md#identity-and-registration)
 - WeCom: [web login link](https://developer.work.weixin.qq.com/document/path/98152), [login identity](https://developer.work.weixin.qq.com/document/path/98176), [gettoken](https://developer.work.weixin.qq.com/document/path/91039), [read member](https://developer.work.weixin.qq.com/document/path/90196), [sub-department IDs](https://developer.work.weixin.qq.com/document/path/95350)
-- DingTalk: [QR login to third-party sites](https://open.dingtalk.com/document/orgapp/scan-qr-code-to-log-on-to-third-party-websites), [sns/getuserinfo_bycode](https://open.dingtalk.com/document/orgapp/obtain-the-user-information-based-on-the-sns-temporary-authorization)
+- DingTalk: [authorize link](https://open.dingtalk.com/document/development/obtain-identity-credentials), [user token](https://open.dingtalk.com/document/development/obtain-user-token), [current user](https://open.dingtalk.com/document/development/dingtalk-retrieve-user-information), [app token](https://open.dingtalk.com/document/development/obtain-the-access-token-of-an-internal-app), [unionId to userid](https://open.dingtalk.com/document/development/query-a-user-by-the-union-id), [member details](https://open.dingtalk.com/document/development/query-user-details), [sub-department IDs](https://open.dingtalk.com/document/development/obtain-a-sub-department-id-list-v2)
 - OIDC / OAuth: [OpenID Connect Core](https://openid.net/specs/openid-connect-core-1_0.html), [RFC 7636 PKCE](https://datatracker.ietf.org/doc/html/rfc7636)
 - SAML: [OASIS SAML 2.0 technical overview](http://docs.oasis-open.org/security/saml/Post2.0/sstc-saml-tech-overview-2.0.html)
 - LDAP: LDAPS / StartTLS on the deployment side; attribute mapping is customer-specific

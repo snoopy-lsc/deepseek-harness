@@ -152,3 +152,12 @@ export interface SsoStore {
 
 - [ ] **步骤 1：编写失败测试**：环境变量解析（必需的 corp ID、agent ID、secret 与数字部门；私有化 URL 只允许 HTTPS）；官方登录链接参数；token 缓存、过期以及遇到 token 错误时重新获取一次；拒绝非企业成员、互联企业 ID、已停用成员和无效 code；开启与关闭递归时的子部门放行；目录邮箱优先于占位地址；超时、HTTP 错误和未预期 errcode 返回 503；经监听器的完整流程；拒绝注册 `.invalid` 地址；Chrome 针对 mock 登录页的运行。
 - [ ] **步骤 2：运行**；预期失败。**步骤 3：实现** provider 与接线。**步骤 4：运行** 单元、类型检查、e2e 和文档门禁；提交；推送。
+
+### 任务 10：钉钉 Web 登录 provider
+
+**文件：** 新建 `src/sso/dingtalk.ts`、`tests/mock-dingtalk.ts`、`tests/dingtalk.spec.ts`、`tests/dingtalk-flow.spec.ts`；修改 `src/sso/config.ts`、`src/sso/provider.ts`、`src/sso/plugin.ts`、`src/index.ts`、`tests/sso-config.spec.ts`、`tests/sso.e2e.ts`、env 示例和 README 中英文对。
+
+**接口：** 使用任务 5 的插件，插件同时接受钉钉回调参数 `authCode`。产出 `createDingtalkProvider(config, { fetch?, clock? }): SsoProvider`（`kind: 'dingtalk'`）、`dingtalkPlaceholderEmail(subject): string`，以及 `SsoConfig` 的 `dingtalk` 变体（`clientId`、`clientSecret`、`corpId`、`apiBase`、`oapiBase`、`loginUrl`、`exclusiveLogin`、部门 ID 形式的 `allowedGroups`、`recursiveDepartments`、`timeoutMs`）。subject 为 `CORPID:unionId`。
+
+- [ ] **步骤 1：编写失败的测试**：环境变量解析（必填 app key、secret、企业 ID 和数字部门；私有化 URL 只允许 HTTPS；专属账号登录）；官方授权链接参数；应用 token 缓存和失效时重取一次；其他组织、非成员、外部联系人、未激活成员和被拒绝的 code；有无递归时的子部门遍历；目录邮箱优先于占位地址；超时、HTTP 错误、未预期 errcode 和缺失部门时返回 503；经过监听器的完整流程；Chrome 对 mock 授权页的运行。
+- [ ] **步骤 2：运行**，预期失败。**步骤 3：实现** provider 和接线。**步骤 4：运行**单元、类型检查、e2e 和文档门禁；提交；推送。

@@ -152,3 +152,12 @@ export interface SsoStore {
 
 - [ ] **Step 1: Write failing tests**: environment parsing (required corp ID, agent ID, secret and numeric departments; HTTPS-only private-deployment URLs); the official login link parameters; token caching, expiry and one refetch on token errors; non-members, interconnected IDs, inactive members and invalid codes refused; sub-department admission with and without recursion; directory email preferred over the placeholder; 503 on timeouts, HTTP errors and unexpected errcodes; the whole flow through the listener; `.invalid` registrations refused; a Chrome run against the mock login page.
 - [ ] **Step 2: Run**; expect failure. **Step 3: Implement** the provider and wiring. **Step 4: Run** unit, typecheck, e2e and doc gates; commit; push.
+
+### Task 10: DingTalk Web Login Provider
+
+**Files:** Create `src/sso/dingtalk.ts`, `tests/mock-dingtalk.ts`, `tests/dingtalk.spec.ts`, `tests/dingtalk-flow.spec.ts`; modify `src/sso/config.ts`, `src/sso/provider.ts`, `src/sso/plugin.ts`, `src/index.ts`, `tests/sso-config.spec.ts`, `tests/sso.e2e.ts`, the env example and the README pair.
+
+**Interfaces:** Consumes the Task 5 plugin, which also accepts DingTalk's `authCode` callback parameter. Produces `createDingtalkProvider(config, { fetch?, clock? }): SsoProvider` with `kind: 'dingtalk'`, `dingtalkPlaceholderEmail(subject): string`, and the `dingtalk` variant of `SsoConfig` (`clientId`, `clientSecret`, `corpId`, `apiBase`, `oapiBase`, `loginUrl`, `exclusiveLogin`, `allowedGroups` as department IDs, `recursiveDepartments`, `timeoutMs`). The subject is `CORPID:unionId`.
+
+- [ ] **Step 1: Write failing tests**: environment parsing (required app key, secret, corp ID and numeric departments; HTTPS-only private URLs; exclusive login); the official authorize link parameters; app-token caching and one refetch when revoked; another organization, non-members, external contacts, inactive members and refused codes; sub-department walk with and without recursion; directory email preferred over the placeholder; 503 on timeouts, HTTP errors, unexpected errcodes and missing departments; the whole flow through the listener; a Chrome run against the mock authorize page.
+- [ ] **Step 2: Run**; expect failure. **Step 3: Implement** the provider and wiring. **Step 4: Run** unit, typecheck, e2e and doc gates; commit; push.

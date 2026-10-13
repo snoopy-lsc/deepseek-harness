@@ -27,8 +27,11 @@
   en: 63aab7dc59104036
   zh: 7769134fbdad6d27
 /public-harness-identity/use-this-package/enterprise-sso/wecom:
-  en: 4cfa7e2608398944
-  zh: bc4de9d9f83fb105
+  en: b9084a8986234bc7
+  zh: 1b983cbacf827c9c
+/public-harness-identity/use-this-package/enterprise-sso/dingtalk:
+  en: 7334b2923573591f
+  zh: 17db555c6505f883
 /public-harness-identity/understand-the-implementation:
   en: 9ca273ce3bb588f4
   zh: fd09eb7b6847c825
@@ -36,8 +39,8 @@
   en: eb11d4045a131239
   zh: 7bcd3fd5985ac3be
 /public-harness-identity/known-limitations-and-deferred-work:
-  en: f97a2a2fce5d09ef
-  zh: 309a844538c3c919
+  en: c1136ca6bdf79b0b
+  zh: 85982f0c8847b044
 /public-harness-identity/dev-note:
-  en: a286978edb39c61b
-  zh: 14f4a5a79863404d
+  en: 4f1a678297aa4c69
+  zh: af94839f643d82ff

@@ -27,8 +27,8 @@
   en: b0d1b5db811d4f6f
   zh: f64b6b9c0a19cb44
 /enterprise-on-prem-identity-design/provider-interface-and-configuration/suggested-provider-enum:
-  en: d6d0ff0afe28cc96
-  zh: 54731a641099cef4
+  en: 2154cc7b0723ec32
+  zh: be872178705cbe6c
 /enterprise-on-prem-identity-design/provider-interface-and-configuration/relation-to-captcha-and-mail:
   en: ea14b0a7a3b83fbd
   zh: 128e8bb7cc3dabab
@@ -42,8 +42,8 @@
   en: dff452b5cfcb6d21
   zh: 716e747ad3c19d8c
 /enterprise-on-prem-identity-design/per-provider-flow-outlines/dingtalk-qr-login-dingtalk:
-  en: bb9bb95741e5f0a4
-  zh: 05c68b455d4c6521
+  en: 6eacb6766f383311
+  zh: ad388599f0ab24b8
 /enterprise-on-prem-identity-design/per-provider-flow-outlines/oidc-oidc:
   en: c5a099251b74a7ab
   zh: e25690dbd36ef5b6
@@ -93,5 +93,5 @@
   en: 869c3083983cf62a
   zh: e41cdbc9dad4d658
 /enterprise-on-prem-identity-design/sources:
-  en: 4345f54654791b06
-  zh: d9da36fe0ef1c6f5
+  en: 9831ac1217f351e8
+  zh: a50e173e8a06ae58
