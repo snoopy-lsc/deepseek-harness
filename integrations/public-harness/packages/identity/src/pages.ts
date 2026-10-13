@@ -2,9 +2,13 @@
 import { randomBytes } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { UserId } from '@public-harness/contracts'
+import { identityStylesheet } from '@public-harness/ui'
 import type { CaptchaProvider, CaptchaWidget } from './captcha.ts'
 import type { IdentityConfig } from './config.ts'
 import type { PagesHandler } from './server.ts'
+
+// The team-enterprise colours, shared with Harness Web; it rides the page's nonce-bound style element.
+const THEME = identityStylesheet()
 
 /** Supported page locales. */
 export type Locale = 'en' | 'zh'
@@ -204,7 +208,7 @@ export function renderPage(locale: Locale, view: View, nonce: string, notice = '
   // Only public widget parameters are embedded; secrets never reach the page.
   const widget = JSON.stringify('csp' in captcha ? { provider: captcha.provider, script: captcha.script, params: captcha.params } : { provider: captcha.provider }).replace(/</g, '\\u003c')
   return `<!doctype html><html lang="${locale === 'zh' ? 'zh-CN' : 'en'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${t('title')}</title>
-<style nonce="${nonce}">body{font-family:system-ui,sans-serif;max-width:28rem;margin:3rem auto;padding:0 1rem;color:#1f2329}label{display:block;margin:.75rem 0}input{display:block;width:100%;padding:.5rem;margin-top:.25rem}button{margin-top:1rem;padding:.5rem 1rem;background:#4d6bfe;color:#fff;border:0;border-radius:6px}nav a{margin-right:.75rem}[role=alert]{min-height:1.5rem;color:#b42318}</style></head>
+<style nonce="${nonce}">body{font-family:system-ui,sans-serif;max-width:28rem;margin:3rem auto;padding:0 1rem;color:#1f2329}label{display:block;margin:.75rem 0}input{display:block;width:100%;padding:.5rem;margin-top:.25rem}button{margin-top:1rem;padding:.5rem 1rem;background:#4d6bfe;color:#fff;border:0;border-radius:6px}nav a{margin-right:.75rem}[role=alert]{min-height:1.5rem;color:#b42318}${THEME}</style></head>
 <body data-harness="/u/{id}/"><h1>${t('title')}</h1>${nav}<main>${form(locale, view, captcha, mode)}</main><p role="alert">${escapeHtml(notice)}</p>
 <script type="application/json" id="copy">${json}</script><script type="application/json" id="captcha">${widget}</script><script nonce="${nonce}">${SCRIPT}</script></body></html>`
 }

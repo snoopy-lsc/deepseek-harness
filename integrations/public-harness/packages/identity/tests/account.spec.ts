@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parseUserId } from '@public-harness/contracts'
+import { identityStylesheet } from '@public-harness/ui'
 import { escapeHtml, pickLocale, renderPage, safeReturnPath, ssoErrorText, text } from '../src/pages.ts'
 
 describe('account pages', () => {
@@ -19,6 +20,17 @@ describe('account pages', () => {
     expect(page).toContain("location.assign(home(r))")
     // Only the account page or the user's own route are accepted from `return`; everything else falls back to the chat.
     expect(page).toContain("w==='/account/'||w===own?w:own")
+  })
+
+  it('pages_share_the_team_theme_inside_the_nonce_bound_style', () => {
+    const page = renderPage('en', 'login', 'n0nce')
+    const styles = page.match(/<style[^>]*>[^<]*<\/style>/g) ?? []
+    expect(styles).toHaveLength(1)
+    expect(styles[0]).toContain('<style nonce="n0nce">')
+    expect(styles[0]).toContain(identityStylesheet())
+    expect(identityStylesheet()).toContain('#2563d9')
+    expect(identityStylesheet()).toContain('prefers-color-scheme:dark')
+    expect(styles[0]).not.toMatch(/url\(|@import|https?:/)
   })
 
   it('account_copy_is_localized', () => {

@@ -56,6 +56,9 @@ importers:
       '@public-harness/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@public-harness/ui':
+        specifier: workspace:*
+        version: link:../ui
       '@xmldom/xmldom':
         specifier: 0.8.15
         version: 0.8.15
