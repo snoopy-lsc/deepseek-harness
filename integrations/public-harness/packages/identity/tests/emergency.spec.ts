@@ -100,6 +100,28 @@ describe('emergency password path', () => {
     await expect(runEmergencyCli(['--config', file, 'enroll', '--email', 'unverified@corp.example'], () => {})).rejects.toThrow(/verified/)
   })
 
+  it('five_failures_lock_the_account_across_a_restart_and_outside_addresses_do_not_count', async () => {
+    const { config, box, file, clock, advance } = await start()
+    await account(config, box, 'admin@corp.example')
+    const secret = await enroll(file, 'admin@corp.example')
+    for (let i = 0; i < 3; i++) expect((await emergency(config.publicSocket, { email: 'admin@corp.example', password: PASSWORD, code: code(secret, clock()) }, OUTSIDE)).status).toBe(403)
+    for (let i = 0; i < 5; i++) {
+      expect((await emergency(config.publicSocket, { email: 'admin@corp.example', password: 'a wrong but long password', code: code(secret, clock()) })).status).toBe(403)
+      advance(30_000)
+    }
+    await open.pop()!.close()
+    open.push(await startIdentity(config, { mail: box.mail, clock }))
+    const locked = await emergency(config.publicSocket, { email: 'admin@corp.example', password: PASSWORD, code: code(secret, clock()) })
+    expect(locked.status).toBe(403)
+    expect(JSON.parse(locked.body).code).toBe('emergency-denied')
+    const db = await openIdentityDatabase(config.databaseFile)
+    try {
+      expect(db.sso.listAudit(0).map(row => row.detail).slice(-7)).toEqual(['ip', 'password', 'password', 'password', 'password', 'password', 'locked'])
+      // The window slides: fifteen minutes after the last failure the account has room again.
+      expect(db.sso.reserveAttempt([{ key: 'emergency:admin@corp.example', max: 5 }], 15 * 60_000, clock() + 15 * 60_000)).toHaveLength(1)
+    } finally { db.close() }
+  })
+
   it('disabled_without_an_address_list', async () => {
     const { config } = await start({ DSH_SSO_EMERGENCY_ALLOWED_IPS: '' })
     expect((await emergency(config.publicSocket, { email: 'a@corp.example', password: PASSWORD, code: '123456' })).status).toBe(404)

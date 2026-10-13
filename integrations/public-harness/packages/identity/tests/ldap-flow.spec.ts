@@ -43,6 +43,15 @@ describe('LDAP sign-in', () => {
     expect((await signIn(config.publicSocket, 'alice', MOCK_USER_PASSWORD, { 'x-forwarded-for': '203.0.113.8' })).status).toBe(200)
   })
 
+  it('lockout_survives_a_service_restart', async () => {
+    const { config, mock } = await start()
+    for (let i = 0; i < 5; i++) expect((await signIn(config.publicSocket, 'bob', 'wrong')).status).toBe(401)
+    const service = open.pop()!; await service.close()
+    open.push(await startIdentity(config, { mail: mailbox().mail }))
+    expect((await signIn(config.publicSocket, 'bob')).status).toBe(429)
+    expect(mock.binds.filter(dn => dn.includes('Bob Li')).length).toBe(5)
+  })
+
   it('groups_disabled_accounts_and_outages', async () => {
     const { config, mock } = await start()
     const bob = await signIn(config.publicSocket, 'bob')
