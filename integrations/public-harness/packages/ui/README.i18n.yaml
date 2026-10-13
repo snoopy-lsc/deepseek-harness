@@ -3,8 +3,8 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write integrations/public-harness/packages/ui/README.md
 /:
-  en: 7b1eaa675f419b0c
-  zh: fb7d3e42b36e9627
+  en: 661876f77f6f803f
+  zh: 5086f11e785b92b3
 /public-harness-browser-ui:
   en: 84b90adce59d8f94
   zh: 6db5bf3af299da49
@@ -12,14 +12,17 @@
   en: 675b1a6bcb20478f
   zh: a315ad4272dc81f3
 /public-harness-browser-ui/table-of-contents:
-  en: 463d299cf1b61db6
-  zh: 053ad04d7c827c13
+  en: 888b366c307c8d5c
+  zh: d44669fc0754c9ca
 /public-harness-browser-ui/use-this-package:
   en: 8d6739b8bfe5b915
   zh: b894abe8f45b3e34
 /public-harness-browser-ui/browser-behavior:
-  en: 4646ae8a34b57aa2
-  zh: d1953163b5e8f1ec
+  en: a4b192a3774d64f8
+  zh: 1760082009bed615
+/public-harness-browser-ui/enterprise-theme-and-navigation:
+  en: 57674f5cb857e1dc
+  zh: e7c4284a1fea6b30
 /public-harness-browser-ui/further-exploration:
   en: 1c5e6a368e706b14
   zh: a5a59e6a746c4aeb
