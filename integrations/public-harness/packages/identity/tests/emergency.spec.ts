@@ -67,6 +67,19 @@ describe('emergency password path', () => {
     expect(JSON.parse(plain.body).code).toBe('sso-only')
   })
 
+  it('emergency_account_is_an_administrator_and_an_invited_one_is_not', async () => {
+    const { config, box, file, clock } = await start()
+    await account(config, box, 'admin@corp.example')
+    await account(config, box, 'contractor@corp.example')
+    const secret = await enroll(file, 'admin@corp.example')
+    const admin = sessionCookie(await emergency(config.publicSocket, { email: 'admin@corp.example', password: PASSWORD, code: code(secret, clock()) }))!
+    const me = await call(config.publicSocket, 'GET', '/account/api/me', undefined, { cookie: admin })
+    expect(me.status).toBe(200)
+    expect(JSON.parse(me.body)).toMatchObject({ email: 'admin@corp.example', role: 'admin' })
+    const contractor = sessionCookie(await call(config.publicSocket, 'POST', '/api/auth/sign-in/email', { email: 'contractor@corp.example', password: PASSWORD }, ADMIN))!
+    expect(JSON.parse((await call(config.publicSocket, 'GET', '/account/api/me', undefined, { cookie: contractor })).body)).toMatchObject({ role: 'member' })
+  })
+
   it('every_failed_gate_is_refused_alike_and_audited', async () => {
     const { config, box, file, clock, advance } = await start()
     await account(config, box, 'admin@corp.example')
