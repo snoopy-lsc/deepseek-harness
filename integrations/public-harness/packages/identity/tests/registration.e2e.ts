@@ -1,4 +1,4 @@
-/** Real-browser account flow: register → verify (test mailbox) → login → enter Harness → logout blocks HTTP and WS.
+/** Real-browser account flow: register → verify (test mailbox) → login lands in Harness → logout blocks HTTP and WS.
  * Runs only when PUBLIC_HARNESS_E2E_BROWSER names a Chrome executable; no model or API key is involved. */
 import { createServer, request as httpRequest, type IncomingMessage, type Server } from 'node:http'
 import { connect, type Socket } from 'node:net'
@@ -77,16 +77,16 @@ describe.skipIf(executable === undefined)('account flow in a real browser', () =
     expect(page.url()).toContain('/account/verified')
     await page.goto(`${ORIGIN}/account/login?lang=en`)
     await page.fill('input[name=email]', 'alice@example.test'); await page.fill('input[name=password]', 'correct horse battery'); await page.click('button')
-    await page.waitForURL(/\/account\/\?return=/)
-    const harness = page.locator('a', { hasText: 'Open my Harness' })
-    await harness.waitFor()
-    await harness.click()
+    // Sign-in lands directly in the user's own Harness route.
+    await page.waitForURL(/\/u\/[A-Za-z0-9_-]+\/$/)
     await page.waitForSelector('text=harness ok')
     const userPath = new URL(page.url()).pathname
     expect(userPath).toMatch(/^\/u\/[A-Za-z0-9_-]+\/$/)
     // Open a WebSocket through the router, then sign out: the next request is denied and the open channel closes.
     await page.evaluate(path => { (window as unknown as { ws: WebSocket }).ws = new WebSocket(`ws://127.0.0.1:18443${path}ws`) }, userPath)
     await page.goto(`${ORIGIN}/account/`)
+    // The account page still links back to the same route.
+    expect(await page.locator('a', { hasText: 'Open my Harness' }).getAttribute('href')).toBe(userPath)
     await page.locator('button[data-action=logout]').click()
     await page.waitForFunction(() => /signed out/.test(document.querySelector('[role=alert]')?.textContent ?? ''))
     expect(await page.evaluate(path => fetch(`${path}x`, { credentials: 'same-origin' }).then(r => r.status), userPath)).toBe(401)
