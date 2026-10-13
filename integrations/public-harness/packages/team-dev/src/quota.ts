@@ -5,7 +5,7 @@ import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { AddressInfo } from 'node:net'
 import { platformModelRows, type UserId } from '@public-harness/contracts'
-import { createQuotaLedger } from '@public-harness/quota/ledger'
+import { createQuotaLedger, type PersonalUsage } from '@public-harness/quota/ledger'
 import { createTokenIssuer } from '@public-harness/quota/tokens'
 import { createAdmission } from '@public-harness/quota/admission'
 import { createMessagesForwarder } from '@public-harness/quota/messages'
@@ -83,6 +83,8 @@ export function resolveTeamDevUpstream(upstream: TeamDevUpstreamConfig | undefin
 /** Running private model service and one Web patch per fixed user. */
 export interface TeamDevQuota {
   readonly patches: ReadonlyMap<UserId, string>
+  /** One user's own read-only usage from the ledger, for the personal center. */
+  usage(userId: UserId): Promise<PersonalUsage>
   /** Stop listeners after in-flight credential writes finish; repeated calls join shutdown. */
   close(): Promise<void>
 }
@@ -223,7 +225,7 @@ export async function startTeamDevQuota(options: {
       patches.set(userId, patch)
     }
     let closing: Promise<void> | undefined
-    return { patches, close() { return closing ??= (async () => {
+    return { patches, usage: userId => ledger.usage(userId), close() { return closing ??= (async () => {
       for (const timer of timers) clearInterval(timer)
       await Promise.all(rotations)
       const outcomes = await Promise.allSettled(listeners.map(listener => listener.close()))

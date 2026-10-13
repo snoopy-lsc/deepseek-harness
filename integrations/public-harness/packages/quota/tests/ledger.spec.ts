@@ -118,3 +118,19 @@ describe('durable quota ledger', () => {
     await expect(ledger.status()).rejects.toThrow(/closed/i)
   })
 })
+
+describe('personal usage', () => {
+  it('reports_one_users_charged_tokens_for_today_and_the_last_seven_days', async () => {
+    const { open, nextDay } = await fixture()
+    const ledger = open()
+    const alice = parseUserId('alice'), bob = parseUserId('bob')
+    await ledger.settle((await ledger.reserve(alice, 40)).id, 30)
+    await ledger.settle((await ledger.reserve(bob, 50)).id, 50)
+    nextDay()
+    await ledger.reserve(alice, 20)
+    const usage = await ledger.usage(alice)
+    expect(usage).toEqual({ day: '2026-10-11', usedTokens: 20, limitTokens: 100, resetAt: '2026-10-12T00:00:00.000Z',
+      history: [{ day: '2026-10-10', tokens: 30 }, { day: '2026-10-11', tokens: 20 }] })
+    expect((await ledger.usage(parseUserId('carol'))).history).toEqual([])
+  })
+})

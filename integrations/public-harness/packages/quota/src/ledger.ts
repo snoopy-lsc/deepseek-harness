@@ -35,6 +35,17 @@ export interface QuotaAggregate {
   readonly siteConcurrencyLimit: number
 }
 
+/** One user's own token use: today against the personal limit, and the charged total of each recent day that had any. */
+export interface PersonalUsage {
+  readonly day: string
+  readonly usedTokens: number
+  readonly limitTokens: number
+  /** Start of the next UTC quota day. */
+  readonly resetAt: string
+  /** Oldest first, at most seven days ending today. */
+  readonly history: ReadonlyArray<{ readonly day: string; readonly tokens: number }>
+}
+
 /** A specific capacity limit rejected admission before upstream access. */
 export class QuotaExceededError extends Error {
   /**
@@ -76,6 +87,8 @@ function transaction<T>(database: DatabaseSync, operation: () => T): T {
 /** Open the ledger and charge unfinished reservations from an earlier process. */
 export function createQuotaLedger(config: QuotaConfig, clock: () => Date = () => new Date()): QuotaLedger & {
   status(): Promise<QuotaAggregate>
+  /** Read-only usage of one user; pending reservations count at their upper bound, as admission does. */
+  usage(userId: UserId): Promise<PersonalUsage>
 } {
   validateQuotaConfig(config)
   if (process.platform !== 'win32' && (statSync(dirname(config.databasePath)).mode & 0o077) !== 0) {
@@ -110,6 +123,7 @@ export function createQuotaLedger(config: QuotaConfig, clock: () => Date = () =>
   const insertion = database.prepare('INSERT INTO reservations (id, user_id, day, maximum_tokens) VALUES (?, ?, ?, ?)')
   const selection = database.prepare('SELECT charged_tokens FROM reservations WHERE id = ?')
   const settlement = database.prepare('UPDATE reservations SET charged_tokens = ? WHERE id = ? AND charged_tokens IS NULL')
+  const personalHistory = database.prepare('SELECT day, SUM(COALESCE(charged_tokens, maximum_tokens)) AS tokens FROM reservations WHERE user_id = ? AND day >= ? AND day <= ? GROUP BY day ORDER BY day')
   const requireOpen = (): void => { if (closed) throw new Error('quota ledger is closed') }
   return {
     async status() {
@@ -119,6 +133,15 @@ export function createQuotaLedger(config: QuotaConfig, clock: () => Date = () =>
       const day = now.toISOString().slice(0, 10)
       return { siteTokensUsed: scalar(siteTokens, day), siteTokensLimit: config.siteDailyTokens,
         siteInFlight: scalar(sitePending), siteConcurrencyLimit: config.siteConcurrency }
+    },
+    async usage(userId) {
+      requireOpen()
+      const now = clock()
+      if (!Number.isFinite(now.valueOf())) throw new Error('quota clock is invalid')
+      const day = now.toISOString().slice(0, 10)
+      const first = new Date(now.valueOf() - 6 * 86_400_000).toISOString().slice(0, 10)
+      const history = (personalHistory.all(userId, first, day) as Array<{ day: string; tokens: number }>).map(row => ({ day: String(row.day), tokens: Number(row.tokens) }))
+      return { day, usedTokens: scalar(personalTokens, day, userId), limitTokens: config.personalDailyTokens, resetAt: quotaResetAt(now), history }
     },
     async reserve(userId, maximumTokens) {
       requireOpen()
