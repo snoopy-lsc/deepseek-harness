@@ -14,7 +14,7 @@ import { SsoBindingError, STATE_TTL_MS, type SsoStore } from './store.ts'
 export const SSO_BROWSER_COOKIE = 'dsh-sso'
 const CALLBACK = '/api/auth/sso/callback'
 const RETURN = /^\/(?:account|u\/[A-Za-z0-9_-]{1,128})\/$/
-/** LDAP lockout: failures per (username, IP) and per username, in a sliding window. */
+/** LDAP lockout: failures per (username, IP) and per username, in a sliding window, persisted in the identity database. */
 export const LDAP_LOCKOUT = { window: 15 * 60_000, perUserIp: 5, perUser: 20 } as const
 
 /** Collaborators of the SSO plugin. */
@@ -73,8 +73,6 @@ export function ssoPlugin(deps: SsoPluginDeps) {
     store.audit({ event: 'sso-sign-in', outcome: 'ok', userId, ...who, ...ip === undefined ? {} : { ip } }, clock())
     return userId
   }
-  const failures = new Map<string, number[]>()
-  const recent = (key: string, now: number) => (failures.get(key) ?? []).filter(at => at > now - LDAP_LOCKOUT.window)
   const ldapEndpoint = (password: PasswordSsoProvider) => ({
     ssoLdapSignIn: createAuthEndpoint('/sso/ldap/sign-in', { method: 'POST' }, async ctx => {
       const ip = ctx.request?.headers.get('x-dsh-client-ip') ?? undefined
@@ -90,7 +88,13 @@ export function ssoPlugin(deps: SsoPluginDeps) {
         if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait))
         return new APIError(status, { code, message: code })
       }
-      if (recent(pairKey, now).length >= LDAP_LOCKOUT.perUserIp || recent(userKey, now).length >= LDAP_LOCKOUT.perUser) {
+      // The attempt is counted as a failure before the directory is asked and released afterwards when it was not one, so concurrent guesses
+      // (other requests, other processes) can never exceed the limit, and the count survives a restart.
+      let reserved: number[] | undefined
+      try {
+        reserved = store.reserveAttempt([{ key: pairKey, max: LDAP_LOCKOUT.perUserIp }, { key: userKey, max: LDAP_LOCKOUT.perUser }], LDAP_LOCKOUT.window, now)
+      } catch { throw unavailable() }
+      if (reserved === undefined) {
         audit('denied', 'locked')
         throw await refuse('locked', 'TOO_MANY_REQUESTS')
       }
@@ -98,14 +102,14 @@ export function ssoPlugin(deps: SsoPluginDeps) {
       try { identity = await password.authenticate({ username, password: secret }) } catch (error) {
         if (error instanceof SsoRejectedError) {
           audit('denied', error.code)
-          for (const key of [pairKey, userKey]) failures.set(key, [...recent(key, now), now])
-          if (failures.size > 50_000) for (const [key, list] of failures) if (!list.some(at => at > now - LDAP_LOCKOUT.window)) failures.delete(key)
           throw await refuse('credentials', 'UNAUTHORIZED')
         }
+        store.releaseAttempt(reserved)
         if (error instanceof IdentityUnavailableError) { audit('error', 'unavailable'); throw unavailable() }
         throw error
       }
-      failures.delete(pairKey)
+      store.releaseAttempt(reserved)
+      store.clearFailures(pairKey)
       const fail = (code: string, extra: { userId?: string; email?: string } = {}) => {
         store.audit({ event: 'sso-sign-in', outcome: 'denied', detail: code, ...ip === undefined ? {} : { ip }, ...extra }, clock())
         return new APIError('FORBIDDEN', { code, message: code })

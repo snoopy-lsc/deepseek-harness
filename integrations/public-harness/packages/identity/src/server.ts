@@ -10,11 +10,15 @@ import { MAX_SESSION_WIRE_BYTES, SESSION_PATH } from './session-wire.ts'
 import type { CaptchaProvider } from './captcha.ts'
 import { IdentityUnavailableError } from './transports.ts'
 import { checkEmergency, EmergencyDeniedError } from './sso/emergency.ts'
+import { ipAllowed } from './sso/ip.ts'
 import { parseUserId } from '@public-harness/contracts'
 
 const MAX_BODY = 64 * 1024
 /** SAML responses with many groups exceed the JSON body limit. */
 const MAX_ACS_BODY = 768 * 1024
+/** Emergency path lockout: failed attempts per account in a sliding window, persisted in the identity database. */
+export const EMERGENCY_LOCKOUT = { window: 15 * 60_000, perAccount: 5 } as const
+
 /** SAML assertion consumer service (HTTP-POST binding). */
 export const SAML_ACS_PATH = '/api/auth/sso/acs'
 const SAML_METADATA_PATH = '/api/auth/sso/metadata'
@@ -171,11 +175,22 @@ export function publicHandler(deps: PublicDeps): (req: IncomingMessage, res: Ser
       // Undo a single-use claim when the request it admitted does not complete, so a failure never burns a valid token or invite.
       let release: (() => void) | undefined
       let emergency: { userId: string; email: string } | undefined
+      let emergencyHold: number[] | undefined
       if (route === '/emergency/sign-in') {
         if (!config.emergency.enabled || deps.serviceSecret === undefined) throw new HttpError(404, 'not-found')
         limit(`emergency-ip:${ip}`, HOUR, 20)
         let parsed: unknown
         try { parsed = JSON.parse(body?.toString('utf8') ?? '') } catch { parsed = undefined }
+        // Per-account lockout, persisted: every attempt from an allowed address is counted first and released only when it signs in, so a wrong
+        // TOTP code or password uses up the same five tries per fifteen minutes across restarts. Outside addresses never count, so they cannot lock an admin out.
+        const claimed = typeof (parsed as { email?: unknown } | undefined)?.email === 'string' ? ((parsed as { email: string }).email).trim().toLowerCase().slice(0, 320) : ''
+        if (claimed && ipAllowed(ip, config.emergency.allowedIps)) {
+          try { emergencyHold = database.sso.reserveAttempt([{ key: `emergency:${claimed}`, max: EMERGENCY_LOCKOUT.perAccount }], EMERGENCY_LOCKOUT.window, clock()) } catch { throw new IdentityUnavailableError('store') }
+          if (emergencyHold === undefined) {
+            database.sso.audit({ event: 'emergency-sign-in', outcome: 'denied', ip, detail: 'locked', email: claimed }, clock())
+            throw new HttpError(403, 'emergency-denied')
+          }
+        }
         try {
           const admitted = checkEmergency({ config: config.emergency, store: database.sso, serviceSecret: deps.serviceSecret, userIdByEmail, clock }, ip, parsed)
           emergency = { userId: admitted.userId, email: admitted.email }
@@ -240,7 +255,11 @@ export function publicHandler(deps: PublicDeps): (req: IncomingMessage, res: Ser
         response = await auth.handler(new Request(url, { method, headers, ...body === undefined ? {} : { body: new Uint8Array(body) } }))
       } catch (error) {
         release?.()
+        if (emergencyHold !== undefined) database.sso.releaseAttempt(emergencyHold)
         throw error
+      }
+      if (emergency !== undefined && response.status < 400 && emergencyHold !== undefined) {
+        database.sso.releaseAttempt(emergencyHold); database.sso.clearFailures(`emergency:${emergency.email}`)
       }
       if (emergency !== undefined) {
         database.sso.audit({ event: 'emergency-sign-in', outcome: response.status < 400 ? 'ok' : 'denied', ip, ...emergency, ...response.status < 400 ? {} : { detail: 'password' } }, clock())

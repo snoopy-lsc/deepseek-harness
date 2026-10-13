@@ -62,6 +62,17 @@ export interface SsoStore {
   listAudit(since: number): AuditRow[]
   /** Drop audit rows older than the retention period. */
   pruneAudit(now: number): void
+  /** Atomically check every limit (failures in the last `windowMs` per key) and, when all have room, record one pending failure per key.
+   * Returns the row IDs to release when the attempt turns out not to be a failure, or undefined when any key is at its limit. */
+  reserveAttempt(limits: ReadonlyArray<{ readonly key: string; readonly max: number }>, windowMs: number, now: number): number[] | undefined
+  /** Remove reserved failure rows (successful sign-in, or an outage that says nothing about the password). */
+  releaseAttempt(ids: readonly number[]): void
+  /** Forget every recorded failure of one key. */
+  clearFailures(key: string): void
+  /** Failures of one key at or after `since`. */
+  failureCount(key: string, since: number): number
+  /** Delete failure rows older than the window, expired login state and expired assertion IDs. */
+  pruneFailures(now: number, windowMs: number): void
 }
 
 const hash = (value: string) => createHash('sha256').update(`sso-state\0${value}`).digest('hex')
@@ -79,7 +90,10 @@ export function createSsoStore(db: DatabaseSync): SsoStore {
     CREATE TABLE IF NOT EXISTS dsh_audit (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, event TEXT NOT NULL, outcome TEXT NOT NULL,
       user_id TEXT, email TEXT, ip TEXT, detail TEXT);
     CREATE INDEX IF NOT EXISTS dsh_audit_at ON dsh_audit (at);
-    CREATE TABLE IF NOT EXISTS dsh_sso_assertion (hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL);`)
+    CREATE TABLE IF NOT EXISTS dsh_sso_assertion (hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS dsh_auth_failure (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL, at INTEGER NOT NULL);
+    CREATE INDEX IF NOT EXISTS dsh_auth_failure_key ON dsh_auth_failure (key, at);
+    CREATE INDEX IF NOT EXISTS dsh_auth_failure_at ON dsh_auth_failure (at);`)
   const insertState = db.prepare('INSERT INTO dsh_sso_state (hash, browser, nonce, verifier, return_to, expires_at) VALUES (?, ?, ?, ?, ?, ?)')
   const takeState = db.prepare('DELETE FROM dsh_sso_state WHERE hash = ? RETURNING browser, nonce, verifier, return_to, expires_at')
   const dropExpired = db.prepare('DELETE FROM dsh_sso_state WHERE expires_at <= ?')
@@ -98,6 +112,14 @@ export function createSsoStore(db: DatabaseSync): SsoStore {
   const insertAudit = db.prepare('INSERT INTO dsh_audit (at, event, outcome, user_id, email, ip, detail) VALUES (?, ?, ?, ?, ?, ?, ?)')
   const prune = db.prepare('DELETE FROM dsh_audit WHERE at < ?')
   const listAudit = db.prepare('SELECT at, event, outcome, user_id, email, ip, detail FROM dsh_audit WHERE at >= ? ORDER BY at, id')
+  const countFailures = db.prepare('SELECT count(*) AS n FROM dsh_auth_failure WHERE key = ? AND at > ?')
+  const countSince = db.prepare('SELECT count(*) AS n FROM dsh_auth_failure WHERE key = ? AND at >= ?')
+  const insertFailure = db.prepare('INSERT INTO dsh_auth_failure (key, at) VALUES (?, ?)')
+  const deleteFailure = db.prepare('DELETE FROM dsh_auth_failure WHERE id = ?')
+  const clearFailures = db.prepare('DELETE FROM dsh_auth_failure WHERE key = ?')
+  const pruneFailures = db.prepare('DELETE FROM dsh_auth_failure WHERE at <= ?')
+  // Usernames and addresses are personal data; only a keyed hash is stored.
+  const failureKey = (key: string) => createHash('sha256').update(`auth-failure\0${key}`).digest('hex')
   const origin = (userId: string) => (readOrigin.get(userId) as { origin: AccountOrigin } | undefined)?.origin
   const transaction = <T>(fn: () => T): T => {
     db.exec('BEGIN IMMEDIATE')
@@ -147,6 +169,20 @@ export function createSsoStore(db: DatabaseSync): SsoStore {
       ...row.user_id === null ? {} : { userId: String(row.user_id) }, ...row.email === null ? {} : { email: String(row.email) },
       ...row.ip === null ? {} : { ip: String(row.ip) }, ...row.detail === null ? {} : { detail: String(row.detail) } })),
     pruneAudit: now => { prune.run(now - AUDIT_RETENTION_MS) },
+    reserveAttempt(limits, windowMs, now) {
+      // BEGIN IMMEDIATE takes the write lock before counting, so concurrent attempts (other requests or processes) cannot all see the last free slot.
+      return transaction(() => {
+        const keys = limits.map(limit => ({ key: failureKey(limit.key), max: limit.max }))
+        if (keys.some(limit => (countFailures.get(limit.key, now - windowMs) as { n: number }).n >= limit.max)) return undefined
+        return keys.map(limit => Number(insertFailure.run(limit.key, now).lastInsertRowid))
+      })
+    },
+    releaseAttempt(ids) { transaction(() => { for (const id of ids) deleteFailure.run(id) }) },
+    clearFailures: key => { clearFailures.run(failureKey(key)) },
+    failureCount: (key, since) => (countSince.get(failureKey(key), since) as { n: number }).n,
+    pruneFailures(now, windowMs) {
+      pruneFailures.run(now - windowMs); dropExpired.run(now); dropAssertions.run(now)
+    },
   }
   return store
 }

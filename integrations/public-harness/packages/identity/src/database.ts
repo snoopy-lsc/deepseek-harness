@@ -26,6 +26,8 @@ export interface IdentityDatabase {
   revokeInvite(id: string, now?: number): boolean
   /** Invite metadata for operators; never the code. */
   listInvites(): InviteRecord[]
+  /** Delete expired auth-failure rows, login state, assertion IDs and fixed-window rate rows no limit can still read (longest window one day). */
+  prune(now: number, failureWindowMs: number): void
   close(): void
 }
 
@@ -40,6 +42,9 @@ function newInviteCode(): string {
   return `dshinv-${Array.from(bytes, byte => BASE32[byte & 31]).join('')}`
 }
 const inviteHash = (code: string) => createHash('sha256').update(`invite\0${code}`).digest('hex')
+
+/** The longest fixed window in use is one day; rows older than this can no longer affect any limit. */
+const RATE_RETENTION_MS = 86_400_000
 
 const digest = (kind: string, token: string) => createHash('sha256').update(`${kind}\0${token}`).digest('hex')
 
@@ -66,6 +71,7 @@ export async function openIdentityDatabase(file: string): Promise<IdentityDataba
   const claimInvite = db.prepare('UPDATE dsh_invite SET used_at = ?, used_by = ? WHERE hash = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?')
   const releaseInvite = db.prepare('UPDATE dsh_invite SET used_at = NULL, used_by = NULL WHERE hash = ?')
   const revokeInvite = db.prepare('UPDATE dsh_invite SET revoked_at = ? WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL')
+  const pruneRates = db.prepare('DELETE FROM dsh_rate WHERE window_start <= ?')
   const listInvites = db.prepare('SELECT id, created_at, expires_at, used_at, used_by, revoked_at, note FROM dsh_invite ORDER BY created_at')
   const sso = createSsoStore(db)
   sso.pruneAudit(Date.now())
@@ -99,6 +105,10 @@ export async function openIdentityDatabase(file: string): Promise<IdentityDataba
     },
     claimToken: (kind, token, now = Date.now()) => Number(claim.run(digest(kind, token), now).changes) === 1,
     releaseToken: (kind, token) => { release.run(digest(kind, token)) },
+    prune(now, failureWindowMs) {
+      sso.pruneFailures(now, failureWindowMs)
+      pruneRates.run(now - RATE_RETENTION_MS)
+    },
     close: () => db.close(),
   }
 }

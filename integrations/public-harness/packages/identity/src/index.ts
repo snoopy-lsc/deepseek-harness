@@ -18,6 +18,9 @@ import { createLdapProvider } from './sso/ldap.ts'
 import { createSamlProvider } from './sso/saml.ts'
 import { createWecomProvider } from './sso/wecom.ts'
 import type { PasswordSsoProvider, SsoProvider } from './sso/provider.ts'
+import { LDAP_LOCKOUT } from './sso/plugin.ts'
+
+const PRUNE_INTERVAL_MS = 10 * 60_000
 
 export { parseIdentityConfig, parseProviderEnv, type IdentityConfig } from './config.ts'
 export { createCaptchaProvider, type CaptchaProvider } from './captcha.ts'
@@ -34,6 +37,7 @@ export async function startIdentity(config: IdentityConfig, overrides: { mail?: 
   if (/^(1|true)$/i.test(process.env.BETTER_AUTH_TELEMETRY ?? '')) throw new Error('BETTER_AUTH_TELEMETRY must not be enabled')
   const database = await openIdentityDatabase(config.databaseFile)
   const servers: Server[] = []
+  const timers: NodeJS.Timeout[] = []
   try {
     const sso = overrides.sso ?? (config.sso.kind === 'oidc' ? createOidcProvider(config.sso) : config.sso.kind === 'wecom' ? createWecomProvider(config.sso)
       : config.sso.kind === 'dingtalk' ? createDingtalkProvider(config.sso)
@@ -46,13 +50,19 @@ export async function startIdentity(config: IdentityConfig, overrides: { mail?: 
     servers.push(await listenUnix(publicHandler({ config, auth, database, captcha, serviceSecret, pages: createAccountPages(config, captcha), ...sso !== undefined && 'metadata' in sso && sso.metadata ? { ssoMetadata: sso.metadata() } : {},
       ...overrides.clock === undefined ? {} : { clock: overrides.clock } }), config.publicSocket, 0o660))
     servers.push(await listenUnix(sessionHandler(auth), config.sessionSocket, 0o660, config.sessionSocketGid))
+    // Expired counters, login state and assertion IDs are deleted every ten minutes; a failure here is logged and retried next time.
+    const prune = () => { try { database.prune(Date.now(), LDAP_LOCKOUT.window) } catch (error) { console.error('identity: prune failed', error instanceof Error ? error.message : error) } }
+    prune()
+    timers.push(setInterval(prune, PRUNE_INTERVAL_MS).unref())
   } catch (error) {
+    for (const timer of timers) clearInterval(timer)
     for (const server of servers) server.close()
     database.close()
     throw error
   }
   return {
     async close() {
+      for (const timer of timers) clearInterval(timer)
       await Promise.all(servers.map(server => new Promise<void>(resolve => { server.closeAllConnections(); server.close(() => resolve()) })))
       database.close()
     },
