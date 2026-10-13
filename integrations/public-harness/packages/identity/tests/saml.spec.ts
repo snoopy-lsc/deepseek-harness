@@ -100,4 +100,52 @@ describe('SAML provider', () => {
     expect(xml).toContain('urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST')
     expect(xml).toContain('urn:oasis:names:tc:SAML:2.0:nameid-format:persistent')
   })
+
+  it('signed_authn_requests_verify_at_the_idp_and_unsigned_ones_are_refused_there', async () => {
+    const mock = await start(), sp = makeTestKeys('sp'), other = makeTestKeys('other')
+    try {
+      mock.requireSignedBy = sp.cert
+      const signed = provider(mock, { signing: { key: sp.key, cert: sp.cert } })
+      const { url } = await signed.begin({ redirectUri: ACS })
+      expect([...new URL(url).searchParams.keys()].sort()).toEqual(['RelayState', 'SAMLRequest', 'SigAlg', 'Signature'])
+      expect((await login(mock, {}, signed)).subject).toBe(`${MOCK_IDP_ENTITY_ID}|u-7f3a9c`)
+      expect(mock.signatures.at(-1)).toEqual({ valid: true, sigAlg: 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256' })
+      // Unsigned, or signed by a key the IdP does not know: the IdP refuses before any response.
+      expect((await fetch((await provider(mock).begin({ redirectUri: ACS })).url)).status).toBe(403)
+      expect((await fetch((await provider(mock, { signing: { key: other.key, cert: other.cert } }).begin({ redirectUri: ACS })).url)).status).toBe(403)
+      expect(mock.signatures.slice(-2)).toEqual([undefined, { valid: false, sigAlg: 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256' }])
+    } finally { sp.cleanup(); other.cleanup() }
+  })
+
+  it('encrypted_assertions_decrypt_with_the_sp_key_and_plain_ones_are_refused_when_required', async () => {
+    const mock = await start(), sp = makeTestKeys('sp'), other = makeTestKeys('other')
+    try {
+      const sealed = () => provider(mock, { decryption: { key: sp.key, cert: sp.cert } })
+      for (const sign of ['response', 'assertion', 'both'] as const) {
+        expect((await login(mock, { sign, encryptFor: sp.cert }, sealed())).email, sign).toBe('alice@corp.example')
+      }
+      expect(await rejected(login(mock, {}, sealed()))).toBe('encryption')
+      expect(await rejected(login(mock, { sign: 'assertion' }, sealed()))).toBe('encryption')
+      // Encrypted to someone else, or unsigned inside the encryption: refused.
+      expect(await rejected(login(mock, { encryptFor: other.cert }, sealed()))).toBe('assertion')
+      expect(await rejected(login(mock, { sign: 'none', encryptFor: sp.cert }, sealed()))).toBe('signature')
+      // Without a decryption key an encrypted assertion cannot be read: refused, never skipped.
+      expect(await rejected(login(mock, { encryptFor: sp.cert }))).not.toBeUndefined()
+    } finally { sp.cleanup(); other.cleanup() }
+  })
+
+  it('sp_metadata_publishes_the_signing_and_encryption_certificates', async () => {
+    const mock = await start(), sign = makeTestKeys('sign'), enc = makeTestKeys('enc')
+    try {
+      const body = (pem: string) => pem.replace(/-----[A-Z ]+-----|\s/g, '')
+      const xml = provider(mock, { signing: { key: sign.key, cert: sign.cert }, decryption: { key: enc.key, cert: enc.cert } }).metadata!()
+      expect(xml).toMatch(/AuthnRequestsSigned="true"/)
+      expect(xml).toMatch(/<KeyDescriptor use="signing">[\s\S]*?<\/KeyDescriptor>/)
+      expect(/<KeyDescriptor use="signing">([\s\S]*?)<\/KeyDescriptor>/.exec(xml)![1]!.replace(/\s/g, '')).toContain(body(sign.cert))
+      expect(/<KeyDescriptor use="encryption">([\s\S]*?)<\/KeyDescriptor>/.exec(xml)![1]!.replace(/\s/g, '')).toContain(body(enc.cert))
+      expect(xml).not.toContain(body(sign.key).slice(10, 60))
+      expect(xml).not.toContain(body(enc.key).slice(10, 60))
+      expect(provider(mock).metadata!()).not.toContain('KeyDescriptor')
+    } finally { sign.cleanup(); enc.cleanup() }
+  })
 })

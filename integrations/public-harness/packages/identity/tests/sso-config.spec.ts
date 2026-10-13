@@ -1,3 +1,4 @@
+import { chmodSync, symlinkSync, writeFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { IdentityConfigError } from '../src/config.ts'
 import { parseSsoEnv } from '../src/sso/config.ts'
@@ -158,6 +159,43 @@ describe('WeCom environment', () => {
       ]
       for (const [env, name] of cases) expect(() => parseSsoEnv(env, 'production'), name).toThrow(name)
     } finally { keys.cleanup() }
+  })
+
+  it('saml_request_signing_and_assertion_decryption_keys_load_only_from_private_files_or_env', () => {
+    const idp = makeTestKeys(), sp = makeTestKeys('sp'), other = makeTestKeys('other')
+    try {
+      const saml = (extra: Record<string, string | undefined> = {}) => ({ DSH_SSO_PROVIDER: 'saml', DSH_SAML_SP_ENTITY_ID: 'https://harness.corp.example/saml', DSH_SAML_IDP_ENTITY_ID: 'https://idp.corp.example/saml',
+        DSH_SAML_IDP_SSO_URL: 'https://idp.corp.example/sso', DSH_SAML_IDP_CERT_FILE: idp.certFile, DSH_SSO_ALLOWED_GROUPS: 'engineering', ...extra })
+      const signFiles = { DSH_SAML_SIGN_REQUESTS: 'true', DSH_SAML_SP_SIGNING_KEY_FILE: sp.keyFile, DSH_SAML_SP_SIGNING_CERT_FILE: sp.certFile }
+      const decrypt = { DSH_SAML_ENCRYPTED_ASSERTIONS: 'true', DSH_SAML_SP_DECRYPTION_KEY_FILE: sp.keyFile, DSH_SAML_SP_DECRYPTION_CERT_FILE: sp.certFile }
+      expect(parseSsoEnv(saml({ ...signFiles, ...decrypt }), 'production').sso).toMatchObject({ signing: { key: sp.key, cert: sp.cert.trim() }, decryption: { key: sp.key, cert: sp.cert.trim() } })
+      // The signing pair may also come straight from the environment; the decryption key may not.
+      expect(parseSsoEnv(saml({ DSH_SAML_SIGN_REQUESTS: 'true', DSH_SAML_SP_SIGNING_KEY: sp.key, DSH_SAML_SP_SIGNING_CERT: sp.cert }), 'production').sso).toMatchObject({ signing: { key: sp.key } })
+      expect(parseSsoEnv(saml(), 'production').sso).not.toHaveProperty('signing')
+      writeFileSync(`${sp.dir}/group.key`, sp.key, { mode: 0o640 }); chmodSync(`${sp.dir}/group.key`, 0o640)
+      writeFileSync(`${sp.dir}/world.key`, sp.key, { mode: 0o604 }); chmodSync(`${sp.dir}/world.key`, 0o604)
+      symlinkSync(sp.keyFile, `${sp.dir}/link.key`)
+      const cases: Array<[Record<string, string | undefined>, string]> = [
+        [saml({ DSH_SAML_SIGN_REQUESTS: 'true' }), 'DSH_SAML_SP_SIGNING_KEY'],
+        [saml({ ...signFiles, DSH_SAML_SP_SIGNING_CERT_FILE: undefined }), 'DSH_SAML_SP_SIGNING_CERT'],
+        [saml({ ...signFiles, DSH_SAML_SP_SIGNING_CERT_FILE: other.certFile }), 'DSH_SAML_SP_SIGNING_CERT'],
+        [saml({ ...signFiles, DSH_SAML_SP_SIGNING_KEY: sp.key }), 'DSH_SAML_SP_SIGNING_KEY'],
+        [saml({ ...signFiles, DSH_SAML_SP_SIGNING_KEY_FILE: `${sp.dir}/group.key` }), 'DSH_SAML_SP_SIGNING_KEY_FILE'],
+        [saml({ ...signFiles, DSH_SAML_SP_SIGNING_KEY_FILE: sp.certFile }), 'DSH_SAML_SP_SIGNING_KEY_FILE'],
+        [saml({ DSH_SAML_SP_SIGNING_KEY_FILE: sp.keyFile, DSH_SAML_SP_SIGNING_CERT_FILE: sp.certFile }), 'DSH_SAML_SIGN_REQUESTS'],
+        [saml({ DSH_SAML_SIGN_REQUESTS: 'yes' }), 'DSH_SAML_SIGN_REQUESTS'],
+        [saml({ DSH_SAML_ENCRYPTED_ASSERTIONS: 'true' }), 'DSH_SAML_SP_DECRYPTION_KEY_FILE'],
+        [saml({ ...decrypt, DSH_SAML_SP_DECRYPTION_KEY_FILE: `${sp.dir}/group.key` }), 'DSH_SAML_SP_DECRYPTION_KEY_FILE'],
+        [saml({ ...decrypt, DSH_SAML_SP_DECRYPTION_KEY_FILE: `${sp.dir}/world.key` }), 'DSH_SAML_SP_DECRYPTION_KEY_FILE'],
+        [saml({ ...decrypt, DSH_SAML_SP_DECRYPTION_KEY_FILE: `${sp.dir}/link.key` }), 'DSH_SAML_SP_DECRYPTION_KEY_FILE'],
+        [saml({ ...decrypt, DSH_SAML_SP_DECRYPTION_KEY_FILE: `${sp.dir}/missing.key` }), 'DSH_SAML_SP_DECRYPTION_KEY_FILE'],
+        [saml({ ...decrypt, DSH_SAML_SP_DECRYPTION_CERT_FILE: other.certFile }), 'DSH_SAML_SP_DECRYPTION_CERT_FILE'],
+        [saml({ ...decrypt, DSH_SAML_SP_DECRYPTION_CERT_FILE: undefined }), 'DSH_SAML_SP_DECRYPTION_CERT_FILE'],
+        [saml({ ...decrypt, DSH_SAML_SP_DECRYPTION_KEY: sp.key }), 'DSH_SAML_SP_DECRYPTION_KEY'],
+        [saml({ DSH_SAML_SP_DECRYPTION_KEY_FILE: sp.keyFile, DSH_SAML_SP_DECRYPTION_CERT_FILE: sp.certFile }), 'DSH_SAML_ENCRYPTED_ASSERTIONS'],
+      ]
+      for (const [env, name] of cases) expect(() => parseSsoEnv(env, 'production'), name).toThrow(name)
+    } finally { idp.cleanup(); sp.cleanup(); other.cleanup() }
   })
 
   it('ldap_settings_require_tls_and_parse_ad_and_openldap_defaults', () => {

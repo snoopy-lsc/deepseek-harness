@@ -3,17 +3,17 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { openIdentityDatabase } from '../src/database.ts'
 import { startIdentity } from '../src/index.ts'
 import { call, mailbox, sessionCookie, setup, type Reply } from './helpers.ts'
-import { MOCK_IDP_ENTITY_ID, MOCK_SP_ENTITY_ID, startMockSaml, type MockSaml } from './mock-saml.ts'
+import { makeTestKeys, MOCK_IDP_ENTITY_ID, MOCK_SP_ENTITY_ID, startMockSaml, type MockSaml } from './mock-saml.ts'
 
 const open: { close(): Promise<void> }[] = []
 afterEach(async () => { for (const item of open.splice(0).reverse()) await item.close() })
 const IP = { 'x-forwarded-for': '203.0.113.7' }
 const FORM = { 'content-type': 'application/x-www-form-urlencoded' }
 
-async function start() {
+async function start(extra: Record<string, string> = {}) {
   const mock = await startMockSaml(); open.push(mock)
   const { config } = await setup({}, { DSH_SSO_PROVIDER: 'saml', DSH_SAML_SP_ENTITY_ID: MOCK_SP_ENTITY_ID, DSH_SAML_IDP_ENTITY_ID: MOCK_IDP_ENTITY_ID,
-    DSH_SAML_IDP_SSO_URL: mock.ssoUrl, DSH_SAML_IDP_CERT_FILE: mock.keys.certFile, DSH_SSO_ALLOWED_GROUPS: 'engineering' })
+    DSH_SAML_IDP_SSO_URL: mock.ssoUrl, DSH_SAML_IDP_CERT_FILE: mock.keys.certFile, DSH_SSO_ALLOWED_GROUPS: 'engineering', ...extra })
   const service = await startIdentity(config, { mail: mailbox().mail }); open.push(service)
   return { mock, config }
 }
@@ -59,7 +59,7 @@ describe('SAML sign-in', () => {
     const noCookie = await call(config.publicSocket, 'POST', '/api/auth/sso/acs', encode(form2), { ...IP, ...FORM, origin: config.publicOrigin })
     expect(String(noCookie.headers.location)).toBe('/account/login?sso_error=state')
     // IdP-initiated: no RelayState, nothing to bind to.
-    const unsolicited = await call(config.publicSocket, 'POST', '/api/auth/sso/acs', encode({ SAMLResponse: mock.respond({ id: '_unsolicited', acs: `${config.publicOrigin}/api/auth/sso/acs` }, { inResponseTo: null }), RelayState: '' }),
+    const unsolicited = await call(config.publicSocket, 'POST', '/api/auth/sso/acs', encode({ SAMLResponse: await mock.respond({ id: '_unsolicited', acs: `${config.publicOrigin}/api/auth/sso/acs` }, { inResponseTo: null }), RelayState: '' }),
       { ...IP, ...FORM, origin: config.publicOrigin, cookie: cookieOf(begin2) })
     expect(String(unsolicited.headers.location)).toBe('/account/login?sso_error=state')
     const bad = await call(config.publicSocket, 'POST', '/api/auth/sso/acs', 'SAMLResponse=%3Cx%3E&RelayState=a', { ...IP, ...FORM, origin: 'null' })
@@ -81,5 +81,25 @@ describe('SAML sign-in', () => {
     expect(reply.status).toBe(200)
     expect(reply.headers['content-type']).toMatch(/samlmetadata\+xml/)
     expect(reply.body).toContain(`Location="${config.publicOrigin}/api/auth/sso/acs"`)
+  })
+
+  it('signed_requests_and_encrypted_assertions_work_end_to_end_from_key_files', async () => {
+    const sign = makeTestKeys('sign'), enc = makeTestKeys('enc')
+    open.push({ close: async () => { sign.cleanup(); enc.cleanup() } })
+    const { mock, config } = await start({ DSH_SAML_SIGN_REQUESTS: 'true', DSH_SAML_SP_SIGNING_KEY_FILE: sign.keyFile, DSH_SAML_SP_SIGNING_CERT_FILE: sign.certFile,
+      DSH_SAML_ENCRYPTED_ASSERTIONS: 'true', DSH_SAML_SP_DECRYPTION_KEY_FILE: enc.keyFile, DSH_SAML_SP_DECRYPTION_CERT_FILE: enc.certFile })
+    mock.requireSignedBy = sign.cert
+    mock.next = { encryptFor: enc.cert }
+    const { reply } = await samlLogin(config.publicSocket, config.publicOrigin, mock)
+    expect(reply.status).toBe(302)
+    expect(String(reply.headers.location)).toMatch(/^\/account\/\?return=/)
+    expect(mock.signatures.at(-1)?.valid).toBe(true)
+    // The same IdP sending a plain assertion is refused: the declared encryption cannot be downgraded.
+    mock.next = {}
+    const plain = await samlLogin(config.publicSocket, config.publicOrigin, mock)
+    expect(String(plain.reply.headers.location)).toBe('/account/login?sso_error=encryption')
+    const metadata = await call(config.publicSocket, 'GET', '/api/auth/sso/metadata', undefined, IP)
+    expect(metadata.body).toContain('AuthnRequestsSigned="true"')
+    expect(metadata.body).toContain('use="encryption"')
   })
 })
