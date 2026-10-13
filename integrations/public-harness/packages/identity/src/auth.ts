@@ -4,7 +4,7 @@ import { getMigrations } from 'better-auth/db/migration'
 import type { IdentityConfig } from './config.ts'
 import type { IdentityDatabase } from './database.ts'
 import type { MailTransport } from './transports.ts'
-import type { SsoProvider } from './sso/provider.ts'
+import type { PasswordSsoProvider, SsoProvider } from './sso/provider.ts'
 import { ssoPlugin } from './sso/plugin.ts'
 
 /** Cookie prefix; the session cookie is `<prefix>.session_token` (with `__Secure-` over HTTPS). */
@@ -19,7 +19,7 @@ export const COOKIE_PREFIX = 'dsh-account'
  * @param clock Clock for SSO state and audit.
  * @returns Better Auth options.
  */
-export function authOptions(config: IdentityConfig, database: IdentityDatabase, secret: string, mail: MailTransport, sso?: SsoProvider, clock?: () => number) {
+export function authOptions(config: IdentityConfig, database: IdentityDatabase, secret: string, mail: MailTransport, sso?: SsoProvider | PasswordSsoProvider, clock?: () => number) {
   return {
     plugins: sso === undefined ? [] : [ssoPlugin({ config, store: database.sso, provider: sso, ...clock === undefined ? {} : { clock } })],
     appName: 'DeepSeek Harness', baseURL: config.publicOrigin, basePath: '/api/auth', secret,
@@ -53,7 +53,7 @@ export function authOptions(config: IdentityConfig, database: IdentityDatabase, 
  * @param clock Clock for SSO state and audit.
  * @returns Ready Better Auth instance.
  */
-export async function createAuth(config: IdentityConfig, database: IdentityDatabase, secret: string, mail: MailTransport, sso?: SsoProvider, clock?: () => number) {
+export async function createAuth(config: IdentityConfig, database: IdentityDatabase, secret: string, mail: MailTransport, sso?: SsoProvider | PasswordSsoProvider, clock?: () => number) {
   const options = authOptions(config, database, secret, mail, sso, clock)
   const { runMigrations } = await getMigrations(options)
   await runMigrations()

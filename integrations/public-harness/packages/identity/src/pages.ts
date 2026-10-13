@@ -19,7 +19,8 @@ const copy = {
     ssoLogin: 'Sign in with your company account', contractor: 'Invited contractors sign in with email and password:', ssoOnly: 'Employees sign in with the company account; registration is not public.',
     ssoGroup: 'Your company account is not in a group allowed to use Harness. Ask your administrator.', ssoEmailInUse: 'This email already belongs to another Harness account. Ask your administrator.',
     ssoRetry: 'The sign-in expired or was interrupted. Try again.', ssoFailed: 'Company sign-in failed. Try again or ask your administrator.',
-    emergency: 'Administrator emergency sign-in', code: 'Authenticator code' },
+    emergency: 'Administrator emergency sign-in', code: 'Authenticator code',
+    username: 'Company username', ldapFailed: 'Sign-in failed. Check your username and password, or ask your administrator.', ldapLocked: 'Too many failed attempts. Try again later.' },
   zh: { title: 'DeepSeek Harness 账户', register: '创建账户', login: '登录', logout: '退出登录', reset: '重置密码',
     email: '邮箱', password: '密码', name: '名称', newPassword: '新密码', submit: '继续', loading: '处理中…',
     checkMail: '请查收邮件中的验证链接。', verified: '邮箱已验证，现在可以登录。', resetSent: '如果该地址存在，重置链接已发送。',
@@ -30,7 +31,8 @@ const copy = {
     ssoLogin: '使用企业账号登录', contractor: '受邀承包商使用邮箱和密码登录：', ssoOnly: '员工请使用企业账号登录；不开放公开注册。',
     ssoGroup: '你的企业账号不在允许使用 Harness 的群组中，请联系管理员。', ssoEmailInUse: '该邮箱已属于另一个 Harness 账户，请联系管理员。',
     ssoRetry: '登录已过期或被中断，请重试。', ssoFailed: '企业登录失败，请重试或联系管理员。',
-    emergency: '管理员紧急登录', code: '验证器动态码' },
+    emergency: '管理员紧急登录', code: '验证器动态码',
+    username: '企业用户名', ldapFailed: '登录失败。请检查用户名和密码，或联系管理员。', ldapLocked: '失败次数过多，请稍后再试。' },
 } satisfies Record<Locale, Record<string, string>>
 /** Page copy keys, identical in every locale. */
 export type CopyKey = keyof typeof copy.en
@@ -73,8 +75,8 @@ export function safeReturnPath(value: string, userId: UserId): string {
 export function text(locale: Locale, key: CopyKey): string { return copy[locale][key] }
 
 type View = 'home' | 'register' | 'login' | 'reset' | 'verified' | 'emergency'
-/** Which sign-in paths a deployment offers: enterprise SSO and the administrator emergency page. */
-export interface PageMode { readonly sso: boolean; readonly emergency: boolean }
+/** Which sign-in paths a deployment offers: enterprise SSO (LDAP uses a username/password form instead of a redirect) and the administrator emergency page. */
+export interface PageMode { readonly sso: boolean; readonly emergency: boolean; readonly ldap?: boolean }
 
 /** Map an `sso_error` code from the callback to localized copy; unknown codes get the generic message.
  * @param locale Locale.
@@ -107,7 +109,9 @@ function form(locale: Locale, view: View, captcha: PageCaptcha, mode: PageMode):
   const invite = captcha.provider === 'none' ? `<label>${t('invite')}<input name="invite" type="text" required autocomplete="off" spellcheck="false" pattern="dshinv-[a-z2-7]{26}"></label>` : ''
   // In SSO mode only invited contractors keep password registration and sign-in (decision D3).
   const passwords = !mode.sso || captcha.provider === 'none'
-  const company = `<p><a href="/api/auth/sso/start" data-sso-start>${t('ssoLogin')}</a></p>`
+  const company = mode.ldap
+    ? `<h2>${t('ssoLogin')}</h2><form data-action="ldap"><label>${t('username')}<input name="username" type="text" required autocomplete="username" spellcheck="false" autocapitalize="off"></label>${field('password', 'password', 'password')}<button type="submit">${t('submit')}</button></form>`
+    : `<p><a href="/api/auth/sso/start" data-sso-start>${t('ssoLogin')}</a></p>`
   const login = `<form data-action="login">${field('email', 'email', 'email')}${field('password', 'password', 'password')}<button type="submit">${t('submit')}</button></form>`
   if (view === 'emergency') return `<h2>${t('emergency')}</h2><form data-action="emergency">${field('email', 'email', 'email')}${field('password', 'password', 'password')}<label>${t('code')}<input name="code" type="text" required inputmode="numeric" pattern="[0-9]{6}" autocomplete="one-time-code"></label><button type="submit">${t('submit')}</button></form>`
   if (view === 'login' && mode.sso) return `${company}${passwords ? `<p>${t('contractor')}</p>${login}` : ''}`
@@ -161,6 +165,9 @@ for(const f of document.querySelectorAll('form'))f.addEventListener('submit',asy
  const a=f.dataset.action;let used=false;
  try{
   if(a==='register'){const h=gate(f,d);used=true;await call('/sign-up/email',{name:d.name,email:d.email,password:d.password,callbackURL:'/account/verified'},h);say(L.checkMail)}
+  else if(a==='ldap'){const r=await fetch('/api/auth/sso/ldap/sign-in',{method:'POST',headers:{'content-type':'application/json'},credentials:'same-origin',body:JSON.stringify({username:d.username,password:d.password,return:new URLSearchParams(location.search).get('return')||''})});
+   let j=null;try{j=await r.json()}catch{} if(r.ok&&j&&j.redirect){location.assign(j.redirect);return}
+   const c=j&&j.code;say(r.status===503?L.unavailable:r.status===429||c==='locked'?L.ldapLocked:c==='group'?L.ssoGroup:c==='email-in-use'?L.ssoEmailInUse:L.ldapFailed)}
   else if(a==='login'){const r=await call('/sign-in/email',{email:d.email,password:d.password});location.assign('/account/?return='+encodeURIComponent(new URLSearchParams(location.search).get('return')||''))}
   else if(a==='reset-request'){const h=gate(f,d);used=true;await call('/request-password-reset',{email:d.email,redirectTo:'/account/reset'},h);say(L.resetSent)}
   else if(a==='emergency'){await call('/emergency/sign-in',{email:d.email,password:d.password,code:String(d.code).trim()});location.assign('/account/')}
@@ -216,7 +223,7 @@ export function pageCaptcha(provider: Pick<CaptchaProvider, 'kind' | 'widget'>):
  */
 export function createAccountPages(config: IdentityConfig, provider: Pick<CaptchaProvider, 'kind' | 'widget'>): PagesHandler {
   const captcha = pageCaptcha(provider)
-  const mode: PageMode = { sso: config.sso.kind !== 'off', emergency: config.emergency.enabled }
+  const mode: PageMode = { sso: config.sso.kind !== 'off', emergency: config.emergency.enabled, ldap: config.sso.kind === 'ldap' }
   const views: Record<string, View> = { '/account/': 'home', '/account/register': 'register', '/account/login': 'login', '/account/reset': 'reset', '/account/verified': 'verified',
     ...mode.emergency ? { '/account/emergency': 'emergency' as const } : {} }
   return async (req: IncomingMessage, res: ServerResponse, url: URL) => {

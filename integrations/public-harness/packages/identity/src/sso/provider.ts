@@ -1,4 +1,4 @@
-/** Provider-neutral enterprise sign-in port; OIDC, WeCom, DingTalk and SAML implement it; LDAP follows. */
+/** Provider-neutral enterprise sign-in port; OIDC, WeCom, DingTalk and SAML implement the redirect port; LDAP the password port. */
 
 /** A verified enterprise identity. `subject` is stable per provider and is the only binding key; email is never used to find an account. */
 export interface SsoIdentity {
@@ -30,4 +30,14 @@ export interface SsoProvider {
 export class SsoRejectedError extends Error {
   override readonly name = 'SsoRejectedError'
   constructor(readonly code: string) { super(`sso rejected: ${code}`) }
+}
+
+/** Username/password enterprise sign-in (LDAP, Active Directory); the service checks the password against the directory. */
+export interface PasswordSsoProvider {
+  readonly kind: 'ldap'
+  /** Verify the credentials.
+   * @param input Username and password as typed.
+   * @returns The verified identity; throws `SsoRejectedError` (one code for every credential failure) or `IdentityUnavailableError`.
+   */
+  authenticate(input: { username: string; password: string }): Promise<SsoIdentity>
 }

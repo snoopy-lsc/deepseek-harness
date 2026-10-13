@@ -22,12 +22,31 @@ export type SsoConfig =
     readonly groupAttribute: string; readonly emailAttribute: string; readonly nameAttribute: string
     /** Require the Assertion itself to be signed; otherwise a signed Response or a signed Assertion is enough. */
     readonly wantAssertionsSigned: boolean; readonly clockSkewMs: number; readonly allowedGroups: readonly string[] }
+  | { readonly kind: 'ldap'; readonly url: string; readonly startTls: boolean
+    /** PEM CA bundle pinned from `DSH_LDAP_CA_FILE`; absent means the system store. */
+    readonly ca?: string; readonly bindDn: string; readonly bindPassword: string; readonly baseDn: string; readonly userFilter: string
+    readonly usernameAttribute: string; readonly idAttribute: string; readonly emailAttribute: string; readonly nameAttribute: string
+    readonly groupMode: 'memberOf' | 'nested' | 'search'; readonly groupBaseDn: string; readonly groupObjectClass: string
+    /** Active Directory: objectGUID handling and userAccountControl disabled-account checks. */
+    readonly activeDirectory: boolean
+    /** Scopes subjects to one directory, default `host:port` of the URL. */
+    readonly serverId: string
+    /** Normalized group DNs (see `normalizeDn`), separated by `;` in `DSH_SSO_ALLOWED_GROUPS` because DNs contain commas. */
+    readonly allowedGroups: readonly string[]; readonly timeoutMs: number }
 /** Administrator emergency password path; enabled only by a source-address allow-list. */
 export type EmergencyConfig = { readonly enabled: false } | { readonly enabled: true; readonly allowedIps: readonly string[] }
 
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]'])
 
-/** Parse `DSH_SSO_*`, `DSH_OIDC_*`, `DSH_WECOM_*`, `DSH_DINGTALK_*` and `DSH_SAML_*`. Errors name the variable, never its value.
+/** Compare-friendly DN: lower case, no spaces around separators. Directories return the same group with varying case and spacing.
+ * @param dn Distinguished name.
+ * @returns Normalized DN.
+ */
+export function normalizeDn(dn: string): string {
+  return dn.trim().toLowerCase().replace(/\s*([,=+])\s*/g, '$1')
+}
+
+/** Parse `DSH_SSO_*`, `DSH_OIDC_*`, `DSH_WECOM_*`, `DSH_DINGTALK_*`, `DSH_SAML_*` and `DSH_LDAP_*`. Errors name the variable, never its value.
  * @param env Process environment.
  * @param mode Service mode; production requires HTTPS IdP URLs, local mode allows loopback HTTP for the mock IdPs.
  * @returns SSO and emergency settings.
@@ -111,6 +130,42 @@ export function parseSsoEnv(env: Readonly<Record<string, string | undefined>>, m
       groupAttribute: attribute('DSH_SAML_GROUP_ATTRIBUTE', 'groups'), emailAttribute: attribute('DSH_SAML_EMAIL_ATTRIBUTE', 'email'), nameAttribute: attribute('DSH_SAML_NAME_ATTRIBUTE', 'displayName'),
       wantAssertionsSigned: optional('DSH_SAML_WANT_ASSERTIONS_SIGNED', 'false', /^(true|false)$/) === 'true', clockSkewMs: skew,
       allowedGroups: list('DSH_SSO_ALLOWED_GROUPS', need('DSH_SSO_ALLOWED_GROUPS'), /^[^,\s](?:[^,]{0,254}[^,\s])?$/) }
+  } else if (kind === 'ldap') {
+    let url: URL
+    try { url = new URL(need('DSH_LDAP_URL')) } catch { throw new IdentityConfigError('DSH_LDAP_URL') }
+    const startTls = optional('DSH_LDAP_STARTTLS', 'false', /^(true|false)$/) === 'true'
+    // Credentials never cross the network in clear: LDAPS, or ldap:// with StartTLS; plain ldap:// only to loopback in local mode.
+    const plainOk = mode === 'local' && LOOPBACK.has(url.hostname)
+    if (!['ldaps:', 'ldap:'].includes(url.protocol) || (url.protocol === 'ldaps:' && startTls) || (url.protocol === 'ldap:' && !startTls && !plainOk)
+      || (url.pathname !== '/' && url.pathname !== '') || url.search || url.hash || url.username) throw new IdentityConfigError('DSH_LDAP_URL')
+    let ca: string | undefined
+    if (env.DSH_LDAP_CA_FILE) {
+      try { ca = readFileSync(need('DSH_LDAP_CA_FILE'), 'utf8') } catch { throw new IdentityConfigError('DSH_LDAP_CA_FILE') }
+      const pems = ca.match(/-----BEGIN CERTIFICATE-----[A-Za-z0-9+/=\s]+?-----END CERTIFICATE-----/g) ?? []
+      if (!pems.length || /PRIVATE KEY/.test(ca)) throw new IdentityConfigError('DSH_LDAP_CA_FILE')
+      for (const pem of pems) { try { new X509Certificate(pem) } catch { throw new IdentityConfigError('DSH_LDAP_CA_FILE') } }
+    }
+    const schema = optional('DSH_LDAP_SCHEMA', 'ad', /^(ad|openldap)$/)
+    const ad = schema === 'ad'
+    const attribute = (name: string, fallback: string) => optional(name, fallback, /^[A-Za-z][A-Za-z0-9-]{0,63}$|^[0-9]+(?:\.[0-9]+)+$/)
+    const dn = (name: string, fallback?: string) => fallback === undefined ? need(name, /^[^\r\n\0]{1,1024}$/) : optional(name, fallback, /^[^\r\n\0]{1,1024}$/)
+    const filter = optional('DSH_LDAP_USER_FILTER', ad ? '(&(objectCategory=person)(objectClass=user))' : '(objectClass=inetOrgPerson)', /^\([^\r\n\0]{1,1022}\)$/)
+    let depth = 0
+    for (const ch of filter) { depth += ch === '(' ? 1 : ch === ')' ? -1 : 0; if (depth < 0) break }
+    if (depth !== 0) throw new IdentityConfigError('DSH_LDAP_USER_FILTER')
+    const timeoutMs = Number(optional('DSH_LDAP_TIMEOUT_MS', '5000', /^[0-9]{3,6}$/))
+    if (timeoutMs < 500 || timeoutMs > 60_000) throw new IdentityConfigError('DSH_LDAP_TIMEOUT_MS')
+    const baseDn = dn('DSH_LDAP_BASE_DN')
+    const groups = need('DSH_SSO_ALLOWED_GROUPS').split(';').map(entry => entry.trim())
+    if (groups.some(entry => !/^[^=;\s][^;]*=[^;]+$/.test(entry) || entry.length > 1024)) throw new IdentityConfigError('DSH_SSO_ALLOWED_GROUPS')
+    sso = { kind: 'ldap', url: `${url.protocol}//${url.host}`, startTls, ...ca === undefined ? {} : { ca }, bindDn: dn('DSH_LDAP_BIND_DN'), bindPassword: need('DSH_LDAP_BIND_PASSWORD', /^.+$/),
+      baseDn, userFilter: filter,
+      usernameAttribute: attribute('DSH_LDAP_USERNAME_ATTRIBUTE', ad ? 'sAMAccountName' : 'uid'), idAttribute: attribute('DSH_LDAP_ID_ATTRIBUTE', ad ? 'objectGUID' : 'entryUUID'),
+      emailAttribute: attribute('DSH_LDAP_EMAIL_ATTRIBUTE', 'mail'), nameAttribute: attribute('DSH_LDAP_NAME_ATTRIBUTE', ad ? 'displayName' : 'cn'),
+      groupMode: optional('DSH_LDAP_GROUP_MODE', 'memberOf', /^(memberOf|nested|search)$/) as 'memberOf' | 'nested' | 'search',
+      groupBaseDn: dn('DSH_LDAP_GROUP_BASE_DN', baseDn), groupObjectClass: attribute('DSH_LDAP_GROUP_OBJECT_CLASS', ad ? 'group' : 'groupOfNames'), activeDirectory: ad,
+      serverId: optional('DSH_LDAP_SERVER_ID', url.host, /^[\x21-\x7b\x7d\x7e]{1,256}$/), allowedGroups: groups.map(normalizeDn), timeoutMs }
+    if (sso.groupMode === 'nested' && !ad) throw new IdentityConfigError('DSH_LDAP_GROUP_MODE')
   } else throw new IdentityConfigError('DSH_SSO_PROVIDER')
 
   let emergency: EmergencyConfig = { enabled: false }

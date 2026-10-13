@@ -14,9 +14,10 @@ import { createMailTransport } from './mail.ts'
 import type { MailTransport } from './transports.ts'
 import { createOidcProvider } from './sso/oidc.ts'
 import { createDingtalkProvider } from './sso/dingtalk.ts'
+import { createLdapProvider } from './sso/ldap.ts'
 import { createSamlProvider } from './sso/saml.ts'
 import { createWecomProvider } from './sso/wecom.ts'
-import type { SsoProvider } from './sso/provider.ts'
+import type { PasswordSsoProvider, SsoProvider } from './sso/provider.ts'
 
 export { parseIdentityConfig, parseProviderEnv, type IdentityConfig } from './config.ts'
 export { createCaptchaProvider, type CaptchaProvider } from './captcha.ts'
@@ -28,7 +29,7 @@ export { readSecret } from './secret.ts'
  * @param overrides Injected providers for tests.
  * @returns Handle that closes listeners and the database.
  */
-export async function startIdentity(config: IdentityConfig, overrides: { mail?: MailTransport; captcha?: CaptchaProvider; sso?: SsoProvider; clock?: () => number } = {}): Promise<{ close(): Promise<void> }> {
+export async function startIdentity(config: IdentityConfig, overrides: { mail?: MailTransport; captcha?: CaptchaProvider; sso?: SsoProvider | PasswordSsoProvider; clock?: () => number } = {}): Promise<{ close(): Promise<void> }> {
   // Better Auth enables telemetry when this variable is set, regardless of options; the service sends nothing outbound.
   if (/^(1|true)$/i.test(process.env.BETTER_AUTH_TELEMETRY ?? '')) throw new Error('BETTER_AUTH_TELEMETRY must not be enabled')
   const database = await openIdentityDatabase(config.databaseFile)
@@ -37,11 +38,12 @@ export async function startIdentity(config: IdentityConfig, overrides: { mail?: 
     const sso = overrides.sso ?? (config.sso.kind === 'oidc' ? createOidcProvider(config.sso) : config.sso.kind === 'wecom' ? createWecomProvider(config.sso)
       : config.sso.kind === 'dingtalk' ? createDingtalkProvider(config.sso)
       : config.sso.kind === 'saml' ? createSamlProvider(config.sso, { acsUrl: `${config.publicOrigin}${SAML_ACS_PATH}`, replay: (id, until) => database.sso.useAssertion(id, until, Date.now()) })
+      : config.sso.kind === 'ldap' ? createLdapProvider(config.sso)
       : undefined)
     const serviceSecret = await readSecret(config.secretFile)
     const auth = await createAuth(config, database, serviceSecret, overrides.mail ?? createMailTransport(config.mail), sso, overrides.clock)
     const captcha = overrides.captcha ?? createCaptchaProvider(config.captcha)
-    servers.push(await listenUnix(publicHandler({ config, auth, database, captcha, serviceSecret, pages: createAccountPages(config, captcha), ...sso?.metadata ? { ssoMetadata: sso.metadata() } : {},
+    servers.push(await listenUnix(publicHandler({ config, auth, database, captcha, serviceSecret, pages: createAccountPages(config, captcha), ...sso !== undefined && 'metadata' in sso && sso.metadata ? { ssoMetadata: sso.metadata() } : {},
       ...overrides.clock === undefined ? {} : { clock: overrides.clock } }), config.publicSocket, 0o660))
     servers.push(await listenUnix(sessionHandler(auth), config.sessionSocket, 0o660, config.sessionSocketGid))
   } catch (error) {
