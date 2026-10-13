@@ -40,7 +40,7 @@ export function identityStylesheet(): string {
     + '.divider{display:flex;align-items:center;gap:12px;margin:20px 0 16px;font-size:12px;line-height:18px}.divider::before,.divider::after{content:"";flex:1;height:.5px}'
     + '.foot{margin:20px 0 0;text-align:center;font-size:13px}.foot a{text-decoration:none}.stack{display:grid;gap:10px}'
     + '[role=alert]{margin:16px 0 0;font-size:13px;line-height:20px;border-radius:8px}[role=alert]:not(:empty){padding:8px 12px}[role=status]{text-align:center}'
-    + '[data-session] p{margin:0 0 12px;text-align:center}[hidden]{display:none!important}'
+    + '[data-session] p{margin:0 0 12px;text-align:center}[data-session] a{margin-bottom:10px}[hidden]{display:none!important}'
     + `${palette('light')}@media (prefers-color-scheme:dark){${palette('dark')}}`
     + `@media (prefers-reduced-transparency:reduce){.card{-webkit-backdrop-filter:none;backdrop-filter:none;background:${MATERIALS['--dsw-alias-settings-card-fill']!.solid.light}}`
     + `@media (prefers-color-scheme:dark){.card{background:${MATERIALS['--dsw-alias-settings-card-fill']!.solid.dark}}}}`

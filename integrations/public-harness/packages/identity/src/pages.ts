@@ -24,7 +24,7 @@ const copy = {
     ssoGroup: 'Your company account is not in a group allowed to use Harness. Ask your administrator.', ssoEmailInUse: 'This email already belongs to another Harness account. Ask your administrator.',
     ssoRetry: 'The sign-in expired or was interrupted. Try again.', ssoFailed: 'Company sign-in failed. Try again or ask your administrator.',
     emergency: 'Administrator emergency sign-in', code: 'Authenticator code',
-    username: 'Company username', brand: 'Team Harness', orEmail: 'or sign in with email', forgot: 'Forgot password?', signInTitle: 'Sign in', signInSub: 'Welcome back to Team Harness',
+    username: 'Company username', brand: 'Team Harness', badLogin: 'Sign-in failed: wrong email or password.', orEmail: 'or sign in with email', forgot: 'Forgot password?', signInTitle: 'Sign in', signInSub: 'Welcome back to Team Harness',
     registerSub: 'Create your Team Harness account', resetSub: 'We will email you a reset link', sendReset: 'Send reset link', haveAccount: 'Already have an account?', noAccount: 'New here?', backToLogin: 'Back to sign in', emergencySub: 'For administrators when company sign-in is down', homeTitle: 'Your account', ldapFailed: 'Sign-in failed. Check your username and password, or ask your administrator.', ldapLocked: 'Too many failed attempts. Try again later.' },
   zh: { title: 'Team Harness 账户', register: '创建账户', login: '登录', logout: '退出登录', reset: '重置密码',
     email: '邮箱', password: '密码', name: '名称', newPassword: '新密码', submit: '继续', loading: '处理中…',
@@ -37,7 +37,7 @@ const copy = {
     ssoGroup: '你的企业账号不在允许使用 Harness 的群组中，请联系管理员。', ssoEmailInUse: '该邮箱已属于另一个 Harness 账户，请联系管理员。',
     ssoRetry: '登录已过期或被中断，请重试。', ssoFailed: '企业登录失败，请重试或联系管理员。',
     emergency: '管理员紧急登录', code: '验证器动态码',
-    username: '企业用户名', brand: 'Team Harness', orEmail: '或使用邮箱登录', forgot: '忘记密码', signInTitle: '登录', signInSub: '欢迎回到 Team Harness',
+    username: '企业用户名', brand: 'Team Harness', badLogin: '登录失败：邮箱或密码不正确。', orEmail: '或使用邮箱登录', forgot: '忘记密码', signInTitle: '登录', signInSub: '欢迎回到 Team Harness',
     registerSub: '创建 Team Harness 账户', resetSub: '我们会向你的邮箱发送重置链接', sendReset: '发送重置链接', haveAccount: '已有账户？', noAccount: '还没有账户？', backToLogin: '返回登录', emergencySub: '仅在企业登录不可用时供管理员使用', homeTitle: '我的账户', ldapFailed: '登录失败。请检查用户名和密码，或联系管理员。', ldapLocked: '失败次数过多，请稍后再试。' },
 } satisfies Record<Locale, Record<string, string>>
 /** Page copy keys, identical in every locale. */
@@ -167,7 +167,7 @@ const say=(m)=>{out.textContent=m};
 // After sign-in everyone goes straight to their own chat; the return parameter may only name the account page or that same route.
 const home=(r)=>{const id=r&&r.user&&r.user.id;if(typeof id!=='string'||!/^[A-Za-z0-9_-]+$/.test(id))return '/account/';const own='/u/'+id+'/',w=new URLSearchParams(location.search).get('return')||'';return w==='/account/'||w===own?w:own}
 async function call(path,body,extra){const r=await fetch('/api/auth'+path,{method:body===undefined?'GET':'POST',headers:{'content-type':'application/json',...extra},body:body===undefined?undefined:JSON.stringify(body),credentials:'same-origin'});
- let j=null;try{j=await r.json()}catch{} if(r.status===503)throw new Error(L.unavailable); if(!r.ok)throw new Error(L.failed+((j&&(j.code||j.message))||r.status)); return j}
+ let j=null;try{j=await r.json()}catch{} if(r.status===503)throw new Error(L.unavailable); if(!r.ok&&j&&j.code==='INVALID_EMAIL_OR_PASSWORD')throw new Error(L.badLogin); if(!r.ok)throw new Error(L.failed+((j&&(j.code||j.message))||r.status)); return j}
 let tok='';const mark=(ok)=>{for(const s of document.querySelectorAll('[data-captcha-state]'))s.textContent=ok?L.captchaDone:''};
 const load=(cb)=>{const s=document.createElement('script');s.src=C.script;s.async=true;s.onload=cb;s.onerror=()=>say(L.unavailable);document.head.append(s)};
 const human=document.querySelector('[data-captcha]');
