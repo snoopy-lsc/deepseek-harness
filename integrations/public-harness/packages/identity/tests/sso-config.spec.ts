@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { IdentityConfigError } from '../src/config.ts'
 import { parseSsoEnv } from '../src/sso/config.ts'
 import { setup } from './helpers.ts'
+import { makeTestKeys } from './mock-saml.ts'
 
 const SECRET = 'placeholder-client-secret-value'
 const oidc = (extra: Record<string, string | undefined> = {}) => ({
@@ -26,7 +27,7 @@ describe('SSO environment', () => {
 
   it('invalid_settings_refuse_start_naming_the_variable', () => {
     const cases: Array<[Record<string, string | undefined>, string, 'production' | 'local']> = [
-      [{ DSH_SSO_PROVIDER: 'saml' }, 'DSH_SSO_PROVIDER', 'production'],
+      [{ DSH_SSO_PROVIDER: 'ldap' }, 'DSH_SSO_PROVIDER', 'production'],
       [{ DSH_SSO_PROVIDER: 'OIDC' }, 'DSH_SSO_PROVIDER', 'production'],
       [oidc({ DSH_OIDC_CLIENT_ID: undefined }), 'DSH_OIDC_CLIENT_ID', 'production'],
       [oidc({ DSH_OIDC_CLIENT_SECRET: '' }), 'DSH_OIDC_CLIENT_SECRET', 'production'],
@@ -127,5 +128,34 @@ describe('WeCom environment', () => {
       [dingtalk({ DSH_DINGTALK_TIMEOUT_MS: '70000' }), 'DSH_DINGTALK_TIMEOUT_MS'],
     ]
     for (const [env, name] of cases) expect(() => parseSsoEnv(env, 'production'), name).toThrow(name)
+  })
+
+  it('saml_settings_parse_with_a_pinned_certificate_and_refuse_bad_values', () => {
+    const keys = makeTestKeys()
+    try {
+      const saml = (extra: Record<string, string | undefined> = {}) => ({ DSH_SSO_PROVIDER: 'saml', DSH_SAML_SP_ENTITY_ID: 'https://harness.corp.example/saml', DSH_SAML_IDP_ENTITY_ID: 'https://idp.corp.example/saml',
+        DSH_SAML_IDP_SSO_URL: 'https://idp.corp.example/sso', DSH_SAML_IDP_CERT_FILE: keys.certFile, DSH_SSO_ALLOWED_GROUPS: 'engineering', ...extra })
+      expect(parseSsoEnv(saml(), 'production').sso).toEqual({ kind: 'saml', spEntityId: 'https://harness.corp.example/saml', idpEntityId: 'https://idp.corp.example/saml',
+        idpSsoUrl: 'https://idp.corp.example/sso', idpCerts: [keys.cert.trim()], nameIdFormat: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent', groupAttribute: 'groups',
+        emailAttribute: 'email', nameAttribute: 'displayName', wantAssertionsSigned: false, clockSkewMs: 60_000, allowedGroups: ['engineering'] })
+      expect(parseSsoEnv(saml({ DSH_SAML_NAMEID_FORMAT: 'emailAddress', DSH_SAML_GROUP_ATTRIBUTE: 'http://schemas.microsoft.com/ws/2008/06/identity/claims/groups',
+        DSH_SAML_WANT_ASSERTIONS_SIGNED: 'true', DSH_SAML_CLOCK_SKEW_MS: '30000' }), 'production').sso)
+        .toMatchObject({ nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress', groupAttribute: 'http://schemas.microsoft.com/ws/2008/06/identity/claims/groups', wantAssertionsSigned: true, clockSkewMs: 30_000 })
+      const cases: Array<[Record<string, string | undefined>, string]> = [
+        [saml({ DSH_SAML_SP_ENTITY_ID: undefined }), 'DSH_SAML_SP_ENTITY_ID'],
+        [saml({ DSH_SAML_IDP_ENTITY_ID: undefined }), 'DSH_SAML_IDP_ENTITY_ID'],
+        [saml({ DSH_SAML_IDP_SSO_URL: undefined }), 'DSH_SAML_IDP_SSO_URL'],
+        [saml({ DSH_SAML_IDP_SSO_URL: 'http://idp.corp.example/sso' }), 'DSH_SAML_IDP_SSO_URL'],
+        [saml({ DSH_SAML_IDP_CERT_FILE: undefined }), 'DSH_SAML_IDP_CERT_FILE'],
+        [saml({ DSH_SAML_IDP_CERT_FILE: `${keys.dir}/missing.crt` }), 'DSH_SAML_IDP_CERT_FILE'],
+        // A private key in the pinned-certificate path is refused rather than ignored.
+        [saml({ DSH_SAML_IDP_CERT_FILE: `${keys.dir}/idp.key` }), 'DSH_SAML_IDP_CERT_FILE'],
+        [saml({ DSH_SAML_NAMEID_FORMAT: 'transient' }), 'DSH_SAML_NAMEID_FORMAT'],
+        [saml({ DSH_SAML_CLOCK_SKEW_MS: '600000' }), 'DSH_SAML_CLOCK_SKEW_MS'],
+        [saml({ DSH_SAML_WANT_ASSERTIONS_SIGNED: 'yes' }), 'DSH_SAML_WANT_ASSERTIONS_SIGNED'],
+        [saml({ DSH_SSO_ALLOWED_GROUPS: undefined }), 'DSH_SSO_ALLOWED_GROUPS'],
+      ]
+      for (const [env, name] of cases) expect(() => parseSsoEnv(env, 'production'), name).toThrow(name)
+    } finally { keys.cleanup() }
   })
 })

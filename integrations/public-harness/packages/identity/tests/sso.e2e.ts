@@ -6,6 +6,7 @@ import { chromium, type Browser } from 'playwright-core'
 import { startIdentity } from '../src/index.ts'
 import { call, mailbox, setup } from './helpers.ts'
 import { MOCK_CLIENT_ID, MOCK_CLIENT_SECRET, startMockIdp, type MockIdp } from './mock-oidc.ts'
+import { MOCK_IDP_ENTITY_ID, MOCK_SP_ENTITY_ID, startMockSaml } from './mock-saml.ts'
 import { MOCK_DT_CLIENT_ID, MOCK_DT_CORP_ID, MOCK_DT_SECRET, startMockDingtalk } from './mock-dingtalk.ts'
 import { MOCK_AGENT_ID, MOCK_CORP_ID, MOCK_WECOM_SECRET, startMockWecom } from './mock-wecom.ts'
 
@@ -122,6 +123,35 @@ describe.skipIf(executable === undefined)('DingTalk login in a real browser', ()
     await page.waitForURL(/\/account\/\?return=%2Fu%2F/)
     await page.waitForFunction(() => /^dingtalk-[0-9a-f]{32}@sso\.invalid$/.test(document.querySelector('[data-session] p')?.textContent ?? ''))
     expect((await context.cookies(DT_ORIGIN)).some(entry => entry.name === 'dsh-account.session_token')).toBe(true)
+    await context.close()
+  })
+})
+
+describe.skipIf(executable === undefined)('SAML login in a real browser', () => {
+  const SAML_ORIGIN = 'http://127.0.0.1:18447'
+  const local: Array<() => Promise<void>> = []
+  let browser: Browser
+  beforeAll(async () => {
+    const mock = await startMockSaml(); local.push(() => mock.close())
+    // `localhost` keeps the IdP on another site than 127.0.0.1, so the IdP's post is cross-site as in production and must take the re-post path.
+    const ssoUrl = mock.ssoUrl.replace('127.0.0.1', 'localhost')
+    const { config } = await setup({ publicOrigin: SAML_ORIGIN }, { DSH_SSO_PROVIDER: 'saml', DSH_SAML_SP_ENTITY_ID: MOCK_SP_ENTITY_ID, DSH_SAML_IDP_ENTITY_ID: MOCK_IDP_ENTITY_ID,
+      DSH_SAML_IDP_SSO_URL: ssoUrl, DSH_SAML_IDP_CERT_FILE: mock.keys.certFile, DSH_SSO_ALLOWED_GROUPS: 'engineering' })
+    const identity = await startIdentity(config, { mail: mailbox().mail }); local.push(() => identity.close())
+    const proxy = await front(config.publicSocket, SAML_ORIGIN); local.push(async () => { proxy.closeAllConnections(); proxy.close() })
+    browser = await chromium.launch({ executablePath: executable!, headless: true, chromiumSandbox: false, args: ['--host-resolver-rules=MAP localhost 127.0.0.1'] })
+    local.push(() => browser.close())
+  })
+  afterAll(async () => { for (const cleanup of local.splice(0).reverse()) await cleanup() })
+
+  it('idp_post_lands_on_the_account_page', async () => {
+    // The mock IdP page auto-posts the signed response to the ACS, as a real IdP does after authentication.
+    const context = await browser.newContext({ locale: 'en-US' }), page = await context.newPage()
+    await page.goto(`${SAML_ORIGIN}/account/login`)
+    await page.click('[data-sso-start]')
+    await page.waitForURL(/\/account\/\?return=%2Fu%2F/)
+    await page.waitForFunction(() => (document.querySelector('[data-session] p')?.textContent ?? '').includes('alice@corp.example'))
+    expect((await context.cookies(SAML_ORIGIN)).some(entry => entry.name === 'dsh-account.session_token')).toBe(true)
     await context.close()
   })
 })

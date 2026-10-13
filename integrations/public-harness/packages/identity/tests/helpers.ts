@@ -21,7 +21,8 @@ export async function setup(overrides: Partial<Record<string, unknown>> = {}, en
 export interface Reply { status: number; headers: Record<string, string | string[] | undefined>; body: string }
 export function call(socketPath: string, method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<Reply> {
   return new Promise((resolve, reject) => {
-    const payload = body === undefined ? undefined : JSON.stringify(body)
+    // A string body is sent as-is (form posts); anything else as JSON.
+    const payload = body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body)
     const req = request({ socketPath, method, path, headers: { host: '127.0.0.1:18443', ...method === 'GET' ? {} : { origin: ORIGIN },
       ...payload === undefined ? {} : { 'content-type': 'application/json' }, ...headers } }, res => {
       let text = ''; res.setEncoding('utf8'); res.on('data', chunk => { text += chunk }); res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body: text }))
