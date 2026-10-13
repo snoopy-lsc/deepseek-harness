@@ -6,6 +6,7 @@ import type {} from '@deepseek-ai/dsh-client-locale/client'
 import { BrandMark, BrandName } from './mark.tsx'
 import { QuotaNotice, dictionaries } from './quota.tsx'
 import { installTheme } from './theme.ts'
+import { installShell } from './shell.ts'
 
 /** Required services: the browser slot registry, locale, and ui-theme's token registry. */
 export const inject = ['slots', 'locale', 'theme']
@@ -25,4 +26,5 @@ export function apply(ctx: Context): void {
     name: 'shell.quota-notice', locale: 'publicHarness',
     select: owner => owner.code === 'QUOTA' ? owner : null,
   }, QuotaNotice))
+  void installShell(ctx)
 }
