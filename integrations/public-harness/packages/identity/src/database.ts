@@ -1,12 +1,15 @@
-/** Private SQLite storage: Better Auth tables plus persistent admission counters, consumed one-time tokens and invite codes. */
+/** Private SQLite storage: Better Auth tables plus persistent admission counters, consumed one-time tokens, invite codes and SSO tables. */
 import { createHash, randomBytes } from 'node:crypto'
 import { constants } from 'node:fs'
 import { lstat, open } from 'node:fs/promises'
 import { DatabaseSync } from 'node:sqlite'
+import { createSsoStore, type SsoStore } from './sso/store.ts'
 
 /** The identity database with the service-owned tables migrated. */
 export interface IdentityDatabase {
   readonly db: DatabaseSync
+  /** Enterprise SSO bindings, origins, login state, emergency enrollment and audit. */
+  readonly sso: SsoStore
   /** Atomically consume one unit of a fixed-window limit; false when the window is exhausted. */
   consume(key: string, windowMs: number, max: number, now?: number): boolean
   /** Record a one-time token; false when it was already consumed. Only a hash is stored. */
@@ -64,8 +67,11 @@ export async function openIdentityDatabase(file: string): Promise<IdentityDataba
   const releaseInvite = db.prepare('UPDATE dsh_invite SET used_at = NULL, used_by = NULL WHERE hash = ?')
   const revokeInvite = db.prepare('UPDATE dsh_invite SET revoked_at = ? WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL')
   const listInvites = db.prepare('SELECT id, created_at, expires_at, used_at, used_by, revoked_at, note FROM dsh_invite ORDER BY created_at')
+  const sso = createSsoStore(db)
+  sso.pruneAudit(Date.now())
   return {
     db,
+    sso,
     mintInvite(ttlMs, note, now = Date.now()) {
       if (!Number.isSafeInteger(ttlMs) || ttlMs < 60_000) throw new Error('invite lifetime must be at least one minute')
       const code = newInviteCode(), hash = inviteHash(code), id = hash.slice(0, 12)
