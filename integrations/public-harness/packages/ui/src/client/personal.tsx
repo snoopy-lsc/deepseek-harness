@@ -18,7 +18,7 @@ export const personalDictionaries = {
     short: 'Use at least 12 characters.', reauth: 'The current password is wrong.', changed: 'Password changed. Other sessions were signed out.',
     sessions: 'Sessions and devices', thisDevice: 'This device', lastActive: 'Active {date}', unknownDevice: 'Unknown device', revoke: 'Sign out',
     revokeOthers: 'Sign out other sessions', revokedOthers: 'Signed out {count} other sessions.', noOthers: 'No other sessions.',
-    usage: 'Usage', today: 'Today', resets: 'Resets {date}', tokens: '{used} / {limit} tokens', history: 'Last 7 days', noUsage: 'Usage is not available on this deployment.',
+    usage: 'Usage', today: 'Today', resets: 'Resets {date}', tokens: '{used} / {limit} tokens', history: 'Last 7 days', noHistory: 'No usage in the last 7 days.', noUsage: 'Usage is not available on this deployment.',
     preferences: 'Preferences', appearance: 'Appearance and language', appearanceHint: 'Theme, colour mode and interface language.', open: 'Open settings',
     failed: 'Something went wrong. Try again.', loading: 'Loading…' },
   zh: { title: '个人中心', account: '账户', name: '名称', email: '邮箱', role: '角色', role_admin: '管理员', role_member: '成员',
@@ -30,7 +30,7 @@ export const personalDictionaries = {
     short: '密码至少 12 个字符。', reauth: '当前密码不正确。', changed: '密码已修改，其他会话已退出登录。',
     sessions: '会话与设备', thisDevice: '当前设备', lastActive: '活跃于 {date}', unknownDevice: '未知设备', revoke: '退出登录',
     revokeOthers: '退出其他会话', revokedOthers: '已退出 {count} 个其他会话。', noOthers: '没有其他会话。',
-    usage: '用量', today: '今日', resets: '{date} 重置', tokens: '{used} / {limit} tokens', history: '最近 7 天', noUsage: '此部署未提供用量信息。',
+    usage: '用量', today: '今日', resets: '{date} 重置', tokens: '{used} / {limit} tokens', history: '最近 7 天', noHistory: '最近 7 天没有用量。', noUsage: '此部署未提供用量信息。',
     preferences: '偏好设置', appearance: '外观与语言', appearanceHint: '主题、深浅色模式与界面语言。', open: '打开设置',
     failed: '操作失败，请重试。', loading: '加载中…' },
 }
@@ -84,13 +84,13 @@ function PasswordForm({ api, t }: { api: AccountApi; t: T }) {
       (error: unknown) => setResult({ ok: false, text: error instanceof AccountApiError && error.code === 'reauth' ? t('reauth')
         : error instanceof AccountApiError && error.code === 'password-policy' ? t('short') : t('failed') })).finally(() => setBusy(false))
   }
-  const field: CSSProperties = { display: 'grid', gap: 6, fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-label-secondary)' }
+  const field: CSSProperties = { display: 'grid', gap: 6, minWidth: 0, fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-label-secondary)' }
   return <form onSubmit={submit} data-team-password style={{ padding: '16px 0' }}>
     <div style={label}>{t('password')}</div><div style={hint}>{t('reauthHint')}</div>
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12, margin: '14px 0' }}>
-      <label style={field}>{t('current')}<Input type="password" name="current-password" autoComplete="current-password" required value={current} onChange={e => setCurrent(e.target.value)} /></label>
-      <label style={field}>{t('next')}<Input type="password" name="new-password" autoComplete="new-password" required value={next} onChange={e => setNext(e.target.value)} /></label>
-      <label style={field}>{t('confirm')}<Input type="password" name="confirm-password" autoComplete="new-password" required value={confirm} onChange={e => setConfirm(e.target.value)} /></label>
+      <label style={field}>{t('current')}<Input size={1} type="password" name="current-password" autoComplete="current-password" required value={current} onChange={e => setCurrent(e.target.value)} /></label>
+      <label style={field}>{t('next')}<Input size={1} type="password" name="new-password" autoComplete="new-password" required value={next} onChange={e => setNext(e.target.value)} /></label>
+      <label style={field}>{t('confirm')}<Input size={1} type="password" name="confirm-password" autoComplete="new-password" required value={confirm} onChange={e => setConfirm(e.target.value)} /></label>
     </div>
     {result !== undefined && <p role={result.ok ? 'status' : 'alert'} style={status(result.ok)}>{result.text}</p>}
     <Button type="submit" variant="primary" disabled={busy}>{t('change')}</Button>
@@ -154,6 +154,7 @@ function Usage({ api, t }: { api: AccountApi; t: T }) {
     </div>
     <div style={{ ...last, flexDirection: 'column', alignItems: 'stretch' }}>
       <div style={label}>{t('history')}</div>
+      {usage.history.length === 0 && <div style={hint}>{t('noHistory')}</div>}
       {usage.history.map(day => <div key={day.day} style={{ display: 'grid', gridTemplateColumns: '96px 1fr 120px', alignItems: 'center', gap: 12, fontSize: 12, lineHeight: '18px' }}>
         <span style={{ color: 'var(--dsw-alias-label-secondary)' }}>{day.day}</span>
         <span style={{ height: 6, borderRadius: 3, width: `${Math.max(2, Math.round(day.tokens / peak * 100))}%`, background: 'var(--dsw-alias-button-primary-fill)' }} />
