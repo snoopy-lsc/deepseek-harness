@@ -72,7 +72,7 @@ export function deviceLabel(agent: string | null): string | undefined {
   return [browser, system].filter(Boolean).join(' · ') || agent.slice(0, 40)
 }
 
-function PasswordForm({ api, t }: { api: AccountApi; t: T }) {
+function PasswordForm({ api, t, onChanged }: { api: AccountApi; t: T; onChanged: () => void }) {
   const [current, setCurrent] = useState(''), [next, setNext] = useState(''), [confirm, setConfirm] = useState('')
   const [result, setResult] = useState<{ ok: boolean; text: string }>(), [busy, setBusy] = useState(false)
   const submit = (event: FormEvent) => {
@@ -80,7 +80,7 @@ function PasswordForm({ api, t }: { api: AccountApi; t: T }) {
     if (next.length < 12) { setResult({ ok: false, text: t('short') }); return }
     if (next !== confirm) { setResult({ ok: false, text: t('mismatch') }); return }
     setBusy(true)
-    api.changePassword(current, next).then(() => { setResult({ ok: true, text: t('changed') }); setCurrent(''); setNext(''); setConfirm('') },
+    api.changePassword(current, next).then(() => { setResult({ ok: true, text: t('changed') }); onChanged(); setCurrent(''); setNext(''); setConfirm('') },
       (error: unknown) => setResult({ ok: false, text: error instanceof AccountApiError && error.code === 'reauth' ? t('reauth')
         : error instanceof AccountApiError && error.code === 'password-policy' ? t('short') : t('failed') })).finally(() => setBusy(false))
   }
@@ -97,7 +97,7 @@ function PasswordForm({ api, t }: { api: AccountApi; t: T }) {
   </form>
 }
 
-function Security({ api, t }: { api: AccountApi; t: T }) {
+function Security({ api, t, onChanged }: { api: AccountApi; t: T; onChanged: () => void }) {
   const [security, setSecurity] = useState<AccountSecurity | null>()
   useEffect(() => { api.security().then(setSecurity, () => setSecurity(null)) }, [api])
   if (security === undefined) return <Row title={t('loading')} end />
@@ -105,7 +105,7 @@ function Security({ api, t }: { api: AccountApi; t: T }) {
   const provider = security.provider === 'password' || security.provider === 'emergency' ? t(`method_${security.provider}`) : fill(t('method_sso'), { provider: PROVIDERS[security.provider] ?? security.provider })
   return <>
     <Row title={t('method')}><span style={label}>{provider}</span></Row>
-    {security.passwordChange ? <PasswordForm api={api} t={t} /> : <>
+    {security.passwordChange ? <PasswordForm api={api} t={t} onChanged={onChanged} /> : <>
       <Row title={t('bindings')} detail={t('ssoPassword')} />
       {security.bindings.length === 0 ? <Row title={t('noBindings')} end /> : security.bindings.map((binding, index) =>
         <Row key={`${binding.provider}:${binding.subject}`} end={index === security.bindings.length - 1}
@@ -115,9 +115,10 @@ function Security({ api, t }: { api: AccountApi; t: T }) {
   </>
 }
 
-function Sessions({ api, t }: { api: AccountApi; t: T }) {
+function Sessions({ api, t, version }: { api: AccountApi; t: T; version: number }) {
   const [sessions, setSessions] = useState<readonly AccountSession[] | null>(), [note, setNote] = useState<{ ok: boolean; text: string }>()
-  const load = useCallback(() => { api.sessions().then(setSessions, () => setSessions(null)) }, [api])
+  // `version` changes after a password change, which signs the other sessions out.
+  const load = useCallback(() => { api.sessions().then(setSessions, () => setSessions(null)) }, [api, version])
   useEffect(load, [load])
   if (sessions === undefined) return <Row title={t('loading')} end />
   if (sessions === null) return <Row title={t('failed')} end />
@@ -169,6 +170,7 @@ function Usage({ api, t }: { api: AccountApi; t: T }) {
  * @returns the personal panel.
  */
 export function PersonalCenter({ profile, api, openSettings, t }: { profile: AccountProfile; api: AccountApi; openSettings: () => void } & PropsLocale<'publicHarnessPersonal'>) {
+  const [version, setVersion] = useState(0)
   const initial = (profile.name || profile.email).trim().charAt(0).toUpperCase()
   return <div style={page} data-team-personal>
     <div style={column}>
@@ -184,8 +186,8 @@ export function PersonalCenter({ profile, api, openSettings, t }: { profile: Acc
         <Row title={t('email')}><span style={label}>{profile.email}</span></Row>
         <Row title={t('role')} end><span style={label}>{t(profile.role === 'admin' ? 'role_admin' : 'role_member')}</span></Row>
       </Section>
-      <Section id="team-personal-security" icon={<IconShieldOutlineRegular size={16} />} title={t('signIn')}><Security api={api} t={t} /></Section>
-      <Section id="team-personal-sessions" icon={<IconBrowseOutlineRegular size={16} />} title={t('sessions')}><Sessions api={api} t={t} /></Section>
+      <Section id="team-personal-security" icon={<IconShieldOutlineRegular size={16} />} title={t('signIn')}><Security api={api} t={t} onChanged={() => setVersion(v => v + 1)} /></Section>
+      <Section id="team-personal-sessions" icon={<IconBrowseOutlineRegular size={16} />} title={t('sessions')}><Sessions api={api} t={t} version={version} /></Section>
       <Section id="team-personal-usage" icon={<IconGaugeOutlineRegular size={16} />} title={t('usage')}><Usage api={api} t={t} /></Section>
       <Section id="team-personal-preferences" icon={<IconSlidersTwoOutlineRegular size={16} />} title={t('preferences')}>
         <Row title={t('appearance')} detail={t('appearanceHint')} end><Button variant="outline" onClick={openSettings}>{t('open')}</Button></Row>
