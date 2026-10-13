@@ -1,5 +1,8 @@
 /** Strict identity service configuration; production rejects test transports and non-HTTPS origins. */
 import { isAbsolute, normalize } from 'node:path'
+import { parseSsoEnv, type EmergencyConfig, type SsoConfig } from './sso/config.ts'
+
+export type { EmergencyConfig, SsoConfig } from './sso/config.ts'
 
 /** Mail delivery, chosen by `DSH_MAIL_PROVIDER`: a local sendmail command, an authenticated TLS SMTP relay, or a file mailbox (local mode only). */
 export type MailConfig =
@@ -43,6 +46,10 @@ export interface IdentityConfig {
   readonly clientIpHeader: string
   /** Public enrollment switch; closed unless an operator opens it. */
   readonly enrollmentOpen: boolean
+  /** Enterprise sign-in from the environment (`DSH_SSO_*`, `DSH_OIDC_*`); never from the configuration file. */
+  readonly sso: SsoConfig
+  /** Administrator emergency password path from the environment (`DSH_SSO_EMERGENCY_*`). */
+  readonly emergency: EmergencyConfig
 }
 
 /** Configuration rejected before any effect; the message names the field, never a value. */
@@ -131,7 +138,7 @@ export function parseProviderEnv(env: ProviderEnv, mode: 'production' | 'local')
 
 /** Parse identity configuration: topology and limits from the file, providers and their secrets from the environment.
  * @param value Untrusted configuration value (the JSON file); `mail` and `captcha` keys are refused there.
- * @param env Process environment holding `DSH_MAIL_*` and `DSH_CAPTCHA_*`.
+ * @param env Process environment holding `DSH_MAIL_*`, `DSH_CAPTCHA_*`, `DSH_SSO_*` and `DSH_OIDC_*`.
  * @returns Validated configuration.
  */
 export function parseIdentityConfig(value: unknown, env: ProviderEnv = process.env): IdentityConfig {
@@ -145,6 +152,7 @@ export function parseIdentityConfig(value: unknown, env: ProviderEnv = process.e
   const loopback = origin.hostname === '127.0.0.1' || origin.hostname === 'localhost'
   if (mode === 'production' ? origin.protocol !== 'https:' : !loopback) throw new IdentityConfigError('publicOrigin')
   const { mail, captcha } = parseProviderEnv(env, mode)
+  const { sso, emergency } = parseSsoEnv(env, mode)
   const l = object(r.limits, ['signupPerIpPerHour', 'signupPerDay', 'resetPerEmailPerHour', 'loginPerIpPerMinute'], [], 'limits')
   if (r.enrollmentOpen !== undefined && typeof r.enrollmentOpen !== 'boolean') throw new IdentityConfigError('enrollmentOpen')
   const sessionSocketGid = r.sessionSocketGid
@@ -155,6 +163,6 @@ export function parseIdentityConfig(value: unknown, env: ProviderEnv = process.e
     limits: { signupPerIpPerHour: count(l.signupPerIpPerHour, 'limits'), signupPerDay: count(l.signupPerDay, 'limits'),
       resetPerEmailPerHour: count(l.resetPerEmailPerHour, 'limits'), loginPerIpPerMinute: count(l.loginPerIpPerMinute, 'limits') },
     sessionTtlSeconds: count(r.sessionTtlSeconds, 'sessionTtlSeconds'), verificationTtlSeconds: count(r.verificationTtlSeconds, 'verificationTtlSeconds'),
-    clientIpHeader: text(r.clientIpHeader, 'clientIpHeader', /^[a-z][a-z0-9-]{0,63}$/), enrollmentOpen: r.enrollmentOpen === true,
+    clientIpHeader: text(r.clientIpHeader, 'clientIpHeader', /^[a-z][a-z0-9-]{0,63}$/), enrollmentOpen: r.enrollmentOpen === true, sso, emergency,
   }
 }

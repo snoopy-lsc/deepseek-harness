@@ -1,0 +1,68 @@
+import { describe, expect, it } from 'vitest'
+import { IdentityConfigError } from '../src/config.ts'
+import { parseSsoEnv } from '../src/sso/config.ts'
+import { setup } from './helpers.ts'
+
+const SECRET = 'placeholder-client-secret-value'
+const oidc = (extra: Record<string, string | undefined> = {}) => ({
+  DSH_SSO_PROVIDER: 'oidc', DSH_OIDC_ISSUER: 'https://idp.example.test/realms/corp', DSH_OIDC_CLIENT_ID: 'harness',
+  DSH_OIDC_CLIENT_SECRET: SECRET, DSH_SSO_ALLOWED_GROUPS: 'engineering, /corp/research', ...extra,
+})
+const failure = (fn: () => unknown) => { try { fn() } catch (error) { return error } throw new Error('expected failure') }
+
+describe('SSO environment', () => {
+  it('unset_or_off_keeps_sso_disabled', () => {
+    expect(parseSsoEnv({}, 'production')).toEqual({ sso: { kind: 'off' }, emergency: { enabled: false } })
+    expect(parseSsoEnv({ DSH_SSO_PROVIDER: 'off' }, 'production').sso).toEqual({ kind: 'off' })
+  })
+
+  it('oidc_settings_parse_with_defaults', () => {
+    expect(parseSsoEnv(oidc(), 'production').sso).toEqual({ kind: 'oidc', issuer: 'https://idp.example.test/realms/corp', clientId: 'harness', clientSecret: SECRET,
+      scopes: ['openid', 'email', 'profile'], groupClaims: ['groups'], allowedGroups: ['engineering', '/corp/research'], timeoutMs: 5000 })
+    const custom = parseSsoEnv(oidc({ DSH_OIDC_SCOPES: 'openid email', DSH_OIDC_GROUP_CLAIMS: 'groups,department', DSH_OIDC_TIMEOUT_MS: '8000' }), 'production').sso
+    expect(custom).toMatchObject({ scopes: ['openid', 'email'], groupClaims: ['groups', 'department'], timeoutMs: 8000 })
+    expect(parseSsoEnv(oidc({ DSH_OIDC_ISSUER: 'http://127.0.0.1:9000' }), 'local').sso).toMatchObject({ issuer: 'http://127.0.0.1:9000' })
+  })
+
+  it('invalid_settings_refuse_start_naming_the_variable', () => {
+    const cases: Array<[Record<string, string | undefined>, string, 'production' | 'local']> = [
+      [{ DSH_SSO_PROVIDER: 'wecom' }, 'DSH_SSO_PROVIDER', 'production'],
+      [{ DSH_SSO_PROVIDER: 'OIDC' }, 'DSH_SSO_PROVIDER', 'production'],
+      [oidc({ DSH_OIDC_CLIENT_ID: undefined }), 'DSH_OIDC_CLIENT_ID', 'production'],
+      [oidc({ DSH_OIDC_CLIENT_SECRET: '' }), 'DSH_OIDC_CLIENT_SECRET', 'production'],
+      [oidc({ DSH_OIDC_SCOPES: 'email profile' }), 'DSH_OIDC_SCOPES', 'production'],
+      [oidc({ DSH_SSO_ALLOWED_GROUPS: undefined }), 'DSH_SSO_ALLOWED_GROUPS', 'production'],
+      [oidc({ DSH_SSO_ALLOWED_GROUPS: ' , ' }), 'DSH_SSO_ALLOWED_GROUPS', 'production'],
+      [oidc({ DSH_OIDC_ISSUER: 'https://idp.example.test/?x=1' }), 'DSH_OIDC_ISSUER', 'production'],
+      [oidc({ DSH_OIDC_ISSUER: 'https://idp.example.test/#a' }), 'DSH_OIDC_ISSUER', 'production'],
+      [oidc({ DSH_OIDC_ISSUER: 'https://user:pw@idp.example.test' }), 'DSH_OIDC_ISSUER', 'production'],
+      [oidc({ DSH_OIDC_ISSUER: 'http://idp.example.test' }), 'DSH_OIDC_ISSUER', 'production'],
+      [oidc({ DSH_OIDC_ISSUER: 'http://127.0.0.1:9000' }), 'DSH_OIDC_ISSUER', 'production'],
+      [oidc({ DSH_OIDC_ISSUER: 'http://idp.example.test' }), 'DSH_OIDC_ISSUER', 'local'],
+      [oidc({ DSH_OIDC_TIMEOUT_MS: '100' }), 'DSH_OIDC_TIMEOUT_MS', 'production'],
+      [oidc({ DSH_OIDC_GROUP_CLAIMS: 'groups,,x' }), 'DSH_OIDC_GROUP_CLAIMS', 'production'],
+      [oidc({ DSH_SSO_EMERGENCY_ALLOWED_IPS: '10.0.0.0/33' }), 'DSH_SSO_EMERGENCY_ALLOWED_IPS', 'production'],
+      [oidc({ DSH_SSO_EMERGENCY_ALLOWED_IPS: 'intranet' }), 'DSH_SSO_EMERGENCY_ALLOWED_IPS', 'production'],
+      [{ DSH_SSO_EMERGENCY_ALLOWED_IPS: '10.0.0.1' }, 'DSH_SSO_EMERGENCY_ALLOWED_IPS', 'production'],
+    ]
+    for (const [env, field, mode] of cases) {
+      const error = failure(() => parseSsoEnv(env, mode))
+      expect(error, field).toBeInstanceOf(IdentityConfigError)
+      expect((error as IdentityConfigError).field).toBe(field)
+      expect((error as Error).message).not.toContain(SECRET)
+    }
+  })
+
+  it('emergency_allow_list_parses_addresses_and_prefixes', () => {
+    expect(parseSsoEnv(oidc({ DSH_SSO_EMERGENCY_ALLOWED_IPS: '10.20.0.0/16, 192.0.2.7 ,2001:db8::/32' }), 'production').emergency)
+      .toEqual({ enabled: true, allowedIps: ['10.20.0.0/16', '192.0.2.7', '2001:db8::/32'] })
+  })
+
+  it('identity_config_carries_sso_from_env_and_refuses_file_keys', async () => {
+    const { config } = await setup({}, oidc({ DSH_OIDC_ISSUER: 'http://127.0.0.1:9000' }))
+    expect(config.sso.kind).toBe('oidc')
+    expect(config.emergency).toEqual({ enabled: false })
+    await expect(setup({ sso: { kind: 'oidc' } })).rejects.toBeInstanceOf(IdentityConfigError)
+    expect((await setup()).config.sso).toEqual({ kind: 'off' })
+  })
+})
