@@ -12,6 +12,7 @@ export const AUDIT_RETENTION_MS = 365 * 86_400_000
 /** One audit entry; never holds passwords, codes or tokens. */
 export interface AuditEvent {
   readonly event: 'sso-sign-in' | 'emergency-sign-in' | 'emergency-enroll' | 'emergency-revoke' | 'sso-disable' | 'sso-enable' | 'sso-reconcile'
+    | 'password-change' | 'session-revoke' | 'sessions-revoke-others'
   readonly outcome: 'ok' | 'denied' | 'error'
   readonly userId?: string
   readonly email?: string
@@ -29,6 +30,8 @@ export class SsoBindingError extends Error {
 
 /** One `(provider, subject)` binding with its last successful sign-in (undefined until the first sign-in after this column existed). */
 export interface SsoLink { readonly provider: string; readonly subject: string; readonly userId: string; readonly createdAt: number; readonly lastLoginAt: number | undefined }
+const link = (row: Record<string, unknown>): SsoLink => ({ provider: String(row.provider), subject: String(row.subject), userId: String(row.user_id),
+  createdAt: Number(row.created_at), lastLoginAt: row.last_login_at === null ? undefined : Number(row.last_login_at) })
 /** A deprovisioned account. */
 export interface DisabledAccount { readonly userId: string; readonly at: number; readonly reason: string }
 
@@ -80,6 +83,8 @@ export interface SsoStore {
   pruneFailures(now: number, windowMs: number): void
   /** Bindings of one provider, oldest first. */
   listLinks(provider: string): SsoLink[]
+  /** Every binding of one account, oldest first. */
+  linksOf(userId: string): SsoLink[]
   /** Record a successful sign-in of a bound subject. */
   touchLogin(provider: string, subject: string, now: number): void
   /** The disable record of an account, if any. */
@@ -142,6 +147,7 @@ export function createSsoStore(db: DatabaseSync): SsoStore {
   const clearFailures = db.prepare('DELETE FROM dsh_auth_failure WHERE key = ?')
   const pruneFailures = db.prepare('DELETE FROM dsh_auth_failure WHERE at <= ?')
   const listLinks = db.prepare('SELECT provider, subject, user_id, created_at, last_login_at FROM dsh_sso_link WHERE provider = ? ORDER BY created_at, user_id')
+  const linksOf = db.prepare('SELECT provider, subject, user_id, created_at, last_login_at FROM dsh_sso_link WHERE user_id = ? ORDER BY created_at, provider')
   const touchLogin = db.prepare('UPDATE dsh_sso_link SET last_login_at = ? WHERE provider = ? AND subject = ?')
   const readDisabled = db.prepare('SELECT user_id, at, reason FROM dsh_user_disabled WHERE user_id = ?')
   const insertDisabled = db.prepare('INSERT INTO dsh_user_disabled (user_id, at, reason) VALUES (?, ?, ?) ON CONFLICT(user_id) DO NOTHING')
@@ -216,6 +222,7 @@ export function createSsoStore(db: DatabaseSync): SsoStore {
     pruneFailures(now, windowMs) {
       pruneFailures.run(now - windowMs); dropExpired.run(now); dropAssertions.run(now)
     },
+    linksOf: userId => (linksOf.all(userId) as Array<Record<string, unknown>>).map(link),
     listLinks: provider => (listLinks.all(provider) as Array<Record<string, unknown>>).map(row => ({ provider: String(row.provider), subject: String(row.subject), userId: String(row.user_id),
       createdAt: Number(row.created_at), lastLoginAt: row.last_login_at === null ? undefined : Number(row.last_login_at) })),
     touchLogin: (provider, subject, now) => { touchLogin.run(now, provider, subject) },

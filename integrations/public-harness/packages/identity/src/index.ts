@@ -1,6 +1,7 @@
 /** Identity service entry: Better Auth registration and sessions, the private session socket and account pages. */
 import type { Context, Fiber } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
+import type { UsageSource } from './me.ts'
 import { readFile } from 'node:fs/promises'
 import { readSecret } from './secret.ts'
 import type { Server } from 'node:http'
@@ -33,7 +34,7 @@ export { readSecret } from './secret.ts'
  * @param overrides Injected providers, clock and reconciliation interval for tests.
  * @returns Handle that closes listeners and the database.
  */
-export async function startIdentity(config: IdentityConfig, overrides: { mail?: MailTransport; captcha?: CaptchaProvider; sso?: SsoProvider | PasswordSsoProvider; clock?: () => number; reconcileIntervalMs?: number } = {}): Promise<{ close(): Promise<void> }> {
+export async function startIdentity(config: IdentityConfig, overrides: { mail?: MailTransport; captcha?: CaptchaProvider; sso?: SsoProvider | PasswordSsoProvider; clock?: () => number; reconcileIntervalMs?: number; usage?: UsageSource } = {}): Promise<{ close(): Promise<void> }> {
   // Better Auth enables telemetry when this variable is set, regardless of options; the service sends nothing outbound.
   if (/^(1|true)$/i.test(process.env.BETTER_AUTH_TELEMETRY ?? '')) throw new Error('BETTER_AUTH_TELEMETRY must not be enabled')
   const database = await openIdentityDatabase(config.databaseFile)
@@ -49,7 +50,7 @@ export async function startIdentity(config: IdentityConfig, overrides: { mail?: 
     const auth = await createAuth(config, database, serviceSecret, overrides.mail ?? createMailTransport(config.mail), sso, overrides.clock)
     const captcha = overrides.captcha ?? createCaptchaProvider(config.captcha)
     servers.push(await listenUnix(publicHandler({ config, auth, database, captcha, serviceSecret, pages: createAccountPages(config, captcha), ...sso !== undefined && 'metadata' in sso && sso.metadata ? { ssoMetadata: sso.metadata() } : {},
-      ...overrides.clock === undefined ? {} : { clock: overrides.clock } }), config.publicSocket, 0o660))
+      ...overrides.clock === undefined ? {} : { clock: overrides.clock }, ...overrides.usage === undefined ? {} : { usage: overrides.usage } }), config.publicSocket, 0o660))
     servers.push(await listenUnix(sessionHandler(auth, userId => database.sso.disabledAt(userId) !== undefined), config.sessionSocket, 0o660, config.sessionSocketGid))
     // Expired counters, login state and assertion IDs are deleted every ten minutes; a failure here is logged and retried next time.
     const prune = () => { try { database.prune(Date.now(), LDAP_LOCKOUT.window) } catch (error) { console.error('identity: prune failed', error instanceof Error ? error.message : error) } }

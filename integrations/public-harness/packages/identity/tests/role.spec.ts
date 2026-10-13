@@ -31,7 +31,7 @@ describe('server-side role', () => {
     const reply = await me(member.config.publicSocket, member.cookie)
     expect(reply.status).toBe(200)
     expect(reply.headers['cache-control']).toBe('no-store')
-    expect(JSON.parse(reply.body)).toEqual({ id: member.login.user.id, email: 'm@example.test', name: 'Ann', role: 'member' })
+    expect(JSON.parse(reply.body)).toEqual({ id: member.login.user.id, email: 'm@example.test', name: 'Ann', role: 'member', provider: 'password', passwordChange: true })
     const admin = await signedIn({ DSH_ADMIN_EMAILS: ' Boss@Example.test , other@example.test' }, 'boss@example.test')
     expect(JSON.parse((await me(admin.config.publicSocket, admin.cookie)).body)).toMatchObject({ role: 'admin' })
   })
