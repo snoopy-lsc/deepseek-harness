@@ -140,7 +140,10 @@ export function meRoutes(deps: MeDeps): (req: IncomingMessage, res: ServerRespon
     deps.limit(`password-change:${user.id}`, HOUR, 5)
     let result
     try {
-      result = await auth.api.changePassword({ headers: new Headers({ cookie: req.headers.cookie ?? '' }), body: { currentPassword, newPassword, revokeOtherSessions: true }, returnHeaders: true })
+      // The session the change mints describes this device, as a sign-in would: the browser's agent and the proxy-reported address.
+      const headers = new Headers({ cookie: req.headers.cookie ?? '', 'x-dsh-client-ip': deps.ip(req) })
+      if (typeof req.headers['user-agent'] === 'string') headers.set('user-agent', req.headers['user-agent'])
+      result = await auth.api.changePassword({ headers, body: { currentPassword, newPassword, revokeOtherSessions: true }, returnHeaders: true })
     } catch (error) {
       const code = (error as { body?: { code?: unknown } }).body?.code
       if (code === 'INVALID_PASSWORD') { audit('password-change', 'denied', user, req, 'reauth'); throw new MeError(403, 'reauth') }

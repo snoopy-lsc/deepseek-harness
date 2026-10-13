@@ -25,7 +25,7 @@ async function account(options: { usage?: boolean } = {}) {
   }
   const first = await signIn()
   const get = (path: string, cookie = first.cookie!) => call(config.publicSocket, 'GET', `/account/api/me${path}`, undefined, { cookie })
-  const post = (path: string, body: unknown, cookie = first.cookie!, headers: Record<string, string> = {}) => call(config.publicSocket, 'POST', `/account/api/me${path}`, body, { cookie, ...IP, ...headers })
+  const post = (path: string, body: unknown, cookie = first.cookie!, headers: Record<string, string> = {}) => call(config.publicSocket, 'POST', `/account/api/me${path}`, body, { cookie, ...IP, 'user-agent': 'Browser A', ...headers })
   const audit = () => {
     const db = new DatabaseSync(config.databaseFile, { readOnly: true })
     try { return db.prepare('SELECT event, outcome, user_id FROM dsh_audit ORDER BY id').all() as Array<{ event: string; outcome: string; user_id: string }> } finally { db.close() }
@@ -104,7 +104,9 @@ describe('personal center endpoints', () => {
     expect((await a.post('/password', { currentPassword: PASSWORD, newPassword: 'short' })).status).toBe(400)
     const changed = await a.post('/password', { currentPassword: PASSWORD, newPassword: 'another long passphrase' })
     expect(changed.status).toBe(200)
-    expect(sessionCookie(changed)).toBeDefined()
+    const renewed = sessionCookie(changed)!
+    // The session minted by the change keeps this device's description.
+    expect(JSON.parse((await a.get('/sessions', renewed)).body).sessions).toMatchObject([{ current: true, userAgent: 'Browser A', ipAddress: '203.0.113.7' }])
     expect((await a.get('', other.cookie!)).status).toBe(401)
     expect((await a.signIn()).status).toBe(401)
     expect((await a.signIn('another long passphrase')).status).toBe(200)
