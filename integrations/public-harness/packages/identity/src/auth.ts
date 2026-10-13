@@ -4,6 +4,8 @@ import { getMigrations } from 'better-auth/db/migration'
 import type { IdentityConfig } from './config.ts'
 import type { IdentityDatabase } from './database.ts'
 import type { MailTransport } from './transports.ts'
+import type { SsoProvider } from './sso/provider.ts'
+import { ssoPlugin } from './sso/plugin.ts'
 
 /** Cookie prefix; the session cookie is `<prefix>.session_token` (with `__Secure-` over HTTPS). */
 export const COOKIE_PREFIX = 'dsh-account'
@@ -13,10 +15,13 @@ export const COOKIE_PREFIX = 'dsh-account'
  * @param database Open identity database.
  * @param secret Signing secret read from `secretFile`.
  * @param mail Delivery transport.
+ * @param sso Enterprise sign-in provider; absent when `DSH_SSO_PROVIDER` is off.
+ * @param clock Clock for SSO state and audit.
  * @returns Better Auth options.
  */
-export function authOptions(config: IdentityConfig, database: IdentityDatabase, secret: string, mail: MailTransport) {
+export function authOptions(config: IdentityConfig, database: IdentityDatabase, secret: string, mail: MailTransport, sso?: SsoProvider, clock?: () => number) {
   return {
+    plugins: sso === undefined ? [] : [ssoPlugin({ config, store: database.sso, provider: sso, ...clock === undefined ? {} : { clock } })],
     appName: 'DeepSeek Harness', baseURL: config.publicOrigin, basePath: '/api/auth', secret,
     database: database.db, trustedOrigins: [config.publicOrigin], telemetry: { enabled: false },
     emailAndPassword: {
@@ -44,10 +49,12 @@ export function authOptions(config: IdentityConfig, database: IdentityDatabase, 
  * @param database Open identity database.
  * @param secret Signing secret.
  * @param mail Delivery transport.
+ * @param sso Enterprise sign-in provider, when configured.
+ * @param clock Clock for SSO state and audit.
  * @returns Ready Better Auth instance.
  */
-export async function createAuth(config: IdentityConfig, database: IdentityDatabase, secret: string, mail: MailTransport) {
-  const options = authOptions(config, database, secret, mail)
+export async function createAuth(config: IdentityConfig, database: IdentityDatabase, secret: string, mail: MailTransport, sso?: SsoProvider, clock?: () => number) {
+  const options = authOptions(config, database, secret, mail, sso, clock)
   const { runMigrations } = await getMigrations(options)
   await runMigrations()
   return betterAuth(options)

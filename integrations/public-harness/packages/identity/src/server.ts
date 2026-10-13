@@ -99,6 +99,14 @@ export function publicHandler(deps: PublicDeps): (req: IncomingMessage, res: Ser
     if (typeof email !== 'string' || email.length > 320) throw new HttpError(400, 'body')
     return email.trim().toLowerCase()
   }
+  const findUser = database.db.prepare('SELECT id FROM user WHERE email = ?')
+  const userIdByEmail = (email: string) => {
+    try { return (findUser.get(email) as { id: string } | undefined)?.id } catch { throw new IdentityUnavailableError('store') }
+  }
+  const origin = (email: string) => {
+    const id = userIdByEmail(email)
+    return id === undefined ? undefined : database.sso.origin(id)
+  }
   return (req, res) => {
     void (async () => {
       checkRequestOrigin(req, config)
@@ -109,7 +117,10 @@ export function publicHandler(deps: PublicDeps): (req: IncomingMessage, res: Ser
       const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : await readBody(req, MAX_BODY)
       // Undo a single-use claim when the request it admitted does not complete, so a failure never burns a valid token or invite.
       let release: (() => void) | undefined
+      const sso = config.sso.kind !== 'off'
       if (route === '/sign-up/email') {
+        // SSO mode: employees arrive through the IdP; only invited contractors may register (decision D3).
+        if (sso && !deps.captcha.invites) throw new HttpError(403, 'sso-only')
         if (deps.captcha.invites) {
           // Invite-only mode: registration is never public; each operator-minted code admits exactly one account.
           const email = jsonEmail(body)
@@ -126,10 +137,18 @@ export function publicHandler(deps: PublicDeps): (req: IncomingMessage, res: Ser
         }
       } else if (route === '/sign-in/email') {
         limit(`login-ip:${ip}`, 60_000, config.limits.loginPerIpPerMinute)
+        // SSO mode: the password form serves invited contractors only; SSO and emergency accounts are refused here.
+        if (sso && origin(jsonEmail(body)) !== 'invite') throw new HttpError(403, 'sso-only')
       } else if (route === '/request-password-reset') {
         if (deps.captcha.invites) limit(`reset-ip:${ip}`, HOUR, config.limits.signupPerIpPerHour)
         else await captcha(req, ip)
-        limit(`reset:${jsonEmail(body)}`, HOUR, config.limits.resetPerEmailPerHour)
+        const email = jsonEmail(body)
+        limit(`reset:${email}`, HOUR, config.limits.resetPerEmailPerHour)
+        // Answer exactly as Better Auth does for an unknown address, so the reply reveals nothing and no mail is sent.
+        const owner = sso ? origin(email) : 'invite'
+        if (owner !== 'invite' && owner !== 'emergency') { send(res, 200, { status: true }); return }
+      } else if (route.startsWith('/sso/')) {
+        limit(`login-ip:${ip}`, 60_000, config.limits.loginPerIpPerMinute)
       } else if (route === '/verify-email') {
         const token = url.searchParams.get('token') ?? ''
         // Better Auth verification links are signed and stateless; the service makes each one single-use.
@@ -150,6 +169,12 @@ export function publicHandler(deps: PublicDeps): (req: IncomingMessage, res: Ser
         throw error
       }
       if (response.status >= 400) release?.()
+      // Invite registrations are recorded so SSO mode can tell contractors from employees and never bind them to a subject.
+      else if (route === '/sign-up/email' && deps.captcha.invites) {
+        const id = userIdByEmail(jsonEmail(body))
+        // Only a new account gets an origin; an existing SSO or emergency account is never relabeled by a sign-up for its address.
+        if (id !== undefined && database.sso.origin(id) === undefined) database.sso.setOrigin(id, 'invite')
+      }
       const out: Record<string, string | string[]> = { 'cache-control': 'no-store' }
       response.headers.forEach((value, name) => { if (name !== 'set-cookie') out[name] = value })
       const cookies = response.headers.getSetCookie()
