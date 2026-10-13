@@ -146,7 +146,9 @@ Works with public or customer-hosted IdPs (Keycloak, Authing private cloud, clou
 
 The identity service is a Service Provider per [SAML 2.0 Core](https://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf), [Bindings](https://docs.oasis-open.org/security/saml/v2.0/saml-bindings-2.0-os.pdf) and the Web Browser SSO profile in [Profiles](https://docs.oasis-open.org/security/saml/v2.0/saml-profiles-2.0-os.pdf) §4.1. It uses [@node-saml/node-saml](https://github.com/node-saml/node-saml) 5.1.0, pinned exactly; the library is maintained, has no native code, verifies only the signed XML it returns and refuses responses with more than one assertion. The service adds the profile checks the library leaves out.
 
-1. `/api/auth/sso/start` stores a single-use, browser-bound `state` and the AuthnRequest ID, then redirects to `DSH_SAML_IDP_SSO_URL` with a deflated, unsigned AuthnRequest (HTTP-Redirect binding), `RelayState=state`, the ACS URL and the configured NameID format.
+1. `/api/auth/sso/start` stores a single-use, browser-bound `state` and the AuthnRequest ID, then redirects to `DSH_SAML_IDP_SSO_URL` with a deflated AuthnRequest (HTTP-Redirect binding), `RelayState=state`, the ACS URL and the configured NameID format.
+   - **Signed requests**: with `DSH_SAML_SIGN_REQUESTS=true` (the IdP requires signed AuthnRequests) the request carries `SigAlg` (RSA-SHA256) and `Signature` per [Bindings](https://docs.oasis-open.org/security/saml/v2.0/saml-bindings-2.0-os.pdf) §3.4.4.1. The SP key comes from `DSH_SAML_SP_SIGNING_KEY_FILE` (a regular, non-symlink file owned by the service user with no group or other permission bits) or from `DSH_SAML_SP_SIGNING_KEY`; the certificate comes from `DSH_SAML_SP_SIGNING_CERT_FILE` or `DSH_SAML_SP_SIGNING_CERT`. The key must be RSA of at least 2048 bits and match the certificate. SP metadata then says `AuthnRequestsSigned="true"` and publishes the certificate as a signing `KeyDescriptor`.
+   - **Encrypted assertions**: with `DSH_SAML_ENCRYPTED_ASSERTIONS=true` (the IdP encrypts) the decryption key comes only from `DSH_SAML_SP_DECRYPTION_KEY_FILE`, with the same permission rule; a key in the environment refuses start. Its certificate (`DSH_SAML_SP_DECRYPTION_CERT_FILE`) is published as an encryption `KeyDescriptor`. The Response must then hold exactly one `EncryptedAssertion` and no plain `Assertion`; a plain assertion is refused as a downgrade, and one encrypted to another key is refused. The decrypted assertion still needs a valid signature (on the Response or on itself). A key or certificate set without its `true` flag refuses start, so a deployment cannot half-enable either feature.
 2. The IdP posts `SAMLResponse` and `RelayState` to `/api/auth/sso/acs` (HTTP-POST binding). That post is cross-site, so the SameSite=Lax binding cookie is missing. The service verifies nothing yet and answers a small page (nonce CSP, `form-action 'self'`) that re-posts the same fields from its own origin, where the cookie is sent. A re-post that still arrives cross-origin answers 403.
 3. The same-origin post goes through the shared callback: the state is consumed once with its browser cookie, then:
    - **Signature**: the IdP certificates are pinned from `DSH_SAML_IDP_CERT_FILE` (one or more PEM certificates; a private key in that file refuses start). Either the Response or the Assertion must be signed; `DSH_SAML_WANT_ASSERTIONS_SIGNED=true` requires the Assertion. Unsigned, wrongly signed and wrapped responses (a signed assertion moved aside and a forged one put in its place) are refused. Metadata is never fetched at runtime.
@@ -171,7 +173,7 @@ The service binds to the directory per [RFC 4511](https://datatracker.ietf.org/d
 5. **Groups (D7)**: `DSH_LDAP_GROUP_MODE` is `memberOf` (direct groups), `nested` (AD only: `LDAP_MATCHING_RULE_IN_CHAIN`, [search filter syntax](https://learn.microsoft.com/en-us/windows/win32/adsi/search-filter-syntax)), or `search` (`(&(objectClass=<class>)(member=<user DN>))` under `DSH_LDAP_GROUP_BASE_DN`). `DSH_SSO_ALLOWED_GROUPS` lists group DNs separated by `;`, compared after normalizing case and spaces.
 6. **Disabled accounts (AD)**: `userAccountControl` with `ACCOUNTDISABLE` (0x2) is rejected ([userAccountControl](https://learn.microsoft.com/en-us/troubleshoot/windows-server/active-directory/useraccountcontrol-manipulate-account-properties)). AD also refuses the bind for disabled, expired or locked accounts.
 7. **Email (D2/D4)**: `DSH_LDAP_EMAIL_ATTRIBUTE` (default `mail`), otherwise `ldap-<hash of subject>@sso.invalid`.
-8. **No enumeration**: wrong password, unknown user, several matches and disabled account all answer the same 401 after a 300 ms floor. Five failures per username and IP, or twenty per username, within 15 minutes answer 429 until the window passes (in memory, reset on restart). Group refusal answers 403 only after a correct password.
+8. **No enumeration**: wrong password, unknown user, several matches and disabled account all answer the same 401 after a 300 ms floor. Five failures per username and IP, or twenty per username, within 15 minutes answer 429 until the window passes. Counters live in the identity database (hashed keys), survive restarts and are shared by every process; each attempt is reserved atomically before the directory is asked and released when it was not a wrong password. Group refusal answers 403 only after a correct password.
 9. **Outages**: a failed service bind, a timeout (`DSH_LDAP_TIMEOUT_MS`, default 5000) or any unexpected error answers 503. Passwords are never logged or stored, and LDAP passwords are never copied into Better Auth hashes.
 
 <a id="better-auth-integration"></a>
@@ -198,14 +200,21 @@ Recommended policy (confirm in D2):
 
 ### Disable and offboarding
 
-When an employee is disabled or removed in the IdP:
+Implemented as periodic reconciliation (`src/sso/deprovision.ts`). Every `DSH_SSO_RECONCILE_INTERVAL_MINUTES` (default 60, 5 to 10080, 0 off) the service reads every binding of the configured provider that is not already disabled:
 
-| Mechanism | Behaviour |
-| --- | --- |
-| Login-time probe (required) | On each SSO or on a schedule (OIDC UserInfo / WeCom member read / LDAP search), absence or disable → refuse new sessions and revoke all Better Auth sessions for that user. |
-| Directory webhook / SCIM (later) | On disable events, revoke sessions and mark the account disabled. |
-| Router | Next HTTP request or WebSocket reconnect returns 401; open sockets still obey the existing max lifetime. |
-| Data | Workspaces stay until the operator’s confirmed deletion flow (same suspend vs delete split as the native design); SSO disable is not an immediate purge. |
+| Provider | Check | Disables when |
+| --- | --- | --- |
+| LDAP / AD | Service bind, search by the immutable ID (objectGUID as raw bytes, or entryUUID) under the base DN and user filter; groups as at sign-in | No entry (`directory-missing`), AD `ACCOUNTDISABLE` (`directory-disabled`), no allowed group (`directory-group`) |
+| WeCom | `user/get` by userid | errcode 60111 (missing), `status` other than 1 (disabled, not activated, resigned), no allowed department |
+| DingTalk | `getbyunionid` then `v2/user/get` | errcode 60121 or 33012, a non-employee contact, `active` false, no allowed department |
+| OIDC / SAML | No directory API | Only the inactivity policy below, or the operator CLI |
+| All | `DSH_SSO_MAX_INACTIVE_DAYS` (default 0, off; 1 to 3650) | No sign-in for that many days since the last one (or since binding) |
+
+- **Disable**: one transaction marks the account (`dsh_user_disabled`), deletes every Better Auth session row of the user and writes an `sso-disable` audit row with the reason. The private session socket also refuses a disabled user, so a session minted during the disable cannot survive. The router sees 401 on the next request; open WebSockets still obey their maximum lifetime.
+- **Fail-safe**: a timeout, an unreachable directory, a failed service bind, a permission error (WeCom 60011 included) or any unexpected answer skips that user and is logged; it never disables. When a run would disable more users from directory answers than `DSH_SSO_RECONCILE_MAX_DISABLE` (default 10), it disables none of them and audits `aborted`, because a wrong base DN or app scope looks like a mass departure. Each run writes an `sso-reconcile` summary row.
+- **Re-enable**: never automatic. `dsh-identity-sso enable --email` lifts the disable; `disable --email [--reason]` disables at once (any provider); `list-disabled` lists them. Every change is audited.
+- **Data**: workspaces stay until the operator's confirmed deletion flow (same suspend vs delete split as the native design); SSO disable is not an immediate purge.
+- **Later**: directory webhooks or SCIM could replace polling.
 
 ### Coexistence with invites and public registration
 

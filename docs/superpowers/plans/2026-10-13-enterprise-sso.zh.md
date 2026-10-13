@@ -179,3 +179,30 @@ export interface SsoStore {
 
 - [ ] **步骤 1：编写失败的测试**，使用 127.0.0.1 上的 mock LDAP 服务器和每次运行生成的 CA：环境变量解析（必须 TLS、明文 LDAP 仅限回环、CA 文件、过滤器括号平衡、nested 仅限 AD）；RFC 4515 与 RFC 4514 转义；使用固定 CA 的 LDAPS 和 StartTLS；注入尝试；空口令；禁用的 AD 账户；memberOf、nested 和 search 三种组模式；经由监听器的统一错误、锁定和超时 503；在 Chrome 中运行登录表单。
 - [ ] **步骤 2：运行**，预期失败。**步骤 3：实现**提供方、端点、表单和接线。**步骤 4：运行**单元测试、类型检查、e2e 和文档门禁；提交；推送。
+
+### 任务 13：SAML 签名请求与加密 assertion
+
+**文件：** 修改 `src/sso/config.ts`、`src/sso/saml.ts`、`tests/mock-saml.ts`、`tests/saml.spec.ts`、`tests/saml-flow.spec.ts`、`tests/sso-config.spec.ts`、`package.json`（开发依赖 `xml-encryption`、`@types/xml-encryption`）、README、环境变量示例和设计文档。
+
+**接口：** `SpKeyPair { key, cert }`；`SsoConfig` 的 `saml` 变体新增可选的 `signing` 与 `decryption`。配置项：`DSH_SAML_SIGN_REQUESTS`、`DSH_SAML_SP_SIGNING_KEY[_FILE]`、`DSH_SAML_SP_SIGNING_CERT[_FILE]`、`DSH_SAML_ENCRYPTED_ASSERTIONS`、`DSH_SAML_SP_DECRYPTION_KEY_FILE`、`DSH_SAML_SP_DECRYPTION_CERT_FILE`。
+
+- [ ] **步骤 1：编写失败的测试**，密钥每次运行生成：私钥文件的权限、符号链接、属主和配对检查；只来自环境变量的签名私钥；拒绝来自环境变量的解密私钥；有开关无密钥、有密钥无开关；mock IdP 校验跳转签名并拒绝未签名或其他密钥签名的请求；各种签名方式下的加密 assertion；拒绝明文、加密给其他密钥以及加密但未签名的 assertion；metadata 中的 KeyDescriptor；经由监听器的完整流程。
+- [ ] **步骤 2：运行**，预期失败。**步骤 3：实现**。**步骤 4：运行**单元测试、类型检查、e2e 和文档门禁；提交。
+
+### 任务 14：持久化的登录锁定
+
+**文件：** 修改 `src/sso/store.ts`、`src/database.ts`、`src/sso/plugin.ts`、`src/server.ts`、`src/index.ts`；新建 `tests/auth-failure.spec.ts`；扩展 `tests/ldap-flow.spec.ts` 和 `tests/emergency.spec.ts`。
+
+**接口：** `SsoStore.reserveAttempt(limits, windowMs, now)`、`releaseAttempt(ids)`、`clearFailures(key)`、`failureCount(key, since)`、`pruneFailures(now, windowMs)`；`IdentityDatabase.prune(now, failureWindowMs)`；`EMERGENCY_LOCKOUT`。`dsh_auth_failure` 表只存哈希后的键。
+
+- [ ] **步骤 1：编写失败的测试**：按键计数的上限、释放与清除、滑动窗口、键的哈希；重新打开数据库后仍在；清理失败记录和固定窗口记录；四个进程争抢五个名额；LDAP 锁定跨服务重启；紧急路径锁定跨重启，且允许列表外的地址不计数。
+- [ ] **步骤 2：运行**，预期失败。**步骤 3：实现**询问目录前预占名额、成功或故障时释放，以及每十分钟一次的清理定时器。**步骤 4：运行**门禁；提交。
+
+### 任务 15：自动停用（deprovisioning）
+
+**文件：** 新建 `src/sso/deprovision.ts`、`src/sso-cli.ts`、`tests/deprovision.spec.ts`；修改 `src/sso/store.ts`、`src/sso/provider.ts`、`src/sso/ldap.ts`、`src/sso/wecom.ts`、`src/sso/dingtalk.ts`、`src/sso/plugin.ts`、`src/sso/config.ts`、`src/config.ts`、`src/server.ts`、`src/index.ts`、`package.json`（bin `dsh-identity-sso`）、`tests/mock-ldap.ts`。
+
+**接口：** `DirectoryLookup.lookup(subject)` 返回 `DirectoryRecord`（带组的 `active`、`disabled`、`missing`），对其他目录的 subject 返回 undefined；`reconcileOnce(deps)` 返回 `ReconcileReport`；`SsoStore.listLinks`、`touchLogin`、`disabledAt`、`disableUser`、`enableUser`、`listDisabled`；来自 `DSH_SSO_RECONCILE_INTERVAL_MINUTES`、`DSH_SSO_MAX_INACTIVE_DAYS`、`DSH_SSO_RECONCILE_MAX_DISABLE` 的 `DeprovisionConfig`；`sessionHandler(auth, disabled)`。
+
+- [ ] **步骤 1：编写失败的测试**：不存在、禁用和不在允许组的结果会停用账户、撤销会话并审计；查询错误和目录不可达不停用任何人；大规模结果中止对账；不活跃策略；原地添加列的迁移；按 objectGUID 字节和 entryUUID 的 LDAP 查询；企业微信和钉钉的状态与部门变化；经由监听器撤销在线会话；CLI 启用前登录被拒；服务内的定时对账；环境变量边界。
+- [ ] **步骤 2：运行**，预期失败。**步骤 3：实现**。**步骤 4：运行**门禁；提交；推送。

@@ -33,11 +33,14 @@
   en: 50951a23eb57314d
   zh: b47b39a056160107
 /public-harness-identity/use-this-package/enterprise-sso/saml-2-0:
-  en: 19c0b7de91374044
-  zh: b059db1f5e1aa235
+  en: 7a233d1e004d9c42
+  zh: f6b7f58b50f6a781
 /public-harness-identity/use-this-package/enterprise-sso/ldap-active-directory:
-  en: b0f123f38f1ef090
-  zh: 5f576538f8fa2344
+  en: fda8fc54f815587a
+  zh: cfd364144cea92a0
+/public-harness-identity/use-this-package/enterprise-sso/deprovisioning-and-lockouts:
+  en: 34601bff12d26f2a
+  zh: 1e6c3fb916895928
 /public-harness-identity/understand-the-implementation:
   en: 9ca273ce3bb588f4
   zh: fd09eb7b6847c825
@@ -45,8 +48,8 @@
   en: eb11d4045a131239
   zh: 7bcd3fd5985ac3be
 /public-harness-identity/known-limitations-and-deferred-work:
-  en: e61dd62981ce2244
-  zh: dcca8165122afd90
+  en: 96d398c3f02d4c92
+  zh: d06c0fc6e061d7fa
 /public-harness-identity/dev-note:
-  en: c30388b85d24e3a5
-  zh: abfcfa2d0c6ab743
+  en: bbac44b8c9ce9728
+  zh: e8012faa41640997

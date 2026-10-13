@@ -146,7 +146,9 @@ EnterpriseAuthProvider
 
 身份服务依据 [SAML 2.0 Core](https://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf)、[Bindings](https://docs.oasis-open.org/security/saml/v2.0/saml-bindings-2.0-os.pdf) 和 [Profiles](https://docs.oasis-open.org/security/saml/v2.0/saml-profiles-2.0-os.pdf) §4.1 中的 Web Browser SSO profile 充当 Service Provider。实现使用精确锁定版本的 [@node-saml/node-saml](https://github.com/node-saml/node-saml) 5.1.0：该库仍在维护、不含原生代码、只返回已验签的 XML，并拒绝含多个 assertion 的响应。库没有覆盖的 profile 检查由服务补上。
 
-1. `/api/auth/sso/start` 保存一次性、绑定浏览器的 `state` 和 AuthnRequest ID，然后带着 deflate 压缩、不签名的 AuthnRequest（HTTP-Redirect binding）、`RelayState=state`、ACS URL 和所配置的 NameID 格式跳转到 `DSH_SAML_IDP_SSO_URL`。
+1. `/api/auth/sso/start` 保存一次性、绑定浏览器的 `state` 和 AuthnRequest ID，然后带着 deflate 压缩的 AuthnRequest（HTTP-Redirect binding）、`RelayState=state`、ACS URL 和所配置的 NameID 格式跳转到 `DSH_SAML_IDP_SSO_URL`。
+   - **签名请求**：设置 `DSH_SAML_SIGN_REQUESTS=true`（IdP 要求 AuthnRequest 签名）时，请求按 [Bindings](https://docs.oasis-open.org/security/saml/v2.0/saml-bindings-2.0-os.pdf) §3.4.4.1 携带 `SigAlg`（RSA-SHA256）和 `Signature`。SP 私钥来自 `DSH_SAML_SP_SIGNING_KEY_FILE`（普通文件、不能是符号链接、属于服务用户，且组和其他用户没有任何权限位）或 `DSH_SAML_SP_SIGNING_KEY`；证书来自 `DSH_SAML_SP_SIGNING_CERT_FILE` 或 `DSH_SAML_SP_SIGNING_CERT`。私钥必须是至少 2048 位的 RSA，并与证书匹配。此时 SP metadata 声明 `AuthnRequestsSigned="true"`，并把证书作为 signing `KeyDescriptor` 发布。
+   - **加密 assertion**：设置 `DSH_SAML_ENCRYPTED_ASSERTIONS=true`（IdP 会加密）时，解密私钥只能来自 `DSH_SAML_SP_DECRYPTION_KEY_FILE`，权限规则同上；在环境变量中给出私钥会拒绝启动。对应证书（`DSH_SAML_SP_DECRYPTION_CERT_FILE`）作为 encryption `KeyDescriptor` 发布。此时 Response 必须恰好包含一个 `EncryptedAssertion`，且没有明文 `Assertion`；明文 assertion 按降级攻击拒绝，加密给其他密钥的也拒绝。解密后的 assertion 仍须有有效签名（在 Response 或 assertion 自身上）。只设置密钥或证书而没有对应的 `true` 开关会拒绝启动，部署无法只开启一半。
 2. IdP 把 `SAMLResponse` 和 `RelayState` POST 到 `/api/auth/sso/acs`（HTTP-POST binding）。这个 POST 是跨站的，所以 SameSite=Lax 的绑定 cookie 不会带上。服务此时不做任何验证，只返回一个小页面（nonce CSP、`form-action 'self'`），从本站源重新提交同样的字段，这时 cookie 会被发送。重新提交仍然跨源时返回 403。
 3. 同源提交经过共享回调：state 连同浏览器 cookie 被消费一次，然后检查：
    - **签名**：IdP 证书固定来自 `DSH_SAML_IDP_CERT_FILE`（一个或多个 PEM 证书；文件中出现私钥会拒绝启动）。Response 或 Assertion 至少一个必须签名；`DSH_SAML_WANT_ASSERTIONS_SIGNED=true` 时要求 Assertion 签名。未签名、签名错误和被包装（签名的 assertion 被移到一边、换上伪造的 assertion）的响应都会被拒绝。运行时从不拉取 metadata。
@@ -171,7 +173,7 @@ EnterpriseAuthProvider
 5. **组（D7）**：`DSH_LDAP_GROUP_MODE` 为 `memberOf`（直接所属组）、`nested`（仅 AD：`LDAP_MATCHING_RULE_IN_CHAIN`，见[搜索过滤器语法](https://learn.microsoft.com/en-us/windows/win32/adsi/search-filter-syntax)）或 `search`（在 `DSH_LDAP_GROUP_BASE_DN` 下搜索 `(&(objectClass=<类>)(member=<用户 DN>))`）。`DSH_SSO_ALLOWED_GROUPS` 列出组 DN，以 `;` 分隔，规范化大小写和空格后比较。
 6. **禁用账户（AD）**：`userAccountControl` 含 `ACCOUNTDISABLE`（0x2）则拒绝（[userAccountControl](https://learn.microsoft.com/en-us/troubleshoot/windows-server/active-directory/useraccountcontrol-manipulate-account-properties)）。AD 对禁用、过期或锁定账户也会拒绝 bind。
 7. **邮箱（D2/D4）**：`DSH_LDAP_EMAIL_ATTRIBUTE`（默认 `mail`），否则为 `ldap-<subject 哈希>@sso.invalid`。
-8. **不可枚举用户**：口令错误、用户不存在、多个匹配和账户禁用都在至少 300 ms 后返回相同的 401。15 分钟内同一用户名加 IP 失败 5 次，或同一用户名失败 20 次，在窗口结束前返回 429（保存在内存中，重启清零）。组不在允许列表时，只有口令正确才返回 403。
+8. **不可枚举用户**：口令错误、用户不存在、多个匹配和账户禁用都在至少 300 ms 后返回相同的 401。15 分钟内同一用户名加 IP 失败 5 次，或同一用户名失败 20 次，在窗口结束前返回 429。计数保存在身份数据库中（键经过哈希），重启后仍在，并由所有进程共享；每次尝试在询问目录前原子地预占一个名额，若结果不是口令错误再释放。组不在允许列表时，只有口令正确才返回 403。
 9. **故障**：服务账户 bind 失败、超时（`DSH_LDAP_TIMEOUT_MS`，默认 5000）或任何意外错误返回 503。口令从不记录或存储，也不会复制成 Better Auth 口令哈希。
 
 <a id="better-auth-integration"></a>
@@ -198,14 +200,21 @@ EnterpriseAuthProvider
 
 ### 停用与离板（offboarding）
 
-当员工从 IdP 离职或禁用时：
+以定期对账实现（`src/sso/deprovision.ts`）。每隔 `DSH_SSO_RECONCILE_INTERVAL_MINUTES`（默认 60，范围 5 到 10080，0 关闭），服务读取当前提供方下所有尚未停用的绑定：
 
-| 机制 | 行为 |
-| --- | --- |
-| 登录时探测（必选） | 每次 SSO 或定期（OIDC UserInfo / 企业微信读成员 / LDAP 搜索）发现禁用或不存在 → 拒绝新会话，并撤销该用户全部 Better Auth 会话。 |
-| 目录 Webhook / SCIM（可选后期） | 收到禁用事件后主动撤销会话并标记账户 `disabled`。 |
-| 路由器 | 下一请求或 WebSocket 重连得到 401；已打开的 WebSocket 仍受现有最长寿命约束。 |
-| 数据 | 默认保留工作区直至运维确认的删除流程（与原生设计中的停用 / 删除分离一致）；SSO 停用 ≠ 立即purge。 |
+| 提供方 | 检查 | 停用条件 |
+| --- | --- | --- |
+| LDAP / AD | 服务账户 bind，在 base DN 和用户过滤器下按不可变 ID 搜索（objectGUID 按原始字节，或 entryUUID）；组的取法与登录时相同 | 找不到条目（`directory-missing`）、AD `ACCOUNTDISABLE`（`directory-disabled`）、不在任何允许组（`directory-group`） |
+| 企业微信 | 按 userid 调 `user/get` | errcode 60111（不存在）、`status` 不为 1（禁用、未激活、已退出）、不在允许部门 |
+| 钉钉 | 先 `getbyunionid` 再 `v2/user/get` | errcode 60121 或 33012、非员工联系人、`active` 为 false、不在允许部门 |
+| OIDC / SAML | 没有目录 API | 只有下面的不活跃策略，或运维 CLI |
+| 全部 | `DSH_SSO_MAX_INACTIVE_DAYS`（默认 0 关闭；1 到 3650） | 自上次登录（或绑定）起超过该天数未登录 |
+
+- **停用**：在一个事务中标记账户（`dsh_user_disabled`）、删除该用户全部 Better Auth 会话行，并写一条带原因的 `sso-disable` 审计记录。私有会话 socket 也拒绝已停用用户，停用过程中新签发的会话同样无效。路由器在下一请求得到 401；已打开的 WebSocket 仍受最长寿命约束。
+- **失败安全**：超时、目录不可达、服务账户 bind 失败、权限错误（包括企业微信 60011）或任何意外响应都只跳过该用户并记录日志，从不停用。一次对账中按目录结果要停用的人数超过 `DSH_SSO_RECONCILE_MAX_DISABLE`（默认 10）时，这些人一个也不停用，并审计 `aborted`，因为错误的 base DN 或应用可见范围看起来就像大规模离职。每次对账写一条 `sso-reconcile` 汇总记录。
+- **重新启用**：从不自动。`dsh-identity-sso enable --email` 解除停用；`disable --email [--reason]` 立即停用（任何提供方）；`list-disabled` 列出已停用账户。每次变更都有审计。
+- **数据**：默认保留工作区直至运维确认的删除流程（与原生设计中的停用 / 删除分离一致）；SSO 停用 ≠ 立即 purge。
+- **后续**：目录 Webhook 或 SCIM 可取代轮询。
 
 ### 与邀请码、公开注册共存
 

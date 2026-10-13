@@ -53,3 +53,12 @@
 /enterprise-sso-foundation-and-oidc-implementation-plan/shared-interfaces/task-12-ldap-ad-provider:
   en: 9fddc80e0b18d7d4
   zh: b2f53252072c6976
+/enterprise-sso-foundation-and-oidc-implementation-plan/shared-interfaces/task-13-saml-signed-requests-and-encrypted-assertions:
+  en: ac48fd7cd6fe4d7b
+  zh: bc53a51a370eb700
+/enterprise-sso-foundation-and-oidc-implementation-plan/shared-interfaces/task-14-persistent-sign-in-lockouts:
+  en: 96b0c90cbfdc1723
+  zh: fd19933ef1f59c8d
+/enterprise-sso-foundation-and-oidc-implementation-plan/shared-interfaces/task-15-automatic-deprovisioning:
+  en: d26bf07245ed5465
+  zh: 369b833a984989c5

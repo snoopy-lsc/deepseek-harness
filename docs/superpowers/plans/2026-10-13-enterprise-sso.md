@@ -179,3 +179,30 @@ export interface SsoStore {
 
 - [ ] **Step 1: Write failing tests** against a 127.0.0.1 mock LDAP server with a CA generated per run: environment parsing (TLS required, loopback-only plain LDAP, CA file, filter balance, AD-only nested mode); RFC 4515 and RFC 4514 escaping; LDAPS and StartTLS with the pinned CA; injection attempts; empty password; disabled AD account; memberOf, nested and search group modes; generic errors, lockout and 503 on timeout through the listener; a Chrome run of the login form.
 - [ ] **Step 2: Run**; expect failure. **Step 3: Implement** the provider, endpoint, form and wiring. **Step 4: Run** unit, typecheck, e2e and doc gates; commit; push.
+
+### Task 13: SAML Signed Requests and Encrypted Assertions
+
+**Files:** Modify `src/sso/config.ts`, `src/sso/saml.ts`, `tests/mock-saml.ts`, `tests/saml.spec.ts`, `tests/saml-flow.spec.ts`, `tests/sso-config.spec.ts`, `package.json` (dev: `xml-encryption`, `@types/xml-encryption`), the README, the env example and the design.
+
+**Interfaces:** `SpKeyPair { key, cert }`; the `saml` variant of `SsoConfig` gains optional `signing` and `decryption`. Settings: `DSH_SAML_SIGN_REQUESTS`, `DSH_SAML_SP_SIGNING_KEY[_FILE]`, `DSH_SAML_SP_SIGNING_CERT[_FILE]`, `DSH_SAML_ENCRYPTED_ASSERTIONS`, `DSH_SAML_SP_DECRYPTION_KEY_FILE`, `DSH_SAML_SP_DECRYPTION_CERT_FILE`.
+
+- [ ] **Step 1: Write failing tests** with keys generated per run: key file permission, symlink, owner and pairing checks; env-only signing key; decryption key refused from the environment; flags without keys and keys without flags; the mock IdP verifying the redirect signature and refusing unsigned or foreign-key requests; encrypted assertions with each signing mode; plain, foreign-key and unsigned encrypted assertions refused; metadata KeyDescriptors; the full flow through the listener.
+- [ ] **Step 2: Run**; expect failure. **Step 3: Implement**. **Step 4: Run** unit, typecheck, e2e and doc gates; commit.
+
+### Task 14: Persistent Sign-in Lockouts
+
+**Files:** Modify `src/sso/store.ts`, `src/database.ts`, `src/sso/plugin.ts`, `src/server.ts`, `src/index.ts`; create `tests/auth-failure.spec.ts`; extend `tests/ldap-flow.spec.ts` and `tests/emergency.spec.ts`.
+
+**Interfaces:** `SsoStore.reserveAttempt(limits, windowMs, now)`, `releaseAttempt(ids)`, `clearFailures(key)`, `failureCount(key, since)`, `pruneFailures(now, windowMs)`; `IdentityDatabase.prune(now, failureWindowMs)`; `EMERGENCY_LOCKOUT`. Table `dsh_auth_failure` holds hashed keys.
+
+- [ ] **Step 1: Write failing tests**: per-key limits, release and clear, the sliding window, hashed keys; survival across reopen; pruning of failure and fixed-window rows; four processes racing for five slots; LDAP lockout across a service restart; emergency lockout across a restart, with outside addresses not counting.
+- [ ] **Step 2: Run**; expect failure. **Step 3: Implement** reservation before the directory call, release on success or outage, and the ten-minute prune timer. **Step 4: Run** gates; commit.
+
+### Task 15: Automatic Deprovisioning
+
+**Files:** Create `src/sso/deprovision.ts`, `src/sso-cli.ts`, `tests/deprovision.spec.ts`; modify `src/sso/store.ts`, `src/sso/provider.ts`, `src/sso/ldap.ts`, `src/sso/wecom.ts`, `src/sso/dingtalk.ts`, `src/sso/plugin.ts`, `src/sso/config.ts`, `src/config.ts`, `src/server.ts`, `src/index.ts`, `package.json` (bin `dsh-identity-sso`), `tests/mock-ldap.ts`.
+
+**Interfaces:** `DirectoryLookup.lookup(subject)` returning `DirectoryRecord` (`active` with groups, `disabled`, `missing`) or undefined for a foreign subject; `reconcileOnce(deps)` returning `ReconcileReport`; `SsoStore.listLinks`, `touchLogin`, `disabledAt`, `disableUser`, `enableUser`, `listDisabled`; `DeprovisionConfig` from `DSH_SSO_RECONCILE_INTERVAL_MINUTES`, `DSH_SSO_MAX_INACTIVE_DAYS`, `DSH_SSO_RECONCILE_MAX_DISABLE`; `sessionHandler(auth, disabled)`.
+
+- [ ] **Step 1: Write failing tests**: missing, disabled and out-of-group answers disable, revoke sessions and audit; lookup errors and an unreachable directory disable nobody; a mass result aborts; the inactivity policy; the in-place column migration; LDAP lookups by objectGUID bytes and entryUUID; WeCom and DingTalk status and department changes; live session revoked through the listeners; sign-in refused until the CLI enables; the scheduler in the service; environment bounds.
+- [ ] **Step 2: Run**; expect failure. **Step 3: Implement**. **Step 4: Run** gates; commit; push.

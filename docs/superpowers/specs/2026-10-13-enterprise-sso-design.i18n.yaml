@@ -48,11 +48,11 @@
   en: c5a099251b74a7ab
   zh: e25690dbd36ef5b6
 /enterprise-on-prem-identity-design/per-provider-flow-outlines/saml-2-0-sp-saml:
-  en: 193341547672abd8
-  zh: 170002ac5cb76a09
+  en: c122d941558551ee
+  zh: e7e4b10bab912930
 /enterprise-on-prem-identity-design/per-provider-flow-outlines/ldap-ad-ldap:
-  en: fd27f924339eada3
-  zh: d9f1ccd314ad0469
+  en: 5136a2f4e9eaf720
+  zh: 51191e8caded6524
 /enterprise-on-prem-identity-design/integration-with-better-auth-and-existing-identity:
   en: eba2c9769d02ccd3
   zh: d3865615e8236325
@@ -66,8 +66,8 @@
   en: 80b7f4cec01b4862
   zh: 28402529a7b7d07f
 /enterprise-on-prem-identity-design/integration-with-better-auth-and-existing-identity/disable-and-offboarding:
-  en: 4216a68d5cf9fe8a
-  zh: f9b1d44d066973bf
+  en: 5ca94e1d70089712
+  zh: 821cf419b49491cc
 /enterprise-on-prem-identity-design/integration-with-better-auth-and-existing-identity/coexistence-with-invites-and-public-registration:
   en: b5b0823a172ff442
   zh: 6701f033ea98b66a

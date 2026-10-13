@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdir, mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, chmodSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { isMap, isScalar, isSeq, parse, parseDocument, type Document } from 'yaml'
@@ -525,9 +525,13 @@ describe('native deployment composition', () => {
     const certDir = mkdtempSync(join(tmpdir(), 'dsh-saml-example-'))
     try {
       execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=example-idp.test', '-keyout', join(certDir, 'k'), '-out', join(certDir, 'c')], { stdio: 'ignore' })
+      execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=example-sp.test', '-keyout', join(certDir, 'sk'), '-out', join(certDir, 'sc')], { stdio: 'ignore' })
+      chmodSync(join(certDir, 'sk'), 0o600)
       const saml = parseIdentityConfig(await json('deploy/native/config/identity.json.example'), { ...env, DSH_SSO_PROVIDER: 'saml', DSH_SSO_ALLOWED_GROUPS: 'engineering',
-        ...Object.fromEntries(samlPairs), DSH_SAML_IDP_CERT_FILE: join(certDir, 'c') })
+        ...Object.fromEntries(samlPairs), DSH_SAML_IDP_CERT_FILE: join(certDir, 'c'), DSH_SAML_SP_SIGNING_KEY_FILE: join(certDir, 'sk'), DSH_SAML_SP_SIGNING_CERT_FILE: join(certDir, 'sc'),
+        DSH_SAML_SP_DECRYPTION_KEY_FILE: join(certDir, 'sk'), DSH_SAML_SP_DECRYPTION_CERT_FILE: join(certDir, 'sc') })
       expect(saml.sso).toMatchObject({ kind: 'saml', nameIdFormat: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent', wantAssertionsSigned: false, clockSkewMs: 60_000 })
+      expect(saml.sso.kind === 'saml' && saml.sso.signing !== undefined && saml.sso.decryption !== undefined).toBe(true)
     } finally { rmSync(certDir, { recursive: true, force: true }) }
     const ldapPairs = (await text('deploy/native/config/identity.env.example')).split('\n').filter(line => /^# DSH_LDAP_[A-Z_]+=/.test(line))
       .map(line => { const [key, ...rest] = line.slice(2).split('='); return [key!, rest.join('=')] as [string, string] })
@@ -535,6 +539,12 @@ describe('native deployment composition', () => {
     const ldap = parseIdentityConfig(await json('deploy/native/config/identity.json.example'), { ...env, DSH_SSO_PROVIDER: 'ldap', DSH_SSO_ALLOWED_GROUPS: 'CN=Harness,OU=Groups,DC=corp,DC=example',
       ...Object.fromEntries(ldapPairs), DSH_LDAP_CA_FILE: undefined, DSH_LDAP_BIND_PASSWORD: 'placeholder0' })
     expect(ldap.sso).toMatchObject({ kind: 'ldap', startTls: false, groupMode: 'nested', activeDirectory: true, serverId: 'dc1.corp.example:636', timeoutMs: 5000 })
+    const reconcilePairs = (await text('deploy/native/config/identity.env.example')).split('\n').filter(line => /^# DSH_SSO_(RECONCILE|MAX_INACTIVE)[A-Z_]*=/.test(line))
+      .map(line => { const [key, ...rest] = line.slice(2).split('='); return [key!, rest.join('=')] as [string, string] })
+    expect(reconcilePairs.map(([key]) => key)).toEqual(['DSH_SSO_RECONCILE_INTERVAL_MINUTES', 'DSH_SSO_MAX_INACTIVE_DAYS', 'DSH_SSO_RECONCILE_MAX_DISABLE'])
+    const reconciled = parseIdentityConfig(await json('deploy/native/config/identity.json.example'), { ...env, DSH_SSO_PROVIDER: 'ldap', DSH_SSO_ALLOWED_GROUPS: 'CN=Harness,OU=Groups,DC=corp,DC=example',
+      ...Object.fromEntries(ldapPairs), DSH_LDAP_CA_FILE: undefined, DSH_LDAP_BIND_PASSWORD: 'placeholder0', ...Object.fromEntries(reconcilePairs) })
+    expect(reconciled.deprovision).toEqual({ intervalMs: 3_600_000, maxInactiveDays: 90, maxDisablePerRun: 10 })
     expect(units['dsh-identity']).toMatch(/^EnvironmentFile=\/etc\/dsh-public\/identity-secrets\/identity\.env$/m)
     expect(identity.mode).toBe('production')
     expect(identity.enrollmentOpen).toBe(false)
