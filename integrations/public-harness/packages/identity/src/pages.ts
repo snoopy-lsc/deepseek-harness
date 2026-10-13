@@ -15,14 +15,22 @@ const copy = {
     resetDone: 'Password changed. Sign in again.', closed: 'Registration is closed.', failed: 'The request failed: ', unavailable: 'The service is unavailable. Try again later.',
     signedOut: 'You are signed out.', revokeOthers: 'Sign out other sessions', openHarness: 'Open my Harness',
     verifyHuman: 'Verify you are human', captchaDone: 'Verification complete.', captchaMissing: 'Complete the human verification first.',
-    invite: 'Invite code', inviteOnly: 'Registration is by invitation. Enter your invite code.' },
+    invite: 'Invite code', inviteOnly: 'Registration is by invitation. Enter your invite code.',
+    ssoLogin: 'Sign in with your company account', contractor: 'Invited contractors sign in with email and password:', ssoOnly: 'Employees sign in with the company account; registration is not public.',
+    ssoGroup: 'Your company account is not in a group allowed to use Harness. Ask your administrator.', ssoEmailInUse: 'This email already belongs to another Harness account. Ask your administrator.',
+    ssoRetry: 'The sign-in expired or was interrupted. Try again.', ssoFailed: 'Company sign-in failed. Try again or ask your administrator.',
+    emergency: 'Administrator emergency sign-in', code: 'Authenticator code' },
   zh: { title: 'DeepSeek Harness 账户', register: '创建账户', login: '登录', logout: '退出登录', reset: '重置密码',
     email: '邮箱', password: '密码', name: '名称', newPassword: '新密码', submit: '继续', loading: '处理中…',
     checkMail: '请查收邮件中的验证链接。', verified: '邮箱已验证，现在可以登录。', resetSent: '如果该地址存在，重置链接已发送。',
     resetDone: '密码已修改，请重新登录。', closed: '注册已关闭。', failed: '请求失败：', unavailable: '服务暂不可用，请稍后重试。',
     signedOut: '你已退出登录。', revokeOthers: '退出其他会话', openHarness: '打开我的 Harness',
     verifyHuman: '人机验证', captchaDone: '验证完成。', captchaMissing: '请先完成人机验证。',
-    invite: '邀请码', inviteOnly: '注册需要邀请，请输入邀请码。' },
+    invite: '邀请码', inviteOnly: '注册需要邀请，请输入邀请码。',
+    ssoLogin: '使用企业账号登录', contractor: '受邀承包商使用邮箱和密码登录：', ssoOnly: '员工请使用企业账号登录；不开放公开注册。',
+    ssoGroup: '你的企业账号不在允许使用 Harness 的群组中，请联系管理员。', ssoEmailInUse: '该邮箱已属于另一个 Harness 账户，请联系管理员。',
+    ssoRetry: '登录已过期或被中断，请重试。', ssoFailed: '企业登录失败，请重试或联系管理员。',
+    emergency: '管理员紧急登录', code: '验证器动态码' },
 } satisfies Record<Locale, Record<string, string>>
 /** Page copy keys, identical in every locale. */
 export type CopyKey = keyof typeof copy.en
@@ -64,7 +72,19 @@ export function safeReturnPath(value: string, userId: UserId): string {
  */
 export function text(locale: Locale, key: CopyKey): string { return copy[locale][key] }
 
-type View = 'home' | 'register' | 'login' | 'reset' | 'verified'
+type View = 'home' | 'register' | 'login' | 'reset' | 'verified' | 'emergency'
+/** Which sign-in paths a deployment offers: enterprise SSO and the administrator emergency page. */
+export interface PageMode { readonly sso: boolean; readonly emergency: boolean }
+
+/** Map an `sso_error` code from the callback to localized copy; unknown codes get the generic message.
+ * @param locale Locale.
+ * @param code Error code from the query string.
+ * @returns Text.
+ */
+export function ssoErrorText(locale: Locale, code: string): string {
+  const key: CopyKey = code === 'group' ? 'ssoGroup' : code === 'email-in-use' ? 'ssoEmailInUse' : code === 'state' || code === 'idp' ? 'ssoRetry' : 'ssoFailed'
+  return text(locale, key)
+}
 /** What a page renders for human verification: a provider widget, invite codes, or the local fixed test token. */
 export type PageCaptcha = { readonly provider: 'test' } | { readonly provider: 'none' } | CaptchaWidget
 
@@ -80,13 +100,20 @@ function captchaBlock(locale: Locale, captcha: PageCaptcha): string {
   }
 }
 
-function form(locale: Locale, view: View, captcha: PageCaptcha): string {
+function form(locale: Locale, view: View, captcha: PageCaptcha, mode: PageMode): string {
   const t = (key: CopyKey) => escapeHtml(text(locale, key))
   const field = (name: string, label: CopyKey, type: string) => `<label>${t(label)}<input name="${name}" type="${type}" required autocomplete="${type === 'password' ? 'current-password' : name}"></label>`
   const human = captchaBlock(locale, captcha)
   const invite = captcha.provider === 'none' ? `<label>${t('invite')}<input name="invite" type="text" required autocomplete="off" spellcheck="false" pattern="dshinv-[a-z2-7]{26}"></label>` : ''
+  // In SSO mode only invited contractors keep password registration and sign-in (decision D3).
+  const passwords = !mode.sso || captcha.provider === 'none'
+  const company = `<p><a href="/api/auth/sso/start" data-sso-start>${t('ssoLogin')}</a></p>`
+  const login = `<form data-action="login">${field('email', 'email', 'email')}${field('password', 'password', 'password')}<button type="submit">${t('submit')}</button></form>`
+  if (view === 'emergency') return `<h2>${t('emergency')}</h2><form data-action="emergency">${field('email', 'email', 'email')}${field('password', 'password', 'password')}<label>${t('code')}<input name="code" type="text" required inputmode="numeric" pattern="[0-9]{6}" autocomplete="one-time-code"></label><button type="submit">${t('submit')}</button></form>`
+  if (view === 'login' && mode.sso) return `${company}${passwords ? `<p>${t('contractor')}</p>${login}` : ''}`
+  if (view === 'register' && !passwords) return ''
   if (view === 'register') return `<form data-action="register">${field('name', 'name', 'text')}${field('email', 'email', 'email')}${field('password', 'password', 'password')}${invite}${human}<button type="submit">${t('submit')}</button></form>`
-  if (view === 'login') return `<form data-action="login">${field('email', 'email', 'email')}${field('password', 'password', 'password')}<button type="submit">${t('submit')}</button></form>`
+  if (view === 'login') return login
   if (view === 'reset') return `<form data-action="reset-request">${field('email', 'email', 'email')}${human}<button type="submit">${t('submit')}</button></form><form data-action="reset" hidden>${field('newPassword', 'newPassword', 'password')}<button type="submit">${t('submit')}</button></form>`
   if (view === 'verified') return `<p role="status">${t('verified')}</p><a href="/account/login">${t('login')}</a>`
   return `<div data-session></div><button data-action="logout" hidden>${t('logout')}</button><button data-action="revoke-others" hidden>${t('revokeOthers')}</button>`
@@ -136,8 +163,10 @@ for(const f of document.querySelectorAll('form'))f.addEventListener('submit',asy
   if(a==='register'){const h=gate(f,d);used=true;await call('/sign-up/email',{name:d.name,email:d.email,password:d.password,callbackURL:'/account/verified'},h);say(L.checkMail)}
   else if(a==='login'){const r=await call('/sign-in/email',{email:d.email,password:d.password});location.assign('/account/?return='+encodeURIComponent(new URLSearchParams(location.search).get('return')||''))}
   else if(a==='reset-request'){const h=gate(f,d);used=true;await call('/request-password-reset',{email:d.email,redirectTo:'/account/reset'},h);say(L.resetSent)}
+  else if(a==='emergency'){await call('/emergency/sign-in',{email:d.email,password:d.password,code:String(d.code).trim()});location.assign('/account/')}
   else if(a==='reset'){await call('/reset-password',{newPassword:d.newPassword,token:new URLSearchParams(location.search).get('token')});say(L.resetDone)}
  }catch(err){say(err.message)}finally{b.disabled=false;if(used)resetHuman()}});
+const sso=document.querySelector('[data-sso-start]');if(sso){const r=new URLSearchParams(location.search).get('return');if(r)sso.href='/api/auth/sso/start?return='+encodeURIComponent(r)}
 const token=new URLSearchParams(location.search).get('token');if(token&&document.querySelector('[data-action=reset]')){document.querySelector('[data-action=reset]').hidden=false;document.querySelector('[data-action=reset-request]').hidden=true}
 const s=document.querySelector('[data-session]');
 if(s){call('/get-session').then(j=>{if(!j){s.innerHTML='';const a=document.createElement('a');a.href='/account/login';a.textContent=L.login;s.append(a);return}
@@ -153,18 +182,21 @@ document.querySelector('[data-action=revoke-others]')?.addEventListener('click',
  * @param nonce CSP nonce.
  * @param notice Optional server notice, escaped.
  * @param captcha Human verification mode; defaults to the local test token.
+ * @param mode Enterprise SSO and emergency availability; defaults to neither.
  * @returns HTML document.
  */
-export function renderPage(locale: Locale, view: View, nonce: string, notice = '', captcha: PageCaptcha = { provider: 'test' }): string {
+export function renderPage(locale: Locale, view: View, nonce: string, notice = '', captcha: PageCaptcha = { provider: 'test' }, mode: PageMode = { sso: false, emergency: false }): string {
   const t = (key: CopyKey) => escapeHtml(text(locale, key))
-  const nav = `<nav><a href="/account/register">${t('register')}</a> <a href="/account/login">${t('login')}</a> <a href="/account/reset">${t('reset')}</a> <a href="?lang=${locale === 'en' ? 'zh' : 'en'}">${locale === 'en' ? '中文' : 'English'}</a></nav>`
+  // Registration and reset links are for password accounts; in SSO mode only invite deployments show them. The emergency page is never linked.
+  const passwords = !mode.sso || captcha.provider === 'none'
+  const nav = `<nav>${passwords ? `<a href="/account/register">${t('register')}</a> ` : ''}<a href="/account/login">${t('login')}</a> ${passwords ? `<a href="/account/reset">${t('reset')}</a> ` : ''}<a href="?lang=${locale === 'en' ? 'zh' : 'en'}">${locale === 'en' ? '中文' : 'English'}</a></nav>`
   // The copy is embedded as JSON inside a non-executing script element; `<` is escaped so no text can close it.
   const json = JSON.stringify(copy[locale]).replace(/</g, '\\u003c')
   // Only public widget parameters are embedded; secrets never reach the page.
   const widget = JSON.stringify('csp' in captcha ? { provider: captcha.provider, script: captcha.script, params: captcha.params } : { provider: captcha.provider }).replace(/</g, '\\u003c')
   return `<!doctype html><html lang="${locale === 'zh' ? 'zh-CN' : 'en'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${t('title')}</title>
 <style nonce="${nonce}">body{font-family:system-ui,sans-serif;max-width:28rem;margin:3rem auto;padding:0 1rem;color:#1f2329}label{display:block;margin:.75rem 0}input{display:block;width:100%;padding:.5rem;margin-top:.25rem}button{margin-top:1rem;padding:.5rem 1rem;background:#4d6bfe;color:#fff;border:0;border-radius:6px}nav a{margin-right:.75rem}[role=alert]{min-height:1.5rem;color:#b42318}</style></head>
-<body data-harness="/u/{id}/"><h1>${t('title')}</h1>${nav}<main>${form(locale, view, captcha)}</main><p role="alert">${escapeHtml(notice)}</p>
+<body data-harness="/u/{id}/"><h1>${t('title')}</h1>${nav}<main>${form(locale, view, captcha, mode)}</main><p role="alert">${escapeHtml(notice)}</p>
 <script type="application/json" id="copy">${json}</script><script type="application/json" id="captcha">${widget}</script><script nonce="${nonce}">${SCRIPT}</script></body></html>`
 }
 
@@ -184,16 +216,20 @@ export function pageCaptcha(provider: Pick<CaptchaProvider, 'kind' | 'widget'>):
  */
 export function createAccountPages(config: IdentityConfig, provider: Pick<CaptchaProvider, 'kind' | 'widget'>): PagesHandler {
   const captcha = pageCaptcha(provider)
-  const views: Record<string, View> = { '/account/': 'home', '/account/register': 'register', '/account/login': 'login', '/account/reset': 'reset', '/account/verified': 'verified' }
+  const mode: PageMode = { sso: config.sso.kind !== 'off', emergency: config.emergency.enabled }
+  const views: Record<string, View> = { '/account/': 'home', '/account/register': 'register', '/account/login': 'login', '/account/reset': 'reset', '/account/verified': 'verified',
+    ...mode.emergency ? { '/account/emergency': 'emergency' as const } : {} }
   return async (req: IncomingMessage, res: ServerResponse, url: URL) => {
     const view = views[url.pathname]
     if (view === undefined || (req.method !== 'GET' && req.method !== 'HEAD')) return false
     const locale = pickLocale(url, req.headers['accept-language'])
     const nonce = randomBytes(16).toString('base64')
-    const notice = view !== 'register' ? '' : captcha.provider === 'none' ? text(locale, 'inviteOnly') : config.enrollmentOpen ? '' : text(locale, 'closed')
+    const ssoError = url.searchParams.get('sso_error')
+    const notice = view === 'login' ? (ssoError === null ? '' : ssoErrorText(locale, ssoError))
+      : view !== 'register' ? '' : captcha.provider === 'none' ? text(locale, 'inviteOnly') : mode.sso ? text(locale, 'ssoOnly') : config.enrollmentOpen ? '' : text(locale, 'closed')
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-frame-options': 'DENY', 'referrer-policy': 'no-referrer',
       'content-security-policy': contentSecurityPolicy(nonce, captcha) })
-    res.end(req.method === 'HEAD' ? undefined : renderPage(locale, view, nonce, notice, captcha))
+    res.end(req.method === 'HEAD' ? undefined : renderPage(locale, view, nonce, notice, captcha, mode))
     return true
   }
 }
