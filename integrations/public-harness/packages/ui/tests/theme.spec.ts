@@ -81,4 +81,18 @@ describe('team-enterprise theme', () => {
       for (const field of DESKTOP[scheme]) expect(contrast(COLORS['--dsw-alias-state-business-primary']![scheme], over(base('--dsw-alias-bg-base'), field))).toBeGreaterThanOrEqual(3)
     }
   })
+
+  it('keeps_AA_contrast_on_the_identity_glass_card', () => {
+    for (const scheme of ['light', 'dark'] as const) {
+      for (const field of DESKTOP[scheme]) {
+        const card = over(MATERIALS['--dsw-alias-settings-card-fill']!.glass[scheme], field)
+        for (const token of ['--dsw-alias-label-primary', '--dsw-alias-label-secondary', '--dsw-alias-link']) {
+          expect(contrast(COLORS[token]![scheme], card), `${scheme} ${token}`).toBeGreaterThanOrEqual(4.5)
+        }
+        const alert = over(scheme === 'light' ? '#c4372f0d' : '#f27a7214', card)
+        expect(contrast(COLORS['--dsw-alias-state-error-primary']![scheme], alert), `${scheme} error`).toBeGreaterThanOrEqual(4.5)
+        expect(contrast(COLORS['--dsw-alias-state-success-primary']![scheme], card), `${scheme} status`).toBeGreaterThanOrEqual(4.5)
+      }
+    }
+  })
 })
