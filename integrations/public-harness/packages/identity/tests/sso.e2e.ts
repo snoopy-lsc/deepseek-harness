@@ -4,10 +4,12 @@ import { createServer, request as httpRequest, type Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { chromium, type Browser } from 'playwright-core'
 import { startIdentity } from '../src/index.ts'
-import { call, mailbox, ORIGIN, setup } from './helpers.ts'
+import { call, mailbox, setup } from './helpers.ts'
 import { MOCK_CLIENT_ID, MOCK_CLIENT_SECRET, startMockIdp, type MockIdp } from './mock-oidc.ts'
 
 const executable = process.env.PUBLIC_HARNESS_E2E_BROWSER
+// Its own port, so this file can run in parallel with registration.e2e.ts, which owns 18443.
+const ORIGIN = 'http://127.0.0.1:18444'
 const cleanups: Array<() => Promise<void>> = []
 
 /** Stand-in for the HTTPS proxy: every path goes to the identity socket. */
@@ -26,7 +28,7 @@ describe.skipIf(executable === undefined)('enterprise SSO in a real browser', ()
   let browser: Browser, idp: MockIdp, sessionSocket = ''
   beforeAll(async () => {
     idp = await startMockIdp({ sub: 'emp-100', email: 'dana@corp.example', name: 'Dana', groups: ['engineering'] }); cleanups.push(() => idp.close())
-    const { config } = await setup({}, { DSH_SSO_PROVIDER: 'oidc', DSH_OIDC_ISSUER: idp.issuer, DSH_OIDC_CLIENT_ID: MOCK_CLIENT_ID, DSH_OIDC_CLIENT_SECRET: MOCK_CLIENT_SECRET,
+    const { config } = await setup({ publicOrigin: ORIGIN }, { DSH_SSO_PROVIDER: 'oidc', DSH_OIDC_ISSUER: idp.issuer, DSH_OIDC_CLIENT_ID: MOCK_CLIENT_ID, DSH_OIDC_CLIENT_SECRET: MOCK_CLIENT_SECRET,
       DSH_SSO_ALLOWED_GROUPS: 'engineering' })
     sessionSocket = config.sessionSocket
     const identity = await startIdentity(config, { mail: mailbox().mail }); cleanups.push(() => identity.close())
