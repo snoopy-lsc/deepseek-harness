@@ -77,7 +77,7 @@ Production refuses enterprise secrets in JSON. Local runs may use a mock provide
 | Public internet | turnstile / aliyun / tencent, or none+invite | sendmail / smtp | may open via `enrollmentOpen` | `off` |
 | Enterprise on-prem | prefer `none`; public `/account/register` closed | still usable for emergency password-reset mail if that path is on | `enrollmentOpen=false`; accounts via JIT on first SSO or operator pre-provision | `wecom` / `dingtalk` / `oidc` / `saml` / `ldap` |
 
-Whether invite codes (`DSH_CAPTCHA_PROVIDER=none` mint CLI) remain for contractors without SSO is decision point D3.
+Whether invite codes (`DSH_CAPTCHA_PROVIDER=none` mint CLI) remain for contractors without SSO was decided in D3: invited contractors may coexist but never bind an enterprise subject.
 
 ### Suggested shared port (design-level, not code)
 
@@ -190,7 +190,7 @@ When an employee is disabled or removed in the IdP:
 ### Admin emergency password path
 
 - **Who**: only principals on an allow-list (`DSH_SSO_EMERGENCY_USER_IDS` or a break-glass table); empty means disabled.
-- **Gating**: separate URL (e.g. `/account/emergency`), not linked from the normal login page; optional second factor (TOTP / hardware key, D6); full audit (who, when, source IP, success/failure).
+- **Gating**: separate URL (e.g. `/account/emergency`), not linked from the normal login page; mandatory second factor (TOTP, decided in D6); full audit (who, when, source IP, success/failure).
 - **Storage**: Better Auth password hashes only; unrelated to the enterprise directory. Never sync LDAP passwords into this path.
 - **Purpose**: recover platform operations when the IdP is down; after recovery, force SSO again and rotate the emergency password.
 - **Audit**: append-only identity DB rows or host journal; retention is a deployment policy; never log the password.
@@ -245,16 +245,16 @@ Public CAPTCHA (Turnstile) is often unreachable from enterprise networks, so pre
 <a id="decision-points"></a>
 ## Decision points for the user
 
-Check or annotate each item before an implementation plan:
+Status: **Decided** (2026-10-13). These decisions replace the earlier open checklist and bind the implementation plan `docs/superpowers/plans/2026-10-13-enterprise-sso.md`.
 
-- [ ] **D1 Tenancy model**: Confirm the default of **one enterprise, one deployment** (one identity DB, one `DSH_SSO_PROVIDER`). Multi-enterprise sharing needs a separate multi-tenant design (separate DBs or a mandatory `tenant` claim).
-- [ ] **D2 UserId mapping**: Confirm first SSO allocates an immutable `user.id` in the identity service, uniquely linked by `(provider, subject)`; reject auto-merge by email alone.
-- [ ] **D3 Coexistence with invites**: Enterprise default **SSO only**, or allow **SSO + invited contractors**? If allowed, may an invite user later link to an enterprise `subject`?
-- [ ] **D4 Email verification**: Do enterprise SSO users **skip** Better Auth email verification (trust the IdP)? Do emergency-password users still require a verified email?
-- [ ] **D5 Logout scope**: Revoke only the Harness session, or also start SAML/OIDC single logout?
-- [ ] **D6 Emergency password**: Enable break-glass? If yes: allow-list source, mandatory second factor or not, audit retention period?
-- [ ] **D7 JIT vs allow-list**: Does a new employee’s first SSO create the website account automatically, or must the `subject` appear on an allow-list first?
-- [ ] **D8 Provider priority**: Agree the implementation order **P2 OIDC → P3 WeCom → P4 DingTalk → P5 SAML → P6 LDAP**? If a customer needs only LDAP, may that jump the queue?
+- **D1 Tenancy model (decided)**: One enterprise, one deployment: one identity database and one `DSH_SSO_PROVIDER`. Multi-tenant sharing is a separate design.
+- **D2 UserId mapping (decided)**: The first SSO sign-in allocates an immutable `user.id`. The link is unique by `(provider, subject)`. The service never merges accounts by email alone; an email already held by another account refuses the sign-in.
+- **D3 Coexistence with invites (decided)**: Enterprise default is SSO only. Invited contractor accounts may coexist, but an invite-created account can never later be bound to an enterprise `subject`.
+- **D4 Email verification (decided)**: SSO users skip Better Auth email verification because the IdP is trusted. Emergency-password accounts still require a verified email.
+- **D5 Logout scope (decided)**: Sign-out revokes only the Harness session. SAML/OIDC single logout is out of scope for now.
+- **D6 Emergency password (decided)**: Kept, for administrators only. It requires a source-IP allow-list and a mandatory second factor, and its audit log is retained for one year.
+- **D7 JIT vs allow-list (decided)**: Accounts are created just in time on first sign-in, but only for configured departments or groups.
+- **D8 Provider priority (decided)**: OIDC → WeCom → DingTalk → SAML → LDAP. LDAP may move ahead when a customer needs it.
 
 <a id="sources"></a>
 ## Sources

@@ -77,7 +77,7 @@
 | 公开互联网 | turnstile / aliyun / tencent 或 none+邀请 | sendmail / smtp | 可按 `enrollmentOpen` 打开 | `off` |
 | 企业本地 | 建议 `none`；公开 `/account/register` 关闭 | 仍可用于紧急密码重置通知（若启用紧急路径） | `enrollmentOpen=false`；账户由首次 SSO 即时开通（JIT）或运维预置 | `wecom` / `dingtalk` / `oidc` / `saml` / `ldap` |
 
-企业模式下邀请码（`DSH_CAPTCHA_PROVIDER=none` 的 mint CLI）是否仍可用于“无 SSO 的承包商账号”，见决策点 D3。
+企业模式下邀请码（`DSH_CAPTCHA_PROVIDER=none` 的 mint CLI）是否仍可用于“无 SSO 的承包商账号”，已在 D3 决定：受邀承包商可以共存，但永远不能绑定企业 subject。
 
 ### 建议的统一端口（设计级，非代码）
 
@@ -190,7 +190,7 @@ EnterpriseAuthProvider
 ### 管理员工紧急密码路径
 
 - **谁**：仅写入允许列表的运维主体（环境变量 `DSH_SSO_EMERGENCY_USER_IDS` 或独立“break-glass”账户表），默认空 = 关闭。
-- **如何门禁**：独立 URL（例如 `/account/emergency`），不在普通登录页展示；要求二次因素（可选 TOTP / 硬件密钥，决策点 D6）；全量审计日志（谁、何时、源 IP、是否成功）。
+- **如何门禁**：独立 URL（例如 `/account/emergency`），不在普通登录页展示；强制第二因素（TOTP，见已决定的 D6）；全量审计日志（谁、何时、源 IP、是否成功）。
 - **密码存储**：Better Auth 标准哈希；与企业目录无关。禁止从 LDAP 同步口令。
 - **用途**：IdP 全局故障时恢复平台运维；恢复后应强制重新 SSO 并轮换紧急密码。
 - **审计**：写入身份库 append-only 或宿主 journal，保留期由部署规定；不得记录口令。
@@ -245,16 +245,16 @@ EnterpriseAuthProvider
 <a id="decision-points"></a>
 ## 待用户确认的决策点
 
-请逐项勾选或批注后，再进入实现计划：
+状态：**已决定**（2026-10-13）。以下决定取代原先的待确认清单，并约束实现计划 `docs/superpowers/plans/2026-10-13-enterprise-sso.md`。
 
-- [ ] **D1 租户模型**：确认默认 **单企业单部署**（一套身份库、一个 `DSH_SSO_PROVIDER`）。若需要多企业共用，需另开多租户设计（独立库或强制 `tenant` 声明）。
-- [ ] **D2 UserId 映射**：确认首次 SSO 由身份服务分配不可变 `user.id`，并以 `(provider, subject)` 唯一链接；拒绝仅凭邮箱自动合并账户。
-- [ ] **D3 与邀请码共存**：企业默认 **SSO only**，还是允许 **SSO + 邀请承包商**？若允许，邀请用户能否日后链接到企业 subject？
-- [ ] **D4 邮箱验证**：企业 SSO 用户是否 **跳过** Better Auth 邮件验证（信任 IdP）？紧急密码用户是否仍要求验证邮箱？
-- [ ] **D5 登出范围**：仅撤销 Harness 会话，还是同时发起 SAML/OIDC 单点登出？
-- [ ] **D6 紧急密码**：是否启用 break-glass？若启用，允许的用户 ID 列表来源、是否强制第二因素、审计日志保留多久？
-- [ ] **D7 JIT vs 预置**：新员工首次 SSO 是否自动建站账户，还是必须出现在允许列表？
-- [ ] **D8 Provider 优先级**：首个实现顺序是否同意 **P2 OIDC → P3 企微 → P4 钉钉 → P5 SAML → P6 LDAP**？若某客户只要 LDAP，可否插队？
+- **D1 租户模型（已决定）**：单企业单部署：一套身份库、一个 `DSH_SSO_PROVIDER`。多租户共用另开设计。
+- **D2 UserId 映射（已决定）**：首次 SSO 登录分配不可变的 `user.id`，以 `(provider, subject)` 唯一绑定。绝不仅凭邮箱自动合并账户；邮箱已被其他账户占用时拒绝登录。
+- **D3 与邀请码共存（已决定）**：企业默认仅 SSO。受邀承包商账户可以共存，但邀请码创建的账户日后永远不能绑定企业 `subject`。
+- **D4 邮箱验证（已决定）**：SSO 用户信任 IdP，跳过 Better Auth 邮件验证；紧急密码账户仍要求已验证邮箱。
+- **D5 登出范围（已决定）**：登出只撤销 Harness 会话；暂不做 SAML/OIDC 单点登出。
+- **D6 紧急密码（已决定）**：保留，仅限管理员；要求来源 IP 白名单与强制第二因素，审计日志保留一年。
+- **D7 JIT 与预置（已决定）**：首次登录即时建号，但仅限配置的部门或群组。
+- **D8 Provider 优先级（已决定）**：OIDC → 企业微信 → 钉钉 → SAML → LDAP；客户需要时 LDAP 可以插队。
 
 <a id="sources"></a>
 ## 资料来源
