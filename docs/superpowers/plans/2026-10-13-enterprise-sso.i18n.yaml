@@ -1,0 +1,43 @@
+# Bilingual-pair consistency record for 2026-10-13-enterprise-sso.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/superpowers/plans/2026-10-13-enterprise-sso.md
+/enterprise-sso-foundation-and-oidc-implementation-plan:
+  en: 3f3ded4af9e90911
+  zh: dca87ad62ac0374b
+/enterprise-sso-foundation-and-oidc-implementation-plan/global-constraints:
+  en: 2125c79e196e8201
+  zh: 70644a4c9189222a
+/enterprise-sso-foundation-and-oidc-implementation-plan/review-focus:
+  en: 897fd6d570ed8b44
+  zh: 63fb18883fc6a9e1
+/enterprise-sso-foundation-and-oidc-implementation-plan/file-structure:
+  en: 4d0c300bb68f399a
+  zh: 9c1f132d55400476
+/enterprise-sso-foundation-and-oidc-implementation-plan/shared-interfaces:
+  en: bb848ab3f57fd982
+  zh: a2da49667d94f720
+/enterprise-sso-foundation-and-oidc-implementation-plan/shared-interfaces/task-1-sso-environment-configuration:
+  en: c63691eb9c4dda23
+  zh: a10703ceda2d6ae1
+/enterprise-sso-foundation-and-oidc-implementation-plan/shared-interfaces/task-2-sso-store-totp-and-address-allow-list:
+  en: b57ee57003e97b2c
+  zh: 1b1729fabbc2d805
+/enterprise-sso-foundation-and-oidc-implementation-plan/shared-interfaces/task-3-provider-port-and-jwt-verification:
+  en: a79f53fc0d33df93
+  zh: 551d46aa31767414
+/enterprise-sso-foundation-and-oidc-implementation-plan/shared-interfaces/task-4-oidc-provider-against-a-local-mock-idp:
+  en: 7053ea84b0da28ea
+  zh: fd4ac858d5df50f1
+/enterprise-sso-foundation-and-oidc-implementation-plan/shared-interfaces/task-5-better-auth-plugin-jit-and-server-gates:
+  en: 0fa37e767315f887
+  zh: d6cce7c1c637ea28
+/enterprise-sso-foundation-and-oidc-implementation-plan/shared-interfaces/task-6-administrator-emergency-password:
+  en: 21ca6344d15cb606
+  zh: 2abab3a1caf66754
+/enterprise-sso-foundation-and-oidc-implementation-plan/shared-interfaces/task-7-login-pages-and-browser-test:
+  en: 5ae270bc16f579ea
+  zh: 9365d1303744a1d6
+/enterprise-sso-foundation-and-oidc-implementation-plan/shared-interfaces/task-8-deployment-documentation-and-gates:
+  en: 7e20fa8cf9760730
+  zh: 608caea4bf1c651d
