@@ -1,5 +1,5 @@
 ---
-description: "原生公共 Harness 的 Better Auth 注册、邮箱验证会话与账户页面，提供适用于中国大陆的可插拔人机验证与邮件服务、仅邀请模式，并为路由器提供私有会话 socket。"
+description: "原生公共 Harness 的 Better Auth 注册、邮箱验证会话与账户页面，提供适用于中国大陆的可插拔人机验证与邮件服务、仅邀请模式、带管理员紧急通道的企业 OIDC 登录，并为路由器提供私有会话 socket。"
 kind: "package-library"
 ---
 
@@ -62,6 +62,21 @@ sudo -u dsh-identity node …/invite-cli.js --config /etc/dsh-public/identity.js
 
 代理把 `/api/auth/*` 和 `/account/*` 转发到 `publicSocket`，从不暴露 `sessionSocket`。路由器在其生产配置文件中用 `identity.kind: better-auth` 选择此模式；参见[路由器原生身份](../router/src/native-identity.ts)。
 
+### 企业 SSO
+
+`DSH_SSO_PROVIDER=oidc` 为单企业部署开启企业登录；未设置或为 `off` 时行为不变。必须提供 `DSH_OIDC_ISSUER`（HTTPS）、`DSH_OIDC_CLIENT_ID`、`DSH_OIDC_CLIENT_SECRET` 和非空的 `DSH_SSO_ALLOWED_GROUPS`。`DSH_OIDC_SCOPES`（默认 `openid email profile`）、`DSH_OIDC_GROUP_CLAIMS`（默认 `groups`，逗号分隔的声明名）和 `DSH_OIDC_TIMEOUT_MS` 可选。在 IdP 上把 `<publicOrigin>/api/auth/sso/callback` 注册为机密客户端的 redirect URI。之后登录页显示“使用企业账号登录”。允许群组的成员首次登录时创建一个邮箱已验证的账户，并绑定到 IdP 的 `sub`；之后只按该绑定查找。邮箱已被其他账户占用时拒绝登录，而不是合并。公开注册关闭。设置 `DSH_CAPTCHA_PROVIDER=none` 时，受邀承包商仍可用密码注册和登录，但其账户永远不能绑定企业 subject。登出只结束 Harness 会话。参见[设计](../../../../docs/superpowers/specs/2026-10-13-enterprise-sso-design.zh.md)和[计划](../../../../docs/superpowers/plans/2026-10-13-enterprise-sso.zh.md)。
+
+`DSH_SSO_EMERGENCY_ALLOWED_IPS`（IP 或 CIDR 前缀）为 IdP 故障时的管理员开启 `/account/emergency`。登记需要一个邮箱已验证的现有密码账户（例如受邀账户），并只打印一次 TOTP URI：
+
+```sh
+sudo -u dsh-identity node /opt/dsh-public/integration/packages/identity/lib/emergency-cli.js --config /etc/dsh-public/identity.json enroll --email admin@corp.example
+sudo -u dsh-identity node …/emergency-cli.js --config /etc/dsh-public/identity.json list
+sudo -u dsh-identity node …/emergency-cli.js --config /etc/dsh-public/identity.json audit --days 30
+sudo -u dsh-identity node …/emergency-cli.js --config /etc/dsh-public/identity.json revoke --email admin@corp.example
+```
+
+紧急登录需要允许的来源地址、密码和新的验证器动态码；每个码只能用一次。普通密码表单拒绝已登记的管理员。每次 SSO 与紧急登录尝试都记入审计，超过 365 天的记录会被删除。
+
 <a id="understand-the-implementation"></a>
 ## 了解实现
 
@@ -85,9 +100,10 @@ sudo -u dsh-identity node …/invite-cli.js --config /etc/dsh-public/identity.js
 - 账户页面是服务器渲染的 HTML，而不是 React 打包产物，不改动 Harness UI。
 - 所有服务都尚未在真实账号上运行过。测试模拟服务商 HTTP，并使用本地 TLS SMTP 中继。签名代码与服务商公布的已知答案示例一致。真实 API 响应、组件 SDK 和 CSP 来源列表仍需在真实主机上验证。
 - 使用 `none` 时，如果 Better Auth 为避免泄露账户存在而对已注册邮箱返回成功，用该邮箱注册可能会消耗一个邀请码。
+- OIDC 只在本地 mock IdP 上运行过，Keycloak、Authing 或 Azure AD 仍需在真实主机上检查。群组成员资格在登录时检查，因此把用户移出群组会阻止新会话，但不会结束已有会话。启用 SSO 之前通过公开注册创建的账户在 SSO 模式下不能用密码登录。
 - `node:sqlite` 在 Node 22 中仍标记为实验特性，启动时会打印警告。
 
 <a id="dev-note"></a>
 ## 开发说明
 
-`registration.spec.ts` 在临时 socket 上运行真实服务。`providers.spec.ts` 覆盖模拟的阿里云、腾讯云和 Turnstile 调用、失败即拒绝的解析、超时和页面 CSP。`signing.spec.ts` 包含签名已知答案测试。`smtp.spec.ts` 使用带临时证书的本地 TLS 和 STARTTLS 中继，`invite.spec.ts` 覆盖单次使用、过期、吊销、并发和 CLI。当 `PUBLIC_HARNESS_E2E_BROWSER` 指向 Chrome 可执行文件时，`registration.e2e.ts` 用真实 Chrome 完成注册、验证、登录、进入 Harness 和退出登录。`widgets.e2e.ts` 在 Chrome 中用拦截的 SDK 桩运行每个组件的前端逻辑。
+`registration.spec.ts` 在临时 socket 上运行真实服务。`providers.spec.ts` 覆盖模拟的阿里云、腾讯云和 Turnstile 调用、失败即拒绝的解析、超时和页面 CSP。`signing.spec.ts` 包含签名已知答案测试。`smtp.spec.ts` 使用带临时证书的本地 TLS 和 STARTTLS 中继，`invite.spec.ts` 覆盖单次使用、过期、吊销、并发和 CLI。当 `PUBLIC_HARNESS_E2E_BROWSER` 指向 Chrome 可执行文件时，`registration.e2e.ts` 用真实 Chrome 完成注册、验证、登录、进入 Harness 和退出登录。`widgets.e2e.ts` 在 Chrome 中用拦截的 SDK 桩运行每个组件的前端逻辑。`sso-config`、`sso-store`、`totp`、`jwt`、`oidc`、`sso-flow` 和 `emergency` 测试针对 127.0.0.1 上使用临时密钥的 mock IdP（`mock-oidc.ts`）覆盖企业 SSO，`sso.e2e.ts` 用 Chrome 走完企业登录。

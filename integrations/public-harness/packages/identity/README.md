@@ -1,5 +1,5 @@
 ---
-description: "Better Auth registration, verified email sessions and account pages for native public Harness, with pluggable mainland-China-ready CAPTCHA and mail providers, invite-only mode and a private session socket for the router."
+description: "Better Auth registration, verified email sessions and account pages for native public Harness, with pluggable mainland-China-ready CAPTCHA and mail providers, invite-only mode, enterprise OIDC sign-in with an administrator emergency path, and a private session socket for the router."
 kind: "package-library"
 ---
 
@@ -62,6 +62,21 @@ sudo -u dsh-identity node …/invite-cli.js --config /etc/dsh-public/identity.js
 
 The proxy forwards `/api/auth/*` and `/account/*` to `publicSocket` and never exposes `sessionSocket`. The router selects this mode with `identity.kind: better-auth` in its production file; see [router native identity](../router/src/native-identity.ts).
 
+### Enterprise SSO
+
+`DSH_SSO_PROVIDER=oidc` turns on enterprise sign-in for a single-enterprise deployment; unset or `off` changes nothing. `DSH_OIDC_ISSUER` (HTTPS), `DSH_OIDC_CLIENT_ID`, `DSH_OIDC_CLIENT_SECRET` and a non-empty `DSH_SSO_ALLOWED_GROUPS` are required. `DSH_OIDC_SCOPES` (default `openid email profile`), `DSH_OIDC_GROUP_CLAIMS` (default `groups`, comma-separated claim names) and `DSH_OIDC_TIMEOUT_MS` are optional. Register `<publicOrigin>/api/auth/sso/callback` at the IdP as the redirect URI of a confidential client. The login page then shows "Sign in with your company account". The first sign-in of a member of an allowed group creates an account with a verified email, bound to the IdP `sub`; later sign-ins find it by that binding only. An email already held by another account refuses the sign-in instead of merging. Public sign-up is closed. With `DSH_CAPTCHA_PROVIDER=none`, invited contractors still register and sign in with a password, but their accounts can never be bound to an enterprise subject. Sign-out ends only the Harness session. See the [design](../../../../docs/superpowers/specs/2026-10-13-enterprise-sso-design.md) and the [plan](../../../../docs/superpowers/plans/2026-10-13-enterprise-sso.md).
+
+`DSH_SSO_EMERGENCY_ALLOWED_IPS` (IPs or CIDR prefixes) enables `/account/emergency` for administrators when the IdP is down. Enrollment needs an existing password account with a verified email, for example an invited one, and prints a TOTP URI once:
+
+```sh
+sudo -u dsh-identity node /opt/dsh-public/integration/packages/identity/lib/emergency-cli.js --config /etc/dsh-public/identity.json enroll --email admin@corp.example
+sudo -u dsh-identity node …/emergency-cli.js --config /etc/dsh-public/identity.json list
+sudo -u dsh-identity node …/emergency-cli.js --config /etc/dsh-public/identity.json audit --days 30
+sudo -u dsh-identity node …/emergency-cli.js --config /etc/dsh-public/identity.json revoke --email admin@corp.example
+```
+
+An emergency sign-in needs an allowed source address, the password and a fresh authenticator code; each code works once. The ordinary password form refuses enrolled administrators. Every SSO and emergency attempt is audited, and rows older than 365 days are deleted.
+
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 
@@ -85,9 +100,10 @@ See the [native deployment design](../../../../docs/superpowers/specs/2026-10-11
 - Account pages are server-rendered HTML rather than a React bundle. They contribute no Harness UI changes.
 - No provider has been exercised against a real account. Tests mock provider HTTP and use a local TLS SMTP relay. The signing code matches the providers' published known-answer examples. The live API responses, the widget SDKs and the CSP source lists still need verification on a real host.
 - With `none`, signing up with an already registered email address can consume an invite if Better Auth answers success to avoid revealing the account.
+- OIDC has been exercised only against the local mock IdP. Keycloak, Authing or Azure AD still need a real-host check. Group membership is checked at sign-in, so removing a user from a group stops new sessions but not a live one. Accounts created by public registration before SSO was enabled cannot sign in with a password in SSO mode.
 - `node:sqlite` is still marked experimental in Node 22 and prints a warning at startup.
 
 <a id="dev-note"></a>
 ## Dev Note
 
-`registration.spec.ts` runs the real service on temporary sockets. `providers.spec.ts` covers mocked Alibaba Cloud, Tencent Cloud and Turnstile calls, fail-closed parsing, timeouts and the page CSP. `signing.spec.ts` holds the signature known-answer tests. `smtp.spec.ts` uses a local TLS and STARTTLS relay with a throwaway certificate, and `invite.spec.ts` covers single use, expiry, revocation, concurrency and the CLI. When `PUBLIC_HARNESS_E2E_BROWSER` names a Chrome executable, `registration.e2e.ts` drives a real Chrome through register, verify, sign-in, Harness entry and sign-out. `widgets.e2e.ts` runs each widget's glue in Chrome against intercepted SDK stubs.
+`registration.spec.ts` runs the real service on temporary sockets. `providers.spec.ts` covers mocked Alibaba Cloud, Tencent Cloud and Turnstile calls, fail-closed parsing, timeouts and the page CSP. `signing.spec.ts` holds the signature known-answer tests. `smtp.spec.ts` uses a local TLS and STARTTLS relay with a throwaway certificate, and `invite.spec.ts` covers single use, expiry, revocation, concurrency and the CLI. When `PUBLIC_HARNESS_E2E_BROWSER` names a Chrome executable, `registration.e2e.ts` drives a real Chrome through register, verify, sign-in, Harness entry and sign-out. `widgets.e2e.ts` runs each widget's glue in Chrome against intercepted SDK stubs. `sso-config`, `sso-store`, `totp`, `jwt`, `oidc`, `sso-flow` and `emergency` specs cover enterprise SSO against a 127.0.0.1 mock IdP with throwaway keys (`mock-oidc.ts`), and `sso.e2e.ts` drives Chrome through the company sign-in.

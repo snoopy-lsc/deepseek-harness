@@ -3,8 +3,8 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write integrations/public-harness/packages/identity/README.md
 /:
-  en: 658ab96dac7d5b2a
-  zh: b13fb8790daebdba
+  en: 705a14008202e097
+  zh: c322c5260a817c9d
 /public-harness-identity:
   en: 82aab96ae1a3cb6c
   zh: 494f7d4f3a760236
@@ -21,8 +21,11 @@
   en: 766d9cb4f77d65a8
   zh: eced2bb81d81b51c
 /public-harness-identity/use-this-package/invite-only-registration:
-  en: 3f7b76dae4e98f5c
-  zh: e134771780500af2
+  en: c415ddb48ffcb36d
+  zh: 754a80bbe7bd4d99
+/public-harness-identity/use-this-package/enterprise-sso:
+  en: ebd88be5daf6d1c0
+  zh: d1251dc704c871cf
 /public-harness-identity/understand-the-implementation:
   en: 9ca273ce3bb588f4
   zh: fd09eb7b6847c825
@@ -30,8 +33,8 @@
   en: eb11d4045a131239
   zh: 7bcd3fd5985ac3be
 /public-harness-identity/known-limitations-and-deferred-work:
-  en: a0f8316cdd471e5a
-  zh: 6aa4bfb74fc2db4f
+  en: 85800f68c294e64e
+  zh: 05fd9e51cfca5d56
 /public-harness-identity/dev-note:
-  en: 90ec244437cc8965
-  zh: 1ed7bc8f2ce7898a
+  en: 790aa2118b3552ce
+  zh: 6e35017f4fcdcbb0
