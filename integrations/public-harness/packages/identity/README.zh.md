@@ -99,6 +99,8 @@ sudo -u dsh-identity node …/emergency-cli.js --config /etc/dsh-public/identity
 
 `DSH_ADMIN_EMAILS` 以逗号分隔列出管理员地址；紧急账户同样是管理员。任何格式错误的条目都会使服务拒绝启动。`GET /account/api/me` 返回当前登录用户的 `{ id, email, name, role }`，`role` 为 `admin` 或 `member`；Harness Web 读取它来显示系统管理入口，管理 API 在服务端重新校验角色。
 
+Harness Web 的个人中心使用 `/account/api/me/*`：`GET /security`（登录方式、能否修改密码、SSO 绑定）、`GET /sessions`（当前用户的会话，不含令牌）、`POST /sessions/revoke`，请求体 `{ id }`（退出另一个会话）、`POST /sessions/revoke-others`、`POST /password`，请求体 `{ currentPassword, newPassword }`（仅限密码账户与紧急账户；以当前密码重新认证；修改后其他会话退出），以及 `GET /usage`（用户自己的账本用量；部署未向 `startIdentity` 传入 `usage` 来源时返回 404）。所有接口都需要有效会话；写操作需要配置的 Origin 和 `content-type: application/json`，修改密码与撤销会话都会写入审计记录。
+
 紧急登录需要允许的来源地址、密码和新的验证器动态码；每个码只能用一次。普通密码表单拒绝已登记的管理员。每次 SSO 与紧急登录尝试都记入审计，超过 365 天的记录会被删除。
 
 <a id="understand-the-implementation"></a>

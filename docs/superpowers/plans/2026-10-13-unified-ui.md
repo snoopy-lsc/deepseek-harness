@@ -84,15 +84,17 @@ English | [中文](2026-10-13-unified-ui.zh.md)
 
 ### Task 2.1: Account and sessions
 
-- [ ] Personal panel renders account facts, sign-in method and role with Harness settings rows; session list and "sign out other sessions" call identity APIs.
+- [x] Personal panel renders account facts, sign-in method and role with Harness settings rows; session list and "sign out other sessions" call identity APIs.
+- [x] Endpoints under `/account/api/me`: `GET /security` (sign-in method, password-change eligibility, SSO bindings), `GET /sessions` (no tokens), `POST /sessions/revoke` (one other session), `POST /sessions/revoke-others`, `POST /password` (current password as re-authentication; password and emergency accounts only; other sessions are signed out). Every request needs a live session; writes need the configured Origin and a JSON body; password changes and revocations are audited.
 
 ### Task 2.2: Usage and quota
 
-- [ ] Read-only usage from the quota ledger through a per-user endpoint; show daily allowance and today's use.
+- [x] Read-only usage from the quota ledger through a per-user endpoint; show daily allowance and today's use.
+- [ ] Production bridge from the identity service to the quota ledger (today the deployment passes a usage source to `startIdentity`; the team-dev stack does).
 
 ### Task 2.3: Preferences
 
-- [ ] Link the existing Harness settings for appearance and language; no duplicated settings state.
+- [x] Link the existing Harness settings for appearance and language; no duplicated settings state (the page runs Harness's own `settings.open` command).
 
 ## Phase 3: Administration
 

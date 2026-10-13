@@ -99,6 +99,8 @@ sudo -u dsh-identity node …/emergency-cli.js --config /etc/dsh-public/identity
 
 `DSH_ADMIN_EMAILS` lists administrator addresses, comma-separated; emergency accounts are administrators as well. A malformed entry refuses startup. `GET /account/api/me` answers the signed-in user's `{ id, email, name, role }` with `role` `admin` or `member`; Harness Web reads it to show the administration entry, and administrator APIs re-check the role on the server.
 
+The personal center in Harness Web uses `/account/api/me/*`: `GET /security` (sign-in method, whether the password can be changed, SSO bindings), `GET /sessions` (the user's sessions without tokens), `POST /sessions/revoke` with `{ id }` (another session), `POST /sessions/revoke-others`, `POST /password` with `{ currentPassword, newPassword }` (password and emergency accounts only; the current password re-authenticates; other sessions are signed out) and `GET /usage` (the user's own ledger usage, 404 unless the deployment passes a `usage` source to `startIdentity`). All of them need a live session; writes need the configured Origin and `content-type: application/json`, and password changes and revocations write audit rows.
+
 An emergency sign-in needs an allowed source address, the password and a fresh authenticator code; each code works once. The ordinary password form refuses enrolled administrators. Every SSO and emergency attempt is audited, and rows older than 365 days are deleted.
 
 <a id="understand-the-implementation"></a>
