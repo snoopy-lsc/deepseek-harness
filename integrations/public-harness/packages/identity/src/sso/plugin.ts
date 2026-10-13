@@ -62,7 +62,8 @@ export function ssoPlugin(deps: SsoPluginDeps) {
         const query = ctx.query as Record<string, unknown> | undefined
         const state = typeof query?.state === 'string' ? query.state : ''
         if (typeof query?.error === 'string') { if (state) store.takeState(state, browser, clock()); throw fail('idp') }
-        const code = typeof query?.code === 'string' ? query.code : ''
+        // DingTalk returns the code as `authCode`; every other provider uses `code`.
+        const code = typeof query?.code === 'string' ? query.code : typeof query?.authCode === 'string' ? query.authCode : ''
         const saved = state && browser && code ? store.takeState(state, browser, clock()) : undefined
         if (saved === undefined) throw fail('state')
         let identity

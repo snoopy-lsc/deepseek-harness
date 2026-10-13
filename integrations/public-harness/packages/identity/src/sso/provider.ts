@@ -1,4 +1,4 @@
-/** Provider-neutral enterprise sign-in port; OIDC and WeCom implement it, DingTalk, SAML and LDAP follow. */
+/** Provider-neutral enterprise sign-in port; OIDC, WeCom and DingTalk implement it; SAML and LDAP follow. */
 
 /** A verified enterprise identity. `subject` is stable per provider and is the only binding key; email is never used to find an account. */
 export interface SsoIdentity {
@@ -11,7 +11,7 @@ export interface SsoIdentity {
 
 /** Browser-redirect sign-in. `begin` returns the IdP URL and per-attempt secrets the caller stores; `finish` verifies the callback. */
 export interface SsoProvider {
-  readonly kind: 'oidc' | 'wecom'
+  readonly kind: 'oidc' | 'wecom' | 'dingtalk'
   /** Build the authorization redirect.
    * @param input Absolute callback URL registered at the IdP.
    * @returns The IdP URL and the state, nonce and PKCE verifier to store until the callback.

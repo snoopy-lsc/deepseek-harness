@@ -13,6 +13,7 @@ import { createCaptchaProvider, type CaptchaProvider } from './captcha.ts'
 import { createMailTransport } from './mail.ts'
 import type { MailTransport } from './transports.ts'
 import { createOidcProvider } from './sso/oidc.ts'
+import { createDingtalkProvider } from './sso/dingtalk.ts'
 import { createWecomProvider } from './sso/wecom.ts'
 import type { SsoProvider } from './sso/provider.ts'
 
@@ -32,7 +33,8 @@ export async function startIdentity(config: IdentityConfig, overrides: { mail?: 
   const database = await openIdentityDatabase(config.databaseFile)
   const servers: Server[] = []
   try {
-    const sso = overrides.sso ?? (config.sso.kind === 'oidc' ? createOidcProvider(config.sso) : config.sso.kind === 'wecom' ? createWecomProvider(config.sso) : undefined)
+    const sso = overrides.sso ?? (config.sso.kind === 'oidc' ? createOidcProvider(config.sso) : config.sso.kind === 'wecom' ? createWecomProvider(config.sso)
+      : config.sso.kind === 'dingtalk' ? createDingtalkProvider(config.sso) : undefined)
     const serviceSecret = await readSecret(config.secretFile)
     const auth = await createAuth(config, database, serviceSecret, overrides.mail ?? createMailTransport(config.mail), sso, overrides.clock)
     const captcha = overrides.captcha ?? createCaptchaProvider(config.captcha)
