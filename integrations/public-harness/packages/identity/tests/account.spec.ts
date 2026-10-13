@@ -12,6 +12,15 @@ describe('account pages', () => {
     }
   })
 
+  it('password_and_emergency_sign_in_land_in_the_users_own_chat', () => {
+    const page = renderPage('zh', 'login', 'n0nce')
+    expect(page).not.toContain("location.assign('/account/?return=")
+    expect(page).not.toContain("location.assign('/account/')}")
+    expect(page).toContain("location.assign(home(r))")
+    // Only the account page or the user's own route are accepted from `return`; everything else falls back to the chat.
+    expect(page).toContain("w==='/account/'||w===own?w:own")
+  })
+
   it('account_copy_is_localized', () => {
     const zh = renderPage('zh', 'login', 'n0nce'), en = renderPage('en', 'login', 'n0nce')
     expect(zh).toContain('lang="zh-CN"')

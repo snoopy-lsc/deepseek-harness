@@ -147,6 +147,8 @@ export function contentSecurityPolicy(nonce: string, captcha: PageCaptcha): stri
 const SCRIPT = `
 const L=JSON.parse(document.getElementById('copy').textContent),C=JSON.parse(document.getElementById('captcha').textContent),out=document.querySelector('[role=alert]');
 const say=(m)=>{out.textContent=m};
+// After sign-in everyone goes straight to their own chat; the return parameter may only name the account page or that same route.
+const home=(r)=>{const id=r&&r.user&&r.user.id;if(typeof id!=='string'||!/^[A-Za-z0-9_-]+$/.test(id))return '/account/';const own='/u/'+id+'/',w=new URLSearchParams(location.search).get('return')||'';return w==='/account/'||w===own?w:own}
 async function call(path,body,extra){const r=await fetch('/api/auth'+path,{method:body===undefined?'GET':'POST',headers:{'content-type':'application/json',...extra},body:body===undefined?undefined:JSON.stringify(body),credentials:'same-origin'});
  let j=null;try{j=await r.json()}catch{} if(r.status===503)throw new Error(L.unavailable); if(!r.ok)throw new Error(L.failed+((j&&(j.code||j.message))||r.status)); return j}
 let tok='';const mark=(ok)=>{for(const s of document.querySelectorAll('[data-captcha-state]'))s.textContent=ok?L.captchaDone:''};
@@ -168,9 +170,9 @@ for(const f of document.querySelectorAll('form'))f.addEventListener('submit',asy
   else if(a==='ldap'){const r=await fetch('/api/auth/sso/ldap/sign-in',{method:'POST',headers:{'content-type':'application/json'},credentials:'same-origin',body:JSON.stringify({username:d.username,password:d.password,return:new URLSearchParams(location.search).get('return')||''})});
    let j=null;try{j=await r.json()}catch{} if(r.ok&&j&&j.redirect){location.assign(j.redirect);return}
    const c=j&&j.code;say(r.status===503?L.unavailable:r.status===429||c==='locked'?L.ldapLocked:c==='group'?L.ssoGroup:c==='email-in-use'?L.ssoEmailInUse:L.ldapFailed)}
-  else if(a==='login'){const r=await call('/sign-in/email',{email:d.email,password:d.password});location.assign('/account/?return='+encodeURIComponent(new URLSearchParams(location.search).get('return')||''))}
+  else if(a==='login'){const r=await call('/sign-in/email',{email:d.email,password:d.password});location.assign(home(r))}
   else if(a==='reset-request'){const h=gate(f,d);used=true;await call('/request-password-reset',{email:d.email,redirectTo:'/account/reset'},h);say(L.resetSent)}
-  else if(a==='emergency'){await call('/emergency/sign-in',{email:d.email,password:d.password,code:String(d.code).trim()});location.assign('/account/')}
+  else if(a==='emergency'){const r=await call('/emergency/sign-in',{email:d.email,password:d.password,code:String(d.code).trim()});location.assign(home(r))}
   else if(a==='reset'){await call('/reset-password',{newPassword:d.newPassword,token:new URLSearchParams(location.search).get('token')});say(L.resetDone)}
  }catch(err){say(err.message)}finally{b.disabled=false;if(used)resetHuman()}});
 const sso=document.querySelector('[data-sso-start]');if(sso){const r=new URLSearchParams(location.search).get('return');if(r)sso.href='/api/auth/sso/start?return='+encodeURIComponent(r)}
