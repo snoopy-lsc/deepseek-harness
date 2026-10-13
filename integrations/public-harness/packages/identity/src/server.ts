@@ -144,6 +144,8 @@ export function publicHandler(deps: PublicDeps): (req: IncomingMessage, res: Ser
       if (route === '/sign-up/email') {
         // SSO mode: employees arrive through the IdP; only invited contractors may register (decision D3).
         if (sso && !deps.captcha.invites) throw new HttpError(403, 'sso-only')
+        // `.invalid` (RFC 2606) is reserved for SSO placeholder addresses; registering one could block the employee it stands for.
+        if (jsonEmail(body).endsWith('.invalid')) throw new HttpError(400, 'email')
         if (deps.captcha.invites) {
           // Invite-only mode: registration is never public; each operator-minted code admits exactly one account.
           const email = jsonEmail(body)
