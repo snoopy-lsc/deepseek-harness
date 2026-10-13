@@ -4,20 +4,25 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
-import { loadProfile, type AccountProfile } from './me.ts'
-import { ADMIN_PANEL, AdminIcon, AdminPage, PROFILE_PANEL, ProfileIcon, ProfilePage, navDictionaries } from './nav.tsx'
+import { createAccountApi, loadProfile, type AccountApi, type AccountProfile } from './me.ts'
+import { PersonalCenter, personalDictionaries } from './personal.tsx'
+import { ADMIN_PANEL, AdminIcon, AdminPage, PROFILE_PANEL, ProfileIcon, navDictionaries } from './nav.tsx'
 
 const NS = 'publicHarnessNav'
+/** The one call used from Harness's shortcut registry (`@deepseek-ai/dsh-client-shortcuts`): run a registered command as a menu selection. */
+interface CommandInvoker { invoke(id: string, context: { region: 'page'; modal: null; target: null }): void }
 
 /** Register one profile's entries; the administration entry exists only for the server-decided `admin` role.
  * @param ctx - browser root carrying slots and locale.
  * @param profile - the signed-in profile.
  * @returns disposers for every registration.
  */
-export function registerEntries(ctx: Context, profile: AccountProfile): Array<() => void> {
+export function registerEntries(ctx: Context, profile: AccountProfile, api: AccountApi = createAccountApi()): Array<() => void> {
   const t = ctx.locale.bind(NS)
+  // Appearance and language live in the Harness settings dialog; its own command opens it, so no settings UI is duplicated here.
+  const openSettings = () => { (ctx.get('shortcuts') as CommandInvoker | undefined)?.invoke('settings.open', { region: 'page', modal: null, target: null }) }
   const off = [
-    ctx.slots.register({ name: 'main', key: PROFILE_PANEL, locale: NS, inject: () => ({ profile }) }, ProfilePage),
+    ctx.slots.register({ name: 'main', key: PROFILE_PANEL, locale: 'publicHarnessPersonal', inject: () => ({ profile, api, openSettings }) }, PersonalCenter),
     ctx.slots.register({ name: 'sidebar.panellist', id: PROFILE_PANEL, order: 80, locale: NS, label: () => t('profile') }, ProfileIcon),
   ]
   if (profile.role === 'admin') off.push(
@@ -33,6 +38,7 @@ export function registerEntries(ctx: Context, profile: AccountProfile): Array<()
  */
 export function installShell(ctx: Context, load: () => Promise<AccountProfile | undefined> = loadProfile): Promise<void> {
   ctx.effect(() => ctx.locale.register(NS, navDictionaries), 'public-harness: navigation copy')
+  ctx.effect(() => ctx.locale.register('publicHarnessPersonal', personalDictionaries), 'public-harness: personal center copy')
   let off: Array<() => void> = [], live = true
   ctx.effect(() => () => { live = false; for (const dispose of off) dispose(); off = [] }, 'public-harness: navigation entries')
   return load().then(profile => { if (live && profile !== undefined) off = registerEntries(ctx, profile) })

@@ -23,3 +23,73 @@ export async function loadProfile(fetcher?: typeof fetch): Promise<AccountProfil
     return { id: body.id, email: body.email, name: body.name, role: body.role }
   } catch { return undefined }
 }
+
+/** How the account signs in: `password`, `emergency`, or an SSO provider kind. */
+export interface AccountSecurity {
+  readonly provider: string
+  readonly passwordChange: boolean
+  readonly bindings: ReadonlyArray<{ readonly provider: string; readonly subject: string; readonly createdAt: number; readonly lastLoginAt: number | null }>
+}
+/** One sign-in session; tokens never reach the browser. */
+export interface AccountSession {
+  readonly id: string
+  readonly current: boolean
+  readonly createdAt: number
+  readonly lastActiveAt: number
+  readonly expiresAt: number
+  readonly ipAddress: string | null
+  readonly userAgent: string | null
+}
+/** The user's own token use from the quota ledger. */
+export interface AccountUsage {
+  readonly day: string
+  readonly usedTokens: number
+  readonly limitTokens: number
+  readonly resetAt: string
+  readonly history: ReadonlyArray<{ readonly day: string; readonly tokens: number }>
+}
+
+/** A refused personal center request, carrying the server's stable code. */
+export class AccountApiError extends Error { constructor(readonly status: number, readonly code: string) { super(code) } }
+
+/** Personal center calls against the identity service. */
+export interface AccountApi {
+  security(): Promise<AccountSecurity>
+  sessions(): Promise<readonly AccountSession[]>
+  /** Undefined when this deployment does not expose usage. */
+  usage(): Promise<AccountUsage | undefined>
+  revoke(id: string): Promise<void>
+  /** @returns How many sessions were ended. */
+  revokeOthers(): Promise<number>
+  changePassword(currentPassword: string, newPassword: string): Promise<void>
+}
+
+/** Create the client; reads are same-origin GETs, writes same-origin JSON POSTs (the server also checks Origin).
+ * @param fetcher - `fetch`, injectable for tests.
+ * @returns The client.
+ */
+export function createAccountApi(fetcher?: typeof fetch): AccountApi {
+  const request = async (path: string, body?: unknown): Promise<unknown> => {
+    const init: RequestInit = body === undefined
+      ? { credentials: 'same-origin', headers: { accept: 'application/json' } }
+      : { method: 'POST', credentials: 'same-origin', headers: { accept: 'application/json', 'content-type': 'application/json' }, body: JSON.stringify(body) }
+    const reply = await (fetcher ?? globalThis.fetch)(`${ME_PATH}${path}`, init)
+    let parsed: unknown
+    try { parsed = await reply.json() } catch { parsed = undefined }
+    if (!reply.ok) {
+      const code = (parsed as { code?: unknown } | undefined)?.code
+      throw new AccountApiError(reply.status, typeof code === 'string' ? code : String(reply.status))
+    }
+    return parsed
+  }
+  return {
+    security: async () => await request('/security') as AccountSecurity,
+    sessions: async () => (await request('/sessions') as { sessions: AccountSession[] }).sessions,
+    usage: async () => {
+      try { return await request('/usage') as AccountUsage } catch (error) { if (error instanceof AccountApiError && error.status === 404) return undefined; throw error }
+    },
+    revoke: async id => { await request('/sessions/revoke', { id }) },
+    revokeOthers: async () => (await request('/sessions/revoke-others', {}) as { revoked: number }).revoked,
+    changePassword: async (currentPassword, newPassword) => { await request('/password', { currentPassword, newPassword }) },
+  }
+}

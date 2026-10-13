@@ -1,12 +1,15 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
-vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({ Button: 'Button', Tag: 'Tag', IconUserOutlineRegular: 'IconUser', IconShieldOutlineRegular: 'IconShield' }))
+vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({ Button: 'Button', Tag: 'Tag', Input: 'Input', IconUserOutlineRegular: 'IconUser', IconShieldOutlineRegular: 'IconShield',
+  IconBrowseOutlineRegular: 'I', IconGaugeOutlineRegular: 'I', IconLinkOutlineRegular: 'I', IconSlidersTwoOutlineRegular: 'I' }))
 import { loadProfile } from '../src/client/me.ts'
 import { installShell } from '../src/client/shell.ts'
 
 function fakeContext() {
   const live = new Map<string, unknown>(), disposers: Array<() => void> = []
+  const invoked: string[] = []
   const ctx = {
+    get: (name: string) => name === 'shortcuts' ? { invoke: (id: string) => { invoked.push(id) } } : undefined,
     effect(fn: () => () => void) { disposers.push(fn()) },
     locale: { register: () => () => undefined, bind: () => (key: string) => key },
     slots: { register(options: { name: string; key?: string; id?: string }) {
@@ -14,7 +17,7 @@ function fakeContext() {
       live.set(cell, options); return () => { live.delete(cell) }
     } },
   }
-  return { ctx: ctx as unknown as Context, live, dispose: () => { for (const fn of disposers) fn() } }
+  return { ctx: ctx as unknown as Context, live, invoked, dispose: () => { for (const fn of disposers) fn() } }
 }
 const profile = (role: 'admin' | 'member') => ({ id: 'u1', email: 'a@example.test', name: 'A', role })
 
@@ -28,6 +31,15 @@ describe('unified shell entries', () => {
     expect([...admin.live.keys()].sort()).toEqual(['main:team.admin', 'main:team.profile', 'sidebar.panellist:team.admin', 'sidebar.panellist:team.profile'])
     admin.dispose()
     expect(admin.live.size).toBe(0)
+  })
+
+  it('personal_center_gets_the_account_client_and_opens_the_harness_settings_dialog', async () => {
+    const shell = fakeContext()
+    await installShell(shell.ctx, async () => profile('member'))
+    const injected = (shell.live.get('main:team.profile') as { inject: () => { api: object; openSettings: () => void } }).inject()
+    expect(Object.keys(injected.api).sort()).toEqual(['changePassword', 'revoke', 'revokeOthers', 'security', 'sessions', 'usage'])
+    injected.openSettings()
+    expect(shell.invoked).toEqual(['settings.open'])
   })
 
   it('no_profile_or_a_late_answer_registers_nothing', async () => {

@@ -29,6 +29,8 @@ describe('installed team browser plugin', () => {
     expect(plugin?.id).toBe('@public-harness/ui')
     const client = plugin!.factory(name => {
       if (name === 'react/jsx-runtime') return { jsx: (type: string, props: object) => ({ type, props }) }
+      // The personal center uses hooks; the host shares one React with every plugin.
+      if (name === 'react') return { useState: () => [], useEffect: () => undefined, useCallback: (fn: unknown) => fn }
       if (name === '@deepseek-ai/dsh-client-ui-primitives') return { Toast: 'Toast' }
       throw new Error(`unexpected browser dependency: ${name}`)
     })
