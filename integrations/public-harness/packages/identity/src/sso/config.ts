@@ -1,6 +1,6 @@
 /** Enterprise SSO settings, read only from the service environment and refused at startup when incomplete. */
-import { X509Certificate } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { createPrivateKey, createPublicKey, X509Certificate } from 'node:crypto'
+import { lstatSync, readFileSync } from 'node:fs'
 import { IdentityConfigError } from '../config.ts'
 import { validIpEntry } from './ip.ts'
 
@@ -21,7 +21,11 @@ export type SsoConfig =
     readonly idpCerts: readonly string[]; readonly nameIdFormat: string
     readonly groupAttribute: string; readonly emailAttribute: string; readonly nameAttribute: string
     /** Require the Assertion itself to be signed; otherwise a signed Response or a signed Assertion is enough. */
-    readonly wantAssertionsSigned: boolean; readonly clockSkewMs: number; readonly allowedGroups: readonly string[] }
+    readonly wantAssertionsSigned: boolean; readonly clockSkewMs: number; readonly allowedGroups: readonly string[]
+    /** Present when the IdP requires signed AuthnRequests: the SP signing key and its certificate (PEM), published in SP metadata. */
+    readonly signing?: SpKeyPair
+    /** Present when the IdP encrypts assertions: the SP decryption key and certificate (PEM); plain assertions are then refused. */
+    readonly decryption?: SpKeyPair }
   | { readonly kind: 'ldap'; readonly url: string; readonly startTls: boolean
     /** PEM CA bundle pinned from `DSH_LDAP_CA_FILE`; absent means the system store. */
     readonly ca?: string; readonly bindDn: string; readonly bindPassword: string; readonly baseDn: string; readonly userFilter: string
@@ -33,6 +37,9 @@ export type SsoConfig =
     readonly serverId: string
     /** Normalized group DNs (see `normalizeDn`), separated by `;` in `DSH_SSO_ALLOWED_GROUPS` because DNs contain commas. */
     readonly allowedGroups: readonly string[]; readonly timeoutMs: number }
+/** An SP private key (PEM) with the certificate that carries its public key. */
+export interface SpKeyPair { readonly key: string; readonly cert: string }
+
 /** Administrator emergency password path; enabled only by a source-address allow-list. */
 export type EmergencyConfig = { readonly enabled: false } | { readonly enabled: true; readonly allowedIps: readonly string[] }
 
@@ -72,6 +79,49 @@ export function parseSsoEnv(env: Readonly<Record<string, string | undefined>>, m
     if ((url.protocol !== 'https:' && !loopbackHttp) || url.search || url.hash || url.username || url.password || raw.includes('?') || raw.includes('#')
       || (!allowPath && url.pathname !== '/')) throw new IdentityConfigError(name)
     return allowPath ? url.href : url.origin
+  }
+  const certificates = (name: string, text: string) => {
+    const pems = text.match(/-----BEGIN CERTIFICATE-----[A-Za-z0-9+/=\s]+?-----END CERTIFICATE-----/g) ?? []
+    if (!pems.length || /PRIVATE KEY/.test(text)) throw new IdentityConfigError(name)
+    for (const pem of pems) { try { new X509Certificate(pem) } catch { throw new IdentityConfigError(name) } }
+    return pems
+  }
+  /** A private key file must be a regular file (no symlink) owned by the service user and closed to group and others. */
+  const privateFile = (name: string) => {
+    const file = need(name)
+    let text: string
+    try {
+      const info = lstatSync(file)
+      if (!info.isFile() || (info.mode & 0o077) !== 0 || (process.getuid !== undefined && info.uid !== process.getuid())) throw new Error('mode')
+      text = readFileSync(file, 'utf8')
+    } catch { throw new IdentityConfigError(name) }
+    return text
+  }
+  /** Load an RSA key and the certificate that matches it; either may come from `<NAME>_FILE`, or (signing only) from `<NAME>` itself. */
+  const keyPair = (keyName: string, certName: string, envAllowed: boolean): SpKeyPair => {
+    const has = (name: string) => env[name] !== undefined && env[name] !== ''
+    if (!envAllowed && has(keyName)) throw new IdentityConfigError(keyName)
+    if (has(keyName) && has(`${keyName}_FILE`)) throw new IdentityConfigError(keyName)
+    if (has(certName) && has(`${certName}_FILE`)) throw new IdentityConfigError(certName)
+    const keyText = has(`${keyName}_FILE`) ? privateFile(`${keyName}_FILE`) : envAllowed && has(keyName) ? env[keyName]! : undefined
+    if (keyText === undefined) throw new IdentityConfigError(envAllowed ? keyName : `${keyName}_FILE`)
+    const keyVar = has(`${keyName}_FILE`) ? `${keyName}_FILE` : keyName
+    let key
+    try {
+      const pem = /-----BEGIN (?:RSA )?PRIVATE KEY-----[A-Za-z0-9+/=\s]+?-----END (?:RSA )?PRIVATE KEY-----/.exec(keyText)?.[0]
+      if (pem === undefined || /CERTIFICATE/.test(keyText)) throw new Error('pem')
+      key = createPrivateKey(pem)
+      if (key.asymmetricKeyType !== 'rsa' || (key.asymmetricKeyDetails?.modulusLength ?? 0) < 2048) throw new Error('rsa')
+    } catch { throw new IdentityConfigError(keyVar) }
+    let certText: string | undefined
+    const certVar = has(`${certName}_FILE`) ? `${certName}_FILE` : certName
+    if (has(`${certName}_FILE`)) { try { certText = readFileSync(need(`${certName}_FILE`), 'utf8') } catch { throw new IdentityConfigError(certVar) } }
+    else if (envAllowed && has(certName)) certText = env[certName]!
+    if (certText === undefined) throw new IdentityConfigError(envAllowed ? certName : `${certName}_FILE`)
+    const pems = certificates(certVar, certText)
+    // The certificate must carry this key's public half; a mismatch would publish metadata the IdP cannot use.
+    if (pems.length !== 1 || !new X509Certificate(pems[0]!).publicKey.equals(createPublicKey(key))) throw new IdentityConfigError(certVar)
+    return { key: key.export({ type: 'pkcs8', format: 'pem' }).toString(), cert: pems[0]! }
   }
   const kind = env.DSH_SSO_PROVIDER ?? 'off'
   let sso: SsoConfig
@@ -114,12 +164,18 @@ export function parseSsoEnv(env: Readonly<Record<string, string | undefined>>, m
       const file = need('DSH_SAML_IDP_CERT_FILE')
       let text: string
       try { text = readFileSync(file, 'utf8') } catch { throw new IdentityConfigError('DSH_SAML_IDP_CERT_FILE') }
-      const pems = text.match(/-----BEGIN CERTIFICATE-----[A-Za-z0-9+/=\s]+?-----END CERTIFICATE-----/g) ?? []
       // Only certificates: a private key or an empty file in this path is a configuration error, never silently ignored.
-      if (!pems.length || /PRIVATE KEY/.test(text)) throw new IdentityConfigError('DSH_SAML_IDP_CERT_FILE')
-      for (const pem of pems) { try { new X509Certificate(pem) } catch { throw new IdentityConfigError('DSH_SAML_IDP_CERT_FILE') } }
-      return pems
+      return certificates('DSH_SAML_IDP_CERT_FILE', text)
     })()
+    // Keys are loaded only when the IdP is declared to need them; a key without the declaration is an inconsistent deployment and refuses start.
+    const signRequests = optional('DSH_SAML_SIGN_REQUESTS', 'false', /^(true|false)$/) === 'true'
+    const encrypted = optional('DSH_SAML_ENCRYPTED_ASSERTIONS', 'false', /^(true|false)$/) === 'true'
+    const present = (...names: string[]) => names.some(name => env[name] !== undefined && env[name] !== '')
+    if (!signRequests && present('DSH_SAML_SP_SIGNING_KEY', 'DSH_SAML_SP_SIGNING_KEY_FILE', 'DSH_SAML_SP_SIGNING_CERT', 'DSH_SAML_SP_SIGNING_CERT_FILE')) throw new IdentityConfigError('DSH_SAML_SIGN_REQUESTS')
+    if (present('DSH_SAML_SP_DECRYPTION_KEY')) throw new IdentityConfigError('DSH_SAML_SP_DECRYPTION_KEY')
+    if (!encrypted && present('DSH_SAML_SP_DECRYPTION_KEY_FILE', 'DSH_SAML_SP_DECRYPTION_CERT_FILE')) throw new IdentityConfigError('DSH_SAML_ENCRYPTED_ASSERTIONS')
+    const signing = signRequests ? keyPair('DSH_SAML_SP_SIGNING_KEY', 'DSH_SAML_SP_SIGNING_CERT', true) : undefined
+    const decryption = encrypted ? keyPair('DSH_SAML_SP_DECRYPTION_KEY', 'DSH_SAML_SP_DECRYPTION_CERT', false) : undefined
     const format = optional('DSH_SAML_NAMEID_FORMAT', 'persistent', /^(persistent|emailAddress|unspecified)$/)
     const skew = Number(optional('DSH_SAML_CLOCK_SKEW_MS', '60000', /^[0-9]{1,6}$/))
     if (skew > 300_000) throw new IdentityConfigError('DSH_SAML_CLOCK_SKEW_MS')
@@ -129,7 +185,8 @@ export function parseSsoEnv(env: Readonly<Record<string, string | undefined>>, m
       nameIdFormat: format === 'unspecified' ? 'urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified' : format === 'emailAddress' ? 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress' : 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
       groupAttribute: attribute('DSH_SAML_GROUP_ATTRIBUTE', 'groups'), emailAttribute: attribute('DSH_SAML_EMAIL_ATTRIBUTE', 'email'), nameAttribute: attribute('DSH_SAML_NAME_ATTRIBUTE', 'displayName'),
       wantAssertionsSigned: optional('DSH_SAML_WANT_ASSERTIONS_SIGNED', 'false', /^(true|false)$/) === 'true', clockSkewMs: skew,
-      allowedGroups: list('DSH_SSO_ALLOWED_GROUPS', need('DSH_SSO_ALLOWED_GROUPS'), /^[^,\s](?:[^,]{0,254}[^,\s])?$/) }
+      allowedGroups: list('DSH_SSO_ALLOWED_GROUPS', need('DSH_SSO_ALLOWED_GROUPS'), /^[^,\s](?:[^,]{0,254}[^,\s])?$/),
+      ...signing === undefined ? {} : { signing }, ...decryption === undefined ? {} : { decryption } }
   } else if (kind === 'ldap') {
     let url: URL
     try { url = new URL(need('DSH_LDAP_URL')) } catch { throw new IdentityConfigError('DSH_LDAP_URL') }

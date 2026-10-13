@@ -46,6 +46,9 @@ export function createSamlProvider(config: SamlConfig, deps: { acsUrl: string; r
       idpCert: [...config.idpCerts], identifierFormat: config.nameIdFormat, wantAuthnResponseSigned: false, wantAssertionsSigned: config.wantAssertionsSigned,
       acceptedClockSkewMs: config.clockSkewMs, disableRequestedAuthnContext: true, validateInResponseTo: ValidateInResponseTo.always, cacheProvider,
       generateUniqueId: () => requestId ?? `_${randomBytes(20).toString('hex')}`,
+      // Signed AuthnRequests (HTTP-Redirect: SigAlg and Signature query parameters, saml-bindings-2.0-os §3.4.4.1), RSA-SHA256.
+      ...config.signing === undefined ? {} : { privateKey: config.signing.key, publicCert: config.signing.cert, signatureAlgorithm: 'sha256' as const },
+      ...config.decryption === undefined ? {} : { decryptionPvk: config.decryption.key },
     })
   }
   const reject = (code: string): never => { throw new SsoRejectedError(code) }
@@ -54,7 +57,7 @@ export function createSamlProvider(config: SamlConfig, deps: { acsUrl: string; r
     kind: 'saml',
     async begin() {
       const secrets = { state: randomBytes(32).toString('base64url'), nonce: `_${randomBytes(20).toString('hex')}`, verifier: randomBytes(32).toString('base64url') }
-      // HTTP-Redirect binding: deflated, unsigned AuthnRequest; RelayState carries the state the ACS uses to find this attempt.
+      // HTTP-Redirect binding: deflated AuthnRequest, signed when the IdP requires it; RelayState carries the state the ACS uses to find this attempt.
       return { url: await saml(secrets.nonce).getAuthorizeUrlAsync(secrets.state, undefined, {}), secrets }
     },
     async finish({ code, nonce }): Promise<SsoIdentity> {
@@ -62,6 +65,7 @@ export function createSamlProvider(config: SamlConfig, deps: { acsUrl: string; r
       let profile: Profile | null = null
       try { ({ profile } = await saml(nonce).validatePostResponseAsync({ SAMLResponse: code })) } catch (error) {
         if (error instanceof SamlStatusError) reject('idp')
+        if (config.decryption !== undefined && /decrypt|EncryptedAssertion|encrypted/i.test(error instanceof Error ? error.message : '') && !/signature/i.test(error instanceof Error ? error.message : '')) reject('assertion')
         // Signature failures, XML signature wrapping (several or moved assertions) and malformed XML all land here.
         reject(/signature|signed data|xml|parse|certificate/i.test(error instanceof Error ? error.message : '') ? 'signature' : 'assertion')
       }
@@ -71,6 +75,10 @@ export function createSamlProvider(config: SamlConfig, deps: { acsUrl: string; r
       if (assertionXml === undefined || responseXml === undefined) return reject('assertion')
       const parse = (xml: string) => new DOMParser({ errorHandler: { error: () => reject('assertion'), fatalError: () => reject('assertion') } }).parseFromString(xml, 'text/xml')
       const assertion = parse(assertionXml), response = parse(responseXml)
+      // node-saml decrypts an EncryptedAssertion when it has the key but also accepts a plain one. When the IdP is declared to encrypt, the Response must
+      // carry exactly one EncryptedAssertion and no plain Assertion as direct children; anything else is a downgrade and is refused.
+      if (config.decryption !== undefined && ((select('/samlp:Response/saml:EncryptedAssertion', response) as Node[]).length !== 1
+        || (select('/samlp:Response/saml:Assertion', response) as Node[]).length !== 0)) reject('encryption')
       const text = (doc: Document, path: string) => { const nodes = select(path, doc) as Node[]; return nodes.length === 1 ? nodes[0]!.nodeValue ?? nodes[0]!.textContent ?? '' : undefined }
       // The Response itself may be unsigned when only the Assertion is; its Status and Destination can then only be made stricter, never looser.
       if (text(response, '/samlp:Response/samlp:Status/samlp:StatusCode/@Value') !== SUCCESS) reject('idp')
@@ -97,6 +105,7 @@ export function createSamlProvider(config: SamlConfig, deps: { acsUrl: string; r
       const name = values(config.nameAttribute).map(value => value.trim()).find(Boolean) ?? profile.nameID
       return { subject, email: mail?.toLowerCase() ?? samlPlaceholderEmail(subject), name: name.slice(0, 128), groups }
     },
-    metadata: () => saml(undefined).generateServiceProviderMetadata(null, null),
+    // Only certificates are published; node-saml reads the private keys from the options solely to decide which KeyDescriptors to emit.
+    metadata: () => saml(undefined).generateServiceProviderMetadata(config.decryption?.cert ?? null, config.signing?.cert ?? null),
   }
 }
