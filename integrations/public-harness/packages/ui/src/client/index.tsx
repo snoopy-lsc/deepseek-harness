@@ -5,14 +5,16 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import { BrandMark, BrandName } from './mark.tsx'
 import { QuotaNotice, dictionaries } from './quota.tsx'
+import { installTheme } from './theme.ts'
 
-/** Required service: the browser slot registry. */
-export const inject = ['slots', 'locale']
+/** Required services: the browser slot registry, locale, and ui-theme's token registry. */
+export const inject = ['slots', 'locale', 'theme']
 
 /** Register brand occupants and platform quota copy.
  * @param ctx - browser root carrying slots and locale services.
  */
 export function apply(ctx: Context): void {
+  installTheme({ effect: (fn, label) => { ctx.effect(fn, label) }, get: () => ctx.theme })
   ctx.effect(() => ctx.locale.register('publicHarness', dictionaries), 'public-harness: copy')
   ctx.slots.inject('sidebar.brand.mark', () =>
     ctx.slots.inject('sidebar.brand.name', function* () {

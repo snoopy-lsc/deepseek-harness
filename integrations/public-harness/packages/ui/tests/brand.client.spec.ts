@@ -43,9 +43,11 @@ describe('installed team browser plugin', () => {
       },
     }
     const dictionaries: Array<{ en: { exhausted: string }; zh: { exhausted: string } }> = []
-    client.apply({ slots, effect: (fn: () => void) => fn(), locale: {
+    const themed: string[] = []
+    client.apply({ slots, effect: (fn: () => void) => fn(), theme: { overrideTokens(source: string) { themed.push(source); return () => undefined } }, locale: {
       register(_name: string, value: typeof dictionaries[number]) { dictionaries.push(value) },
     } })
+    expect(themed).toEqual(['team-enterprise'])
     expect(registrations.map(item => item.name)).toEqual(['sidebar.brand.mark', 'sidebar.brand.name', 'shell.quota-notice'])
     expect(registrations[2]?.select?.({ code: 'QUOTA' })).toEqual({ code: 'QUOTA' })
     expect(registrations[2]?.select?.({ code: 'ACCOUNT_QUOTA' })).toBeNull()
