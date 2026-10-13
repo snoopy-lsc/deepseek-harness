@@ -1,0 +1,67 @@
+# Bilingual-pair consistency record for 2026-10-13-unified-ui.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/superpowers/plans/2026-10-13-unified-ui.md
+/unified-enterprise-ui-implementation-plan:
+  en: b15f06b634cbe92c
+  zh: f3544b67f9a7c343
+/unified-enterprise-ui-implementation-plan/global-constraints:
+  en: e6a109eae6044c57
+  zh: d8dfef829291eec5
+/unified-enterprise-ui-implementation-plan/review-focus:
+  en: 29859645fb54c956
+  zh: daf4b2a2027b23ac
+/unified-enterprise-ui-implementation-plan/file-structure:
+  en: 777c93acd78f7411
+  zh: af7becf13b3bb74c
+/unified-enterprise-ui-implementation-plan/phase-1-theme-plugin-and-unified-shell:
+  en: d90ec931e5c40d61
+  zh: 4c1346ef909ec281
+/unified-enterprise-ui-implementation-plan/phase-1-theme-plugin-and-unified-shell/task-1-1-token-layer:
+  en: ebb7284b4ac1d582
+  zh: bf0857592d47fade
+/unified-enterprise-ui-implementation-plan/phase-1-theme-plugin-and-unified-shell/task-1-2-glass-stylesheet:
+  en: 0aa80508b6956534
+  zh: 34edb82aa5d8bd6a
+/unified-enterprise-ui-implementation-plan/phase-1-theme-plugin-and-unified-shell/task-1-3-contrast-check:
+  en: 791f85581990f608
+  zh: cbe1381f82094e40
+/unified-enterprise-ui-implementation-plan/phase-1-theme-plugin-and-unified-shell/task-1-4-server-role-and-profile-endpoint:
+  en: 95120844db934a01
+  zh: bf56d7e253d5ad08
+/unified-enterprise-ui-implementation-plan/phase-1-theme-plugin-and-unified-shell/task-1-5-unified-routing-and-navigation:
+  en: 83286f309d5a62f6
+  zh: 1bd35b5aa2942b29
+/unified-enterprise-ui-implementation-plan/phase-1-theme-plugin-and-unified-shell/task-1-6-identity-pages-and-model-defaults:
+  en: 9d6014295a426c85
+  zh: fa1fe3371fab9d11
+/unified-enterprise-ui-implementation-plan/phase-1-theme-plugin-and-unified-shell/task-1-7-gates-and-screenshots:
+  en: aea0b430b751f18e
+  zh: 0d0bf9368500b953
+/unified-enterprise-ui-implementation-plan/phase-2-personal-center:
+  en: 5c9853ba3f8b808c
+  zh: 229e17073241d9a4
+/unified-enterprise-ui-implementation-plan/phase-2-personal-center/task-2-1-account-and-sessions:
+  en: 1d7a22de681cbef9
+  zh: 2a24f52ee8a99562
+/unified-enterprise-ui-implementation-plan/phase-2-personal-center/task-2-2-usage-and-quota:
+  en: 9ca1874c233e5769
+  zh: e451127121123b55
+/unified-enterprise-ui-implementation-plan/phase-2-personal-center/task-2-3-preferences:
+  en: 42b02d2a42f1c94d
+  zh: aaa715874de3a20f
+/unified-enterprise-ui-implementation-plan/phase-3-administration:
+  en: 7146d70ab3e86e7d
+  zh: b45f849a69ea94ae
+/unified-enterprise-ui-implementation-plan/phase-3-administration/task-3-1-admin-api:
+  en: b07dfc502e99726c
+  zh: e43f4b498472aad3
+/unified-enterprise-ui-implementation-plan/phase-3-administration/task-3-2-users-page:
+  en: 2c70a8eb52e5d79b
+  zh: 1208cd208b8c3b48
+/unified-enterprise-ui-implementation-plan/phase-3-administration/task-3-3-audit-and-quota-page:
+  en: 6c134efb9d0ad4bf
+  zh: 0e85c6a33a7e78c2
+/unified-enterprise-ui-implementation-plan/phase-3-administration/task-3-4-security-settings-and-end-to-end:
+  en: 26df4ae4ec789453
+  zh: 557726f293862dad
