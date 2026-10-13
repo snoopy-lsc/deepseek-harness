@@ -50,6 +50,45 @@ describe('account pages', () => {
   })
 })
 
+describe('enterprise sign-in card', () => {
+  const oidc = { sso: true, emergency: false, registration: false }
+  it('company_button_first_then_divider_and_email_form_with_forgot_link', () => {
+    const page = renderPage('zh', 'login', 'n0nce', '', { provider: 'none' }, oidc)
+    const button = page.indexOf('data-sso-start'), divider = page.indexOf(text('zh', 'orEmail')), email = page.indexOf('name="email"')
+    expect(button).toBeGreaterThan(0); expect(divider).toBeGreaterThan(button); expect(email).toBeGreaterThan(divider)
+    expect(page).toMatch(/<a [^>]*class="btn primary block"[^>]*data-sso-start/)
+    expect(page).toMatch(/<a href="\/account\/reset"[^>]*>忘记密码<\/a>/)
+    expect(page).not.toContain('受邀承包商')
+    expect(page).toContain('class="brand"')
+    expect(page).toMatch(/<header class="top">.*English<\/a><\/header>/s)
+  })
+
+  it('create_account_link_only_when_public_registration_is_open', () => {
+    expect(renderPage('en', 'login', 'n0nce', '', { provider: 'test' }, { sso: false, emergency: false, registration: false })).not.toContain('href="/account/register"')
+    expect(renderPage('en', 'login', 'n0nce', '', { provider: 'test' }, { sso: false, emergency: false, registration: true })).toContain('href="/account/register"')
+  })
+
+  it('ldap_form_is_the_primary_action_and_the_layout_uses_harness_control_metrics', () => {
+    const page = renderPage('en', 'login', 'n0nce', '', { provider: 'none' }, { sso: true, ldap: true, emergency: false, registration: false })
+    expect(page.indexOf('data-action="ldap"')).toBeLessThan(page.indexOf(text('en', 'orEmail')))
+    expect(page).toMatch(/data-action="ldap".*?<button type="submit" class="btn primary block">/s)
+    const css = page.slice(page.indexOf('<style'), page.indexOf('</style>'))
+    // Harness Button md: 36px tall, 12px corners, 14px/22px text; Input: 0.5px stroke and 12px corners.
+    expect(css).toContain('.btn{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;height:36px;padding:0 14px;border-radius:12px;font-size:14px;line-height:22px')
+    expect(css).toContain('border:.5px solid')
+    expect(css).not.toMatch(/url\(|@import|https?:/)
+  })
+
+  it('every_view_renders_one_card_with_its_own_title', () => {
+    for (const view of ['login', 'register', 'reset', 'verified', 'emergency', 'home'] as const) {
+      const page = renderPage('zh', view, 'n0nce', '', { provider: 'test' }, { sso: false, emergency: true, registration: true })
+      expect(page.match(/<main class="card">/g)).toHaveLength(1)
+      expect(page).toMatch(/<h1>[^<]+<\/h1>/)
+      expect(page.match(/<script nonce="n0nce">/g)).toHaveLength(1)
+    }
+  })
+})
+
 describe('enterprise SSO pages', () => {
   const sso = { sso: true, emergency: false }
   it('sso_login_offers_the_company_button_and_hides_public_paths', () => {
@@ -64,7 +103,7 @@ describe('enterprise SSO pages', () => {
     expect(zh).toContain(text('zh', 'ssoLogin'))
     // Invited contractors keep the password form and registration.
     expect(zh).toContain('data-action="login"')
-    expect(zh).toContain('href="/account/register"')
+    expect(zh).not.toContain('href="/account/register"')
     expect(page.match(/<script nonce="n0nce">/g)).toHaveLength(1)
   })
 
