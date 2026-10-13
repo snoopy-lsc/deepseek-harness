@@ -143,3 +143,12 @@ export interface SsoStore {
 
 - [ ] **Step 1:** Document every `DSH_SSO_*` and `DSH_OIDC_*` variable, the redirect URI and the emergency CLI; keep secrets as placeholders.
 - [ ] **Step 2:** Run the full unit suite, `pnpm run typecheck`, the e2e suite, `doc-quick` and `verify-export-jsdoc` serially; commit; push the branch.
+
+### Task 9: WeCom Web Login Provider
+
+**Files:** Create `src/sso/wecom.ts`, `tests/mock-wecom.ts`, `tests/wecom.spec.ts`, `tests/wecom-flow.spec.ts`; modify `src/sso/config.ts`, `src/sso/provider.ts`, `src/index.ts`, `src/server.ts`, `tests/sso-config.spec.ts`, `tests/sso.e2e.ts`, the env example and the README pair.
+
+**Interfaces:** Consumes the Task 5 plugin unchanged. Produces `createWecomProvider(config, { fetch?, clock? }): SsoProvider` with `kind: 'wecom'`, `wecomPlaceholderEmail(subject): string`, and the `wecom` variant of `SsoConfig` (`corpId`, `agentId`, `secret`, `apiBase`, `loginUrl`, `allowedGroups` as department IDs, `recursiveDepartments`, `timeoutMs`). The subject is `CORPID:userid` with a lower-cased `userid`.
+
+- [ ] **Step 1: Write failing tests**: environment parsing (required corp ID, agent ID, secret and numeric departments; HTTPS-only private-deployment URLs); the official login link parameters; token caching, expiry and one refetch on token errors; non-members, interconnected IDs, inactive members and invalid codes refused; sub-department admission with and without recursion; directory email preferred over the placeholder; 503 on timeouts, HTTP errors and unexpected errcodes; the whole flow through the listener; `.invalid` registrations refused; a Chrome run against the mock login page.
+- [ ] **Step 2: Run**; expect failure. **Step 3: Implement** the provider and wiring. **Step 4: Run** unit, typecheck, e2e and doc gates; commit; push.

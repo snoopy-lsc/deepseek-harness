@@ -506,6 +506,12 @@ describe('native deployment composition', () => {
     const enterprise = parseIdentityConfig(await json('deploy/native/config/identity.json.example'), { ...env, ...Object.fromEntries(ssoPairs.map(([key, value]) => [key, value || 'placeholder0'])) })
     expect(enterprise.sso).toMatchObject({ kind: 'oidc', issuer: 'https://idp.corp.example/realms/corp', allowedGroups: ['engineering'] })
     expect(enterprise.emergency).toEqual({ enabled: true, allowedIps: ['10.0.0.0/24'] })
+    const wecomPairs = (await text('deploy/native/config/identity.env.example')).split('\n').filter(line => /^# DSH_WECOM_[A-Z_]+=/.test(line))
+      .map(line => { const [key, ...rest] = line.slice(2).split('='); return [key!, rest.join('=')] as [string, string] })
+    expect(wecomPairs.filter(([key, value]) => /SECRET/.test(key) && value !== '')).toEqual([])
+    const wecom = parseIdentityConfig(await json('deploy/native/config/identity.json.example'), { ...env, DSH_SSO_PROVIDER: 'wecom', DSH_SSO_ALLOWED_GROUPS: '2',
+      ...Object.fromEntries(wecomPairs.map(([key, value]) => [key, value || (key === 'DSH_WECOM_AGENT_ID' ? '1000002' : 'placeholder0')])) })
+    expect(wecom.sso).toMatchObject({ kind: 'wecom', apiBase: 'https://qyapi.weixin.qq.com', recursiveDepartments: true })
     expect(units['dsh-identity']).toMatch(/^EnvironmentFile=\/etc\/dsh-public\/identity-secrets\/identity\.env$/m)
     expect(identity.mode).toBe('production')
     expect(identity.enrollmentOpen).toBe(false)

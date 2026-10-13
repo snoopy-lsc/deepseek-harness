@@ -143,3 +143,12 @@ export interface SsoStore {
 
 - [ ] **步骤 1：** 记录每个 `DSH_SSO_*` 与 `DSH_OIDC_*` 变量、redirect URI 和紧急 CLI；密钥保持占位符。
 - [ ] **步骤 2：** 串行运行完整单元测试、`pnpm run typecheck`、e2e 测试、`doc-quick` 和 `verify-export-jsdoc`；提交；推送分支。
+
+### 任务 9：企业微信 Web 登录 provider
+
+**文件：** 创建 `src/sso/wecom.ts`、`tests/mock-wecom.ts`、`tests/wecom.spec.ts`、`tests/wecom-flow.spec.ts`；修改 `src/sso/config.ts`、`src/sso/provider.ts`、`src/index.ts`、`src/server.ts`、`tests/sso-config.spec.ts`、`tests/sso.e2e.ts`、env 示例和 README 双语文件。
+
+**接口：** 不改动地使用任务 5 的插件。产出 `kind: 'wecom'` 的 `createWecomProvider(config, { fetch?, clock? }): SsoProvider`、`wecomPlaceholderEmail(subject): string`，以及 `SsoConfig` 的 `wecom` 分支（`corpId`、`agentId`、`secret`、`apiBase`、`loginUrl`、作为部门 ID 的 `allowedGroups`、`recursiveDepartments`、`timeoutMs`）。subject 为 `CORPID:userid`，其中 `userid` 转为小写。
+
+- [ ] **步骤 1：编写失败测试**：环境变量解析（必需的 corp ID、agent ID、secret 与数字部门；私有化 URL 只允许 HTTPS）；官方登录链接参数；token 缓存、过期以及遇到 token 错误时重新获取一次；拒绝非企业成员、互联企业 ID、已停用成员和无效 code；开启与关闭递归时的子部门放行；目录邮箱优先于占位地址；超时、HTTP 错误和未预期 errcode 返回 503；经监听器的完整流程；拒绝注册 `.invalid` 地址；Chrome 针对 mock 登录页的运行。
+- [ ] **步骤 2：运行**；预期失败。**步骤 3：实现** provider 与接线。**步骤 4：运行** 单元、类型检查、e2e 和文档门禁；提交；推送。

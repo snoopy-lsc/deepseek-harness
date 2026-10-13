@@ -97,15 +97,20 @@ An `EnterprisePrincipal` includes at least `provider`, `subject` (stable unique 
 
 ### WeCom QR login (`wecom`)
 
-Per WeCom docs on [building the QR login link](https://developer.work.weixin.qq.com/document/path/91022) and [fetching the visitor identity](https://developer.work.weixin.qq.com/document/path/91023):
+Per the current WeCom docs on the [web login link](https://developer.work.weixin.qq.com/document/path/98152), [login identity](https://developer.work.weixin.qq.com/document/path/98176), [gettoken](https://developer.work.weixin.qq.com/document/path/91039), [read member](https://developer.work.weixin.qq.com/document/path/90196) and [sub-department IDs](https://developer.work.weixin.qq.com/document/path/95350):
 
-1. The account page starts login; the service stores an unguessable `state` (bound to expiry and optionally client IP) and redirects to `https://open.work.weixin.qq.com/wwopen/sso/qrConnect?appid=CORPID&agentid=AGENTID&redirect_uri=...&state=STATE`.
-2. After the user scans and confirms, WeCom redirects to `redirect_uri` with `code` and `state` (domain must match the app trusted domain exactly).
-3. The service consumes `state` once; obtains `access_token` with `corpid` + `corpsecret` ([gettoken](https://developer.work.weixin.qq.com/document/path/91039), must be cached; never return the token to the browser).
-4. Exchange `code` via `auth/getuserinfo` for corporate `userid`; optionally load member details. Non-members (openid only) are denied by default unless a decision point allows external contacts.
-5. Use `userid` (normalize interconnected `CorpId/userid` forms) as `subject`, then link accounts and issue a session.
+1. `/api/auth/sso/start` stores a single-use, browser-bound `state` and redirects to `https://login.work.weixin.qq.com/wwlogin/sso/login?login_type=CorpApp&appid=CORPID&agentid=AGENTID&redirect_uri=...&state=STATE`. The older `open.work.weixin.qq.com/wwopen/sso/qrConnect` link is replaced by this one.
+2. After the member scans and confirms, WeCom redirects to `redirect_uri` with `code` and `state`; the callback domain must be the app's trusted domain.
+3. The service consumes `state` once and gets an `access_token` with `corpid` + `corpsecret`. The token is cached in memory until five minutes before `expires_in`, fetched by one request at a time, refetched once on errcode 40001/40014/42001, and never sent to the browser.
+4. `auth/getuserinfo` turns `code` into the member `userid`. A non-member (only `openid`) or an interconnected-corp ID (`CorpId/userid`) is refused. `user/get` must answer `status = 1` and gives the department IDs.
+5. Implementation decisions:
+   - **Subject**: `CORPID:userid` with `userid` lower-cased, because WeCom user IDs are case-insensitive. The corp prefix keeps `(wecom, subject)` unique if the deployment ever changes corp.
+   - **Departments (D7)**: `DSH_SSO_ALLOWED_GROUPS` holds department IDs, never names. With `DSH_WECOM_DEPARTMENT_RECURSIVE=true` (default), a member of any sub-department of an allowed department is admitted; sub-departments come from `department/simplelist?id=ALLOWED` and are cached ten minutes. `false` requires a direct member.
+   - **Email (D2/D4)**: apps created after 2022-06-20 do not receive email from `user/get`. The foundation needs a unique address, so the service uses `biz_mail` or `email` when returned and otherwise `wecom-<hash of subject>@sso.invalid`. Accounts are still found only by subject, an address already in use still refuses the sign-in, and registration refuses `.invalid` addresses so nobody can squat a placeholder.
+   - **Private deployment (私有化)**: `DSH_WECOM_API_BASE` and `DSH_WECOM_LOGIN_URL` point at the intranet server; both must be HTTPS.
+   - **Failures**: timeouts, HTTP errors, unexpected errcodes and department lookup failures answer 503; an invalid code, a non-member, an inactive member or a member outside the app's visibility answers a login-page error.
 
-Embedded `WwLogin` JS is an optional same-origin UI; it still uses the same callback and `state` checks.
+The embedded `ww.createWWLoginPanel` component is not used: the plain redirect needs no third-party script in the page CSP.
 
 ### DingTalk QR login (`dingtalk`)
 
@@ -260,7 +265,7 @@ Status: **Decided** (2026-10-13). These decisions replace the earlier open check
 ## Sources
 
 - Existing identity and pluggable CAPTCHA/mail: [identity README](../../../integrations/public-harness/packages/identity/README.md), native design [Identity and registration](2026-10-11-public-harness-native-design.md#identity-and-registration)
-- WeCom: QR login and OAuth docs ([build QR link](https://developer.work.weixin.qq.com/document/path/91022), [get visitor identity](https://developer.work.weixin.qq.com/document/path/91023), [gettoken](https://developer.work.weixin.qq.com/document/path/91039))
+- WeCom: [web login link](https://developer.work.weixin.qq.com/document/path/98152), [login identity](https://developer.work.weixin.qq.com/document/path/98176), [gettoken](https://developer.work.weixin.qq.com/document/path/91039), [read member](https://developer.work.weixin.qq.com/document/path/90196), [sub-department IDs](https://developer.work.weixin.qq.com/document/path/95350)
 - DingTalk: [QR login to third-party sites](https://open.dingtalk.com/document/orgapp/scan-qr-code-to-log-on-to-third-party-websites), [sns/getuserinfo_bycode](https://open.dingtalk.com/document/orgapp/obtain-the-user-information-based-on-the-sns-temporary-authorization)
 - OIDC / OAuth: [OpenID Connect Core](https://openid.net/specs/openid-connect-core-1_0.html), [RFC 7636 PKCE](https://datatracker.ietf.org/doc/html/rfc7636)
 - SAML: [OASIS SAML 2.0 technical overview](http://docs.oasis-open.org/security/saml/Post2.0/sstc-saml-tech-overview-2.0.html)

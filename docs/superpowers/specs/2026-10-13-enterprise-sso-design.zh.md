@@ -97,15 +97,20 @@ EnterpriseAuthProvider
 
 ### 企业微信扫码（`wecom`）
 
-依据[构造扫码登录链接](https://developer.work.weixin.qq.com/document/path/91022)与[获取访问用户身份](https://developer.work.weixin.qq.com/document/path/91023)等开放文档：
+依据当前企业微信文档：[Web 登录链接](https://developer.work.weixin.qq.com/document/path/98152)、[获取用户登录身份](https://developer.work.weixin.qq.com/document/path/98176)、[获取 access_token](https://developer.work.weixin.qq.com/document/path/91039)、[读取成员](https://developer.work.weixin.qq.com/document/path/90196)和[获取子部门 ID 列表](https://developer.work.weixin.qq.com/document/path/95350)：
 
-1. 浏览器打开身份服务登录页；服务生成不可猜测的 `state`，写入短期服务端存储（绑定 IP 与过期时间），重定向到 `https://open.work.weixin.qq.com/wwopen/sso/qrConnect?appid=CORPID&agentid=AGENTID&redirect_uri=...&state=STATE`。
-2. 用户扫码确认后，企业微信带着 `code` 与 `state` 回调 `redirect_uri`（须与应用可信域名完全一致）。
-3. 服务校验 `state` 一次性消费；用 `corpid` + `corpsecret` 取 `access_token`（[gettoken](https://developer.work.weixin.qq.com/document/path/91039)，须缓存，禁止把 token 交给前端）。
-4. 用 `code` 调用 `auth/getuserinfo` 得到企业内 `userid`；按需再读成员详情。非企业成员（仅 `openid`）默认拒绝，除非决策点放开外部联系人。
-5. 将 `userid`（互联场景下的 `CorpId/userid` 格式需规范化）作为 `subject`，进入账户链接与会话签发。
+1. `/api/auth/sso/start` 保存一次性、绑定浏览器的 `state`，并重定向到 `https://login.work.weixin.qq.com/wwlogin/sso/login?login_type=CorpApp&appid=CORPID&agentid=AGENTID&redirect_uri=...&state=STATE`。旧的 `open.work.weixin.qq.com/wwopen/sso/qrConnect` 链接由它取代。
+2. 成员扫码确认后，企业微信带 `code` 与 `state` 回调 `redirect_uri`；回调域名必须是应用的可信域名。
+3. 服务一次性消费 `state`，用 `corpid` + `corpsecret` 获取 `access_token`。token 缓存在内存中直到 `expires_in` 前五分钟，同一时间只发一个获取请求，遇到 errcode 40001/40014/42001 时重新获取一次，且从不发给浏览器。
+4. `auth/getuserinfo` 把 `code` 换成成员 `userid`。非企业成员（只有 `openid`）或互联企业 ID（`CorpId/userid`）被拒绝。`user/get` 必须返回 `status = 1`，并给出部门 ID。
+5. 实现决定：
+   - **Subject**：`CORPID:userid`，其中 `userid` 转为小写，因为企业微信 userid 不区分大小写。corp 前缀保证即使部署更换企业，`(wecom, subject)` 也保持唯一。
+   - **部门（D7）**：`DSH_SSO_ALLOWED_GROUPS` 填部门 ID，而不是名称。`DSH_WECOM_DEPARTMENT_RECURSIVE=true`（默认）时，允许部门任一子部门的成员都被放行；子部门来自 `department/simplelist?id=ALLOWED`，缓存十分钟。设为 `false` 时要求直属成员。
+   - **邮箱（D2/D4）**：2022-06-20 之后创建的应用从 `user/get` 拿不到邮箱。基础层需要唯一地址，因此服务在返回时使用 `biz_mail` 或 `email`，否则使用 `wecom-<subject 哈希>@sso.invalid`。账户仍只按 subject 查找，地址已被占用时仍拒绝登录，注册也拒绝 `.invalid` 地址，防止有人抢占占位地址。
+   - **私有化部署**：`DSH_WECOM_API_BASE` 与 `DSH_WECOM_LOGIN_URL` 指向内网服务器；两者都必须是 HTTPS。
+   - **失败处理**：超时、HTTP 错误、未预期的 errcode 和部门查询失败返回 503；无效 code、非企业成员、已停用成员或不在应用可见范围内的成员回到登录页并显示错误。
 
-内嵌 JS `WwLogin` 可作为同域 UI 选项，但仍走同一回调与 `state` 校验。
+不使用内嵌的 `ww.createWWLoginPanel` 组件：普通重定向不需要在页面 CSP 中放入第三方脚本。
 
 ### 钉钉扫码（`dingtalk`）
 
@@ -260,7 +265,7 @@ EnterpriseAuthProvider
 ## 资料来源
 
 - 现有身份与可插拔验证码 / 邮件：[identity README](../../../integrations/public-harness/packages/identity/README.zh.md)、原生部署设计[身份与注册](2026-10-11-public-harness-native-design.zh.md#identity-and-registration)
-- 企业微信：扫码登录与 OAuth 相关文档（[构造扫码登录链接](https://developer.work.weixin.qq.com/document/path/91022)、[获取访问用户身份](https://developer.work.weixin.qq.com/document/path/91023)、[gettoken](https://developer.work.weixin.qq.com/document/path/91039)）
+- 企业微信：[Web 登录链接](https://developer.work.weixin.qq.com/document/path/98152)、[获取用户登录身份](https://developer.work.weixin.qq.com/document/path/98176)、[gettoken](https://developer.work.weixin.qq.com/document/path/91039)、[读取成员](https://developer.work.weixin.qq.com/document/path/90196)、[获取子部门 ID 列表](https://developer.work.weixin.qq.com/document/path/95350)
 - 钉钉：[扫码登录第三方网站](https://open.dingtalk.com/document/orgapp/scan-qr-code-to-log-on-to-third-party-websites)、[sns/getuserinfo_bycode](https://open.dingtalk.com/document/orgapp/obtain-the-user-information-based-on-the-sns-temporary-authorization)
 - OIDC / OAuth：[OpenID Connect Core](https://openid.net/specs/openid-connect-core-1_0.html)、[RFC 7636 PKCE](https://datatracker.ietf.org/doc/html/rfc7636)
 - SAML：[OASIS SAML 2.0 技术概述](http://docs.oasis-open.org/security/saml/Post2.0/sstc-saml-tech-overview-2.0.html)
