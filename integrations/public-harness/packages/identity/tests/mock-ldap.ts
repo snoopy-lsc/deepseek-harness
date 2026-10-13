@@ -105,7 +105,9 @@ export async function startMockLdap(mode: 'ldaps' | 'starttls' | 'plain' = 'ldap
       case 0xa3: {
         const [attr, value] = kids().map(text)
         mock.assertions.push([attr!, value!])
-        return (values(entry, attr!) ?? []).some(v => lower(String(v)) === lower(value!))
+        // Binary attributes (objectGUID) compare as bytes, text ones case-insensitively.
+        const raw = kids()[1]!.value
+        return (values(entry, attr!) ?? []).some(v => Buffer.isBuffer(v) ? v.equals(raw) : lower(String(v)) === lower(value!))
       }
       case 0x87: return values(entry, filter.value.toString()) !== undefined
       case 0xa4: {

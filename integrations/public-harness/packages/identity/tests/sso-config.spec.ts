@@ -15,7 +15,7 @@ const failure = (fn: () => unknown) => { try { fn() } catch (error) { return err
 
 describe('SSO environment', () => {
   it('unset_or_off_keeps_sso_disabled', () => {
-    expect(parseSsoEnv({}, 'production')).toEqual({ sso: { kind: 'off' }, emergency: { enabled: false } })
+    expect(parseSsoEnv({}, 'production')).toEqual({ sso: { kind: 'off' }, emergency: { enabled: false }, deprovision: { intervalMs: 0, maxInactiveDays: 0, maxDisablePerRun: 10 } })
     expect(parseSsoEnv({ DSH_SSO_PROVIDER: 'off' }, 'production').sso).toEqual({ kind: 'off' })
   })
 
