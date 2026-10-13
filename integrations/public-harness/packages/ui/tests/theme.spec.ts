@@ -34,6 +34,11 @@ describe('team-enterprise theme', () => {
     expect(css).not.toMatch(/\.[A-Za-z][\w-]*\s*[{,]/)
     expect(css).toContain('[data-slot="sidebar"]')
     expect(css).toContain('[data-composer-card]')
+    // Browsers drop a whole rule whose :has() is nested inside another :has().
+    expect(css).not.toMatch(/:has\([^{}]*:has\(/)
+    expect(css).toContain('div:has(> [data-shell-overlay]){background:transparent}')
+    // The sidebar shell paints its own fill inside the column; only the column carries the glass, so the inner layer is cleared.
+    expect(css).toContain('[data-slot="sidebar"] > *{--dsw-specific-sidebar-fill:transparent;background:transparent}')
     const reduced = css.slice(css.indexOf('@media (prefers-reduced-transparency: reduce)'))
     expect(reduced).toContain('--team-blur:none')
     for (const [token, material] of Object.entries(MATERIALS)) expect(reduced).toContain(`${token.replace(/^--dsw-/, '--team-')}:${material.solid.light};`)

@@ -42,8 +42,12 @@ export function glassStylesheet(): string {
     `body{--team-blur:${BLUR};--team-hairline:inset 0 1px 0 #ffffffb3,inset 0 0 0 .5px #ffffff80;${materials('light', 'glass')}background:${desktop('light')} fixed}`,
     `body[data-ds-dark-theme]{--team-hairline:inset 0 1px 0 #ffffff1f,inset 0 0 0 .5px #ffffff14;${materials('dark', 'glass')}background:${desktop('dark')} fixed}`,
     // The window frame lets the desktop through; the reading column keeps its own near-opaque base fill.
-    `div:has(> ${sidebar}){background:transparent}`,
+    // The frame is the parent of the shell overlay layer; `:has()` cannot nest, so it is found through that data attribute.
+    'div:has(> [data-shell-overlay]){background:transparent}',
     `${sidebar}{${glass};box-shadow:inset -1px 0 0 #ffffff59}`,
+    // Inside the column the sidebar shell and its list fade paint the same fill again, which stacks into a near-opaque layer and a
+    // light band above the foot. Rebinding the token for that subtree leaves one glass layer, as in D4.
+    '[data-slot="sidebar"] > *{--dsw-specific-sidebar-fill:transparent;background:transparent}',
     `body[data-ds-dark-theme] ${sidebar}{box-shadow:inset -1px 0 0 #ffffff0f}`,
     `[data-composer-card]{${glass}}`,
     `[data-composer-seat]{background:transparent}`,
