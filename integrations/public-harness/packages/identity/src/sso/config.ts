@@ -1,4 +1,6 @@
 /** Enterprise SSO settings, read only from the service environment and refused at startup when incomplete. */
+import { X509Certificate } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { IdentityConfigError } from '../config.ts'
 import { validIpEntry } from './ip.ts'
 
@@ -14,12 +16,18 @@ export type SsoConfig =
     readonly loginUrl: string; readonly exclusiveLogin: boolean
     /** Department IDs (as decimal strings); with `recursiveDepartments`, members of their sub-departments are admitted too. */
     readonly allowedGroups: readonly string[]; readonly recursiveDepartments: boolean; readonly timeoutMs: number }
+  | { readonly kind: 'saml'; readonly spEntityId: string; readonly idpEntityId: string; readonly idpSsoUrl: string
+    /** Pinned IdP signing certificates (PEM), read once at start from `DSH_SAML_IDP_CERT_FILE`; several allow a rollover. */
+    readonly idpCerts: readonly string[]; readonly nameIdFormat: string
+    readonly groupAttribute: string; readonly emailAttribute: string; readonly nameAttribute: string
+    /** Require the Assertion itself to be signed; otherwise a signed Response or a signed Assertion is enough. */
+    readonly wantAssertionsSigned: boolean; readonly clockSkewMs: number; readonly allowedGroups: readonly string[] }
 /** Administrator emergency password path; enabled only by a source-address allow-list. */
 export type EmergencyConfig = { readonly enabled: false } | { readonly enabled: true; readonly allowedIps: readonly string[] }
 
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]'])
 
-/** Parse `DSH_SSO_*`, `DSH_OIDC_*`, `DSH_WECOM_*` and `DSH_DINGTALK_*`. Errors name the variable, never its value.
+/** Parse `DSH_SSO_*`, `DSH_OIDC_*`, `DSH_WECOM_*`, `DSH_DINGTALK_*` and `DSH_SAML_*`. Errors name the variable, never its value.
  * @param env Process environment.
  * @param mode Service mode; production requires HTTPS IdP URLs, local mode allows loopback HTTP for the mock IdPs.
  * @returns SSO and emergency settings.
@@ -38,7 +46,7 @@ export function parseSsoEnv(env: Readonly<Record<string, string | undefined>>, m
   }
   // Public endpoints by default; a private (私有化) or exclusive deployment points the URLs at its own HTTPS server.
   const base = (name: string, fallback: string, allowPath: boolean) => {
-    const raw = optional(name, fallback)
+    const raw = fallback === '' ? need(name) : optional(name, fallback)
     let url: URL
     try { url = new URL(raw) } catch { throw new IdentityConfigError(name) }
     const loopbackHttp = mode === 'local' && url.protocol === 'http:' && LOOPBACK.has(url.hostname)
@@ -82,6 +90,27 @@ export function parseSsoEnv(env: Readonly<Record<string, string | undefined>>, m
       exclusiveLogin: optional('DSH_DINGTALK_EXCLUSIVE_LOGIN', 'false', /^(true|false)$/) === 'true',
       allowedGroups: list('DSH_SSO_ALLOWED_GROUPS', need('DSH_SSO_ALLOWED_GROUPS'), /^[1-9][0-9]{0,18}$/),
       recursiveDepartments: optional('DSH_DINGTALK_DEPARTMENT_RECURSIVE', 'true', /^(true|false)$/) === 'true', timeoutMs }
+  } else if (kind === 'saml') {
+    const certs = (() => {
+      const file = need('DSH_SAML_IDP_CERT_FILE')
+      let text: string
+      try { text = readFileSync(file, 'utf8') } catch { throw new IdentityConfigError('DSH_SAML_IDP_CERT_FILE') }
+      const pems = text.match(/-----BEGIN CERTIFICATE-----[A-Za-z0-9+/=\s]+?-----END CERTIFICATE-----/g) ?? []
+      // Only certificates: a private key or an empty file in this path is a configuration error, never silently ignored.
+      if (!pems.length || /PRIVATE KEY/.test(text)) throw new IdentityConfigError('DSH_SAML_IDP_CERT_FILE')
+      for (const pem of pems) { try { new X509Certificate(pem) } catch { throw new IdentityConfigError('DSH_SAML_IDP_CERT_FILE') } }
+      return pems
+    })()
+    const format = optional('DSH_SAML_NAMEID_FORMAT', 'persistent', /^(persistent|emailAddress|unspecified)$/)
+    const skew = Number(optional('DSH_SAML_CLOCK_SKEW_MS', '60000', /^[0-9]{1,6}$/))
+    if (skew > 300_000) throw new IdentityConfigError('DSH_SAML_CLOCK_SKEW_MS')
+    const attribute = (name: string, fallback: string) => optional(name, fallback, /^[\x21-\x7e]{1,256}$/)
+    sso = { kind: 'saml', spEntityId: need('DSH_SAML_SP_ENTITY_ID', /^[\x21-\x7e]{1,1024}$/), idpEntityId: need('DSH_SAML_IDP_ENTITY_ID', /^[\x21-\x7e]{1,1024}$/),
+      idpSsoUrl: base('DSH_SAML_IDP_SSO_URL', '', true), idpCerts: certs,
+      nameIdFormat: format === 'unspecified' ? 'urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified' : format === 'emailAddress' ? 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress' : 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
+      groupAttribute: attribute('DSH_SAML_GROUP_ATTRIBUTE', 'groups'), emailAttribute: attribute('DSH_SAML_EMAIL_ATTRIBUTE', 'email'), nameAttribute: attribute('DSH_SAML_NAME_ATTRIBUTE', 'displayName'),
+      wantAssertionsSigned: optional('DSH_SAML_WANT_ASSERTIONS_SIGNED', 'false', /^(true|false)$/) === 'true', clockSkewMs: skew,
+      allowedGroups: list('DSH_SSO_ALLOWED_GROUPS', need('DSH_SSO_ALLOWED_GROUPS'), /^[^,\s](?:[^,]{0,254}[^,\s])?$/) }
   } else throw new IdentityConfigError('DSH_SSO_PROVIDER')
 
   let emergency: EmergencyConfig = { enabled: false }

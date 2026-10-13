@@ -8,12 +8,13 @@ import { createAuth } from './auth.ts'
 import { parseIdentityConfig, type IdentityConfig } from './config.ts'
 import { openIdentityDatabase } from './database.ts'
 import { createAccountPages } from './pages.ts'
-import { listenUnix, publicHandler, sessionHandler } from './server.ts'
+import { listenUnix, publicHandler, SAML_ACS_PATH, sessionHandler } from './server.ts'
 import { createCaptchaProvider, type CaptchaProvider } from './captcha.ts'
 import { createMailTransport } from './mail.ts'
 import type { MailTransport } from './transports.ts'
 import { createOidcProvider } from './sso/oidc.ts'
 import { createDingtalkProvider } from './sso/dingtalk.ts'
+import { createSamlProvider } from './sso/saml.ts'
 import { createWecomProvider } from './sso/wecom.ts'
 import type { SsoProvider } from './sso/provider.ts'
 
@@ -34,11 +35,13 @@ export async function startIdentity(config: IdentityConfig, overrides: { mail?: 
   const servers: Server[] = []
   try {
     const sso = overrides.sso ?? (config.sso.kind === 'oidc' ? createOidcProvider(config.sso) : config.sso.kind === 'wecom' ? createWecomProvider(config.sso)
-      : config.sso.kind === 'dingtalk' ? createDingtalkProvider(config.sso) : undefined)
+      : config.sso.kind === 'dingtalk' ? createDingtalkProvider(config.sso)
+      : config.sso.kind === 'saml' ? createSamlProvider(config.sso, { acsUrl: `${config.publicOrigin}${SAML_ACS_PATH}`, replay: (id, until) => database.sso.useAssertion(id, until, Date.now()) })
+      : undefined)
     const serviceSecret = await readSecret(config.secretFile)
     const auth = await createAuth(config, database, serviceSecret, overrides.mail ?? createMailTransport(config.mail), sso, overrides.clock)
     const captcha = overrides.captcha ?? createCaptchaProvider(config.captcha)
-    servers.push(await listenUnix(publicHandler({ config, auth, database, captcha, serviceSecret, pages: createAccountPages(config, captcha),
+    servers.push(await listenUnix(publicHandler({ config, auth, database, captcha, serviceSecret, pages: createAccountPages(config, captcha), ...sso?.metadata ? { ssoMetadata: sso.metadata() } : {},
       ...overrides.clock === undefined ? {} : { clock: overrides.clock } }), config.publicSocket, 0o660))
     servers.push(await listenUnix(sessionHandler(auth), config.sessionSocket, 0o660, config.sessionSocketGid))
   } catch (error) {

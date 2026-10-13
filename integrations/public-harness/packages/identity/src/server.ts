@@ -1,4 +1,5 @@
 /** Identity HTTP surfaces: the proxied public listener and the private session-lookup listener, both on Unix sockets. */
+import { randomBytes } from 'node:crypto'
 import { chmod, chown, lstat, unlink } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { IdentityAuth } from './auth.ts'
@@ -12,6 +13,19 @@ import { checkEmergency, EmergencyDeniedError } from './sso/emergency.ts'
 import { parseUserId } from '@public-harness/contracts'
 
 const MAX_BODY = 64 * 1024
+/** SAML responses with many groups exceed the JSON body limit. */
+const MAX_ACS_BODY = 768 * 1024
+/** SAML assertion consumer service (HTTP-POST binding). */
+export const SAML_ACS_PATH = '/api/auth/sso/acs'
+const SAML_METADATA_PATH = '/api/auth/sso/metadata'
+const escapeHtml = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+/** Read the ACS form; anything but base64 and a plain RelayState is refused before it reaches a page or the provider. */
+function acsForm(body: Buffer): { response: string; relayState: string } {
+  const form = new URLSearchParams(body.toString('utf8'))
+  const response = form.get('SAMLResponse') ?? '', relayState = form.get('RelayState') ?? ''
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(response) || !/^[A-Za-z0-9_-]{0,128}$/.test(relayState)) throw new HttpError(400, 'saml-form')
+  return { response, relayState }
+}
 const HOUR = 3_600_000
 
 /** Account pages handler (Task 3); returns false when the path is not an account page. */
@@ -58,15 +72,16 @@ export function clientIp(req: IncomingMessage, header: string): string {
 /** Validate proxy-facing headers before any authentication work.
  * @param req Request.
  * @param config Settings.
+ * @param crossSitePost Skip the Origin check; only for the SAML ACS, whose cross-site post is re-posted and verified later.
  */
-export function checkRequestOrigin(req: IncomingMessage, config: IdentityConfig): void {
+export function checkRequestOrigin(req: IncomingMessage, config: IdentityConfig, crossSitePost = false): void {
   const host = new URL(config.publicOrigin).host
   if (req.headers.host !== host) throw new HttpError(400, 'host')
   const forwarded = req.headers['x-forwarded-host']
   if (forwarded !== undefined && forwarded !== host) throw new HttpError(400, 'forwarded-host')
   if (req.headers.forwarded !== undefined) throw new HttpError(400, 'forwarded')
   if (sessionCookieCount(req.headers.cookie) > 1) throw new HttpError(400, 'duplicate-session-cookie')
-  if (req.method !== 'GET' && req.method !== 'HEAD' && req.headers.origin !== config.publicOrigin) throw new HttpError(403, 'origin')
+  if (!crossSitePost && req.method !== 'GET' && req.method !== 'HEAD' && req.headers.origin !== config.publicOrigin) throw new HttpError(403, 'origin')
 }
 
 /** Collaborators of the public listener. */
@@ -79,6 +94,8 @@ export interface PublicDeps {
   readonly clock?: () => number
   /** Better Auth secret, used to open sealed emergency TOTP secrets. */
   readonly serviceSecret?: string
+  /** SAML service-provider metadata served at `/api/auth/sso/metadata`. */
+  readonly ssoMetadata?: string
 }
 
 /** Handle one public request: origin checks, admission gates, then Better Auth.
@@ -112,13 +129,45 @@ export function publicHandler(deps: PublicDeps): (req: IncomingMessage, res: Ser
   }
   return (req, res) => {
     void (async () => {
+      const path = (req.url ?? '/').split('?')[0]
+      const acs = config.sso.kind === 'saml' && path === SAML_ACS_PATH && req.method === 'POST'
+      if (acs && req.headers.origin !== config.publicOrigin) {
+        // The IdP posts cross-site, so the SameSite=Lax browser-binding cookie is absent. Re-post the form from this origin, where the cookie is
+        // sent, instead of weakening the cookie; nothing is verified or consumed until then.
+        // A re-post that still arrives cross-origin is refused instead of bounced again.
+        if (new URL(req.url ?? '/', config.publicOrigin).searchParams.has('bounced')) throw new HttpError(403, 'origin')
+        checkRequestOrigin(req, config, true)
+        limit(`login-ip:${clientIp(req, config.clientIpHeader)}`, 60_000, config.limits.loginPerIpPerMinute)
+        const { response, relayState } = acsForm(await readBody(req, MAX_ACS_BODY))
+        const nonce = randomBytes(16).toString('base64')
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', // `no-referrer` would make Chrome send `Origin: null` on the re-post; `same-origin` keeps the Origin and leaks nothing cross-site.
+          'referrer-policy': 'same-origin', 'x-content-type-options': 'nosniff',
+          'content-security-policy': `default-src 'none'; script-src 'nonce-${nonce}'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'` })
+        res.end(`<!doctype html><meta charset="utf-8"><title>…</title><form method="post" action="${SAML_ACS_PATH}?bounced=1"><input type="hidden" name="SAMLResponse" value="${escapeHtml(response)}">`
+          + `<input type="hidden" name="RelayState" value="${escapeHtml(relayState)}"><noscript><button>Continue</button></noscript></form><script nonce="${nonce}">document.forms[0].submit()</script>`)
+        return
+      }
       checkRequestOrigin(req, config)
       const url = new URL(req.url ?? '/', config.publicOrigin)
+      if (path === SAML_METADATA_PATH && req.method === 'GET' && deps.ssoMetadata !== undefined) {
+        res.writeHead(200, { 'content-type': 'application/samlmetadata+xml; charset=utf-8', 'cache-control': 'no-store' })
+        res.end(deps.ssoMetadata)
+        return
+      }
       if (deps.pages !== undefined && await deps.pages(req, res, url)) return
       if (!url.pathname.startsWith('/api/auth/')) throw new HttpError(404, 'not-found')
       const ip = clientIp(req, config.clientIpHeader)
       let route = url.pathname.slice('/api/auth'.length)
-      let body = req.method === 'GET' || req.method === 'HEAD' ? undefined : await readBody(req, MAX_BODY)
+      let method = req.method ?? 'GET'
+      let body = method === 'GET' || method === 'HEAD' ? undefined : await readBody(req, acs ? MAX_ACS_BODY : MAX_BODY)
+      if (route === '/sso/acs') {
+        if (!acs) throw new HttpError(404, 'not-found')
+        // Same-origin re-post: hand the response to the shared callback, where RelayState is the single-use, browser-bound state.
+        const { response, relayState } = acsForm(body!)
+        url.pathname = '/api/auth/sso/callback'
+        url.search = new URLSearchParams({ state: relayState, code: response }).toString()
+        route = '/sso/callback'; method = 'GET'; body = undefined
+      }
       // Undo a single-use claim when the request it admitted does not complete, so a failure never burns a valid token or invite.
       let release: (() => void) | undefined
       let emergency: { userId: string; email: string } | undefined
@@ -182,13 +231,13 @@ export function publicHandler(deps: PublicDeps): (req: IncomingMessage, res: Ser
       }
       const headers = new Headers()
       for (const [name, value] of Object.entries(req.headers)) {
-        if (value === undefined || name.startsWith('x-forwarded-') || name === 'x-dsh-client-ip') continue
+        if (value === undefined || name.startsWith('x-forwarded-') || name === 'x-dsh-client-ip' || (body === undefined && (name === 'content-type' || name === 'content-length'))) continue
         for (const item of Array.isArray(value) ? value : [value]) headers.append(name, item)
       }
       headers.set('x-dsh-client-ip', ip)
       let response: Response
       try {
-        response = await auth.handler(new Request(url, { method: req.method, headers, ...body === undefined ? {} : { body: new Uint8Array(body) } }))
+        response = await auth.handler(new Request(url, { method, headers, ...body === undefined ? {} : { body: new Uint8Array(body) } }))
       } catch (error) {
         release?.()
         throw error

@@ -36,6 +36,8 @@ export interface SsoStore {
   saveState(state: string, record: LoginState & { readonly browser: string }, now: number): void
   /** Consume login state once; a wrong browser or an expired row also consumes it and returns undefined. */
   takeState(state: string, browser: string, now: number): LoginState | undefined
+  /** Record a SAML assertion ID until it expires; false when it was already used (replay). */
+  useAssertion(id: string, expiresAt: number, now: number): boolean
   /** The user bound to a provider subject. */
   findSubject(provider: string, subject: string): string | undefined
   /** Bind a subject to an SSO-origin user; one subject per user per provider, never an invite or emergency account. */
@@ -76,10 +78,13 @@ export function createSsoStore(db: DatabaseSync): SsoStore {
     CREATE TABLE IF NOT EXISTS dsh_emergency (user_id TEXT PRIMARY KEY, secret TEXT NOT NULL, last_step INTEGER NOT NULL DEFAULT -1, enrolled_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS dsh_audit (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, event TEXT NOT NULL, outcome TEXT NOT NULL,
       user_id TEXT, email TEXT, ip TEXT, detail TEXT);
-    CREATE INDEX IF NOT EXISTS dsh_audit_at ON dsh_audit (at);`)
+    CREATE INDEX IF NOT EXISTS dsh_audit_at ON dsh_audit (at);
+    CREATE TABLE IF NOT EXISTS dsh_sso_assertion (hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL);`)
   const insertState = db.prepare('INSERT INTO dsh_sso_state (hash, browser, nonce, verifier, return_to, expires_at) VALUES (?, ?, ?, ?, ?, ?)')
   const takeState = db.prepare('DELETE FROM dsh_sso_state WHERE hash = ? RETURNING browser, nonce, verifier, return_to, expires_at')
   const dropExpired = db.prepare('DELETE FROM dsh_sso_state WHERE expires_at <= ?')
+  const insertAssertion = db.prepare('INSERT INTO dsh_sso_assertion (hash, expires_at) VALUES (?, ?) ON CONFLICT(hash) DO NOTHING')
+  const dropAssertions = db.prepare('DELETE FROM dsh_sso_assertion WHERE expires_at <= ?')
   const findSubject = db.prepare('SELECT user_id FROM dsh_sso_link WHERE provider = ? AND subject = ?')
   const insertLink = db.prepare('INSERT INTO dsh_sso_link (provider, subject, user_id, created_at) VALUES (?, ?, ?, ?)')
   const readOrigin = db.prepare('SELECT origin FROM dsh_user_origin WHERE user_id = ?')
@@ -107,6 +112,10 @@ export function createSsoStore(db: DatabaseSync): SsoStore {
       const row = takeState.get(hash(state)) as { browser: string; nonce: string; verifier: string; return_to: string; expires_at: number } | undefined
       if (row === undefined || row.browser !== browser || row.expires_at <= now) return undefined
       return { nonce: row.nonce, verifier: row.verifier, returnTo: row.return_to }
+    },
+    useAssertion(id, expiresAt, now) {
+      dropAssertions.run(now)
+      return Number(insertAssertion.run(createHash('sha256').update(`saml-assertion\0${id}`).digest('hex'), Math.max(expiresAt, now + 60_000)).changes) === 1
     },
     findSubject: (provider, subject) => (findSubject.get(provider, subject) as { user_id: string } | undefined)?.user_id,
     bindSubject(provider, subject, userId, now) {
