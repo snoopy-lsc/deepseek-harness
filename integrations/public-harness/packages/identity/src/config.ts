@@ -1,8 +1,8 @@
 /** Strict identity service configuration; production rejects test transports and non-HTTPS origins. */
 import { isAbsolute, normalize } from 'node:path'
-import { parseSsoEnv, type EmergencyConfig, type SsoConfig } from './sso/config.ts'
+import { parseSsoEnv, type DeprovisionConfig, type EmergencyConfig, type SsoConfig } from './sso/config.ts'
 
-export type { EmergencyConfig, SsoConfig } from './sso/config.ts'
+export type { DeprovisionConfig, EmergencyConfig, SsoConfig } from './sso/config.ts'
 
 /** Mail delivery, chosen by `DSH_MAIL_PROVIDER`: a local sendmail command, an authenticated TLS SMTP relay, or a file mailbox (local mode only). */
 export type MailConfig =
@@ -50,6 +50,8 @@ export interface IdentityConfig {
   readonly sso: SsoConfig
   /** Administrator emergency password path from the environment (`DSH_SSO_EMERGENCY_*`). */
   readonly emergency: EmergencyConfig
+  /** Automatic deprovisioning of SSO accounts from the environment. */
+  readonly deprovision: DeprovisionConfig
 }
 
 /** Configuration rejected before any effect; the message names the field, never a value. */
@@ -152,7 +154,7 @@ export function parseIdentityConfig(value: unknown, env: ProviderEnv = process.e
   const loopback = origin.hostname === '127.0.0.1' || origin.hostname === 'localhost'
   if (mode === 'production' ? origin.protocol !== 'https:' : !loopback) throw new IdentityConfigError('publicOrigin')
   const { mail, captcha } = parseProviderEnv(env, mode)
-  const { sso, emergency } = parseSsoEnv(env, mode)
+  const { sso, emergency, deprovision } = parseSsoEnv(env, mode)
   const l = object(r.limits, ['signupPerIpPerHour', 'signupPerDay', 'resetPerEmailPerHour', 'loginPerIpPerMinute'], [], 'limits')
   if (r.enrollmentOpen !== undefined && typeof r.enrollmentOpen !== 'boolean') throw new IdentityConfigError('enrollmentOpen')
   const sessionSocketGid = r.sessionSocketGid
@@ -163,6 +165,6 @@ export function parseIdentityConfig(value: unknown, env: ProviderEnv = process.e
     limits: { signupPerIpPerHour: count(l.signupPerIpPerHour, 'limits'), signupPerDay: count(l.signupPerDay, 'limits'),
       resetPerEmailPerHour: count(l.resetPerEmailPerHour, 'limits'), loginPerIpPerMinute: count(l.loginPerIpPerMinute, 'limits') },
     sessionTtlSeconds: count(r.sessionTtlSeconds, 'sessionTtlSeconds'), verificationTtlSeconds: count(r.verificationTtlSeconds, 'verificationTtlSeconds'),
-    clientIpHeader: text(r.clientIpHeader, 'clientIpHeader', /^[a-z][a-z0-9-]{0,63}$/), enrollmentOpen: r.enrollmentOpen === true, sso, emergency,
+    clientIpHeader: text(r.clientIpHeader, 'clientIpHeader', /^[a-z][a-z0-9-]{0,63}$/), enrollmentOpen: r.enrollmentOpen === true, sso, emergency, deprovision,
   }
 }

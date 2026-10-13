@@ -4,10 +4,10 @@
  * https://learn.microsoft.com/en-us/windows/win32/adschema/a-objectguid, https://learn.microsoft.com/en-us/troubleshoot/windows-server/active-directory/useraccountcontrol-manipulate-account-properties,
  * https://learn.microsoft.com/en-us/windows/win32/adsi/search-filter-syntax. Client: ldapts https://github.com/ldapts/ldapts. */
 import { createHash } from 'node:crypto'
-import { Client, InvalidCredentialsError, type Entry } from 'ldapts'
+import { AndFilter, Client, EqualityFilter, FilterParser, InvalidCredentialsError, type Entry, type Filter } from 'ldapts'
 import { IdentityUnavailableError } from '../transports.ts'
 import { normalizeDn, type SsoConfig } from './config.ts'
-import { SsoRejectedError, type PasswordSsoProvider, type SsoIdentity } from './provider.ts'
+import { SsoRejectedError, type DirectoryRecord, type PasswordSsoProvider, type SsoIdentity } from './provider.ts'
 
 type LdapConfig = Extract<SsoConfig, { kind: 'ldap' }>
 
@@ -44,6 +44,17 @@ export function formatObjectGuid(bytes: Buffer): string {
   return `${hex(0, 4, true)}-${hex(4, 6, true)}-${hex(6, 8, true)}-${hex(8, 10)}-${hex(10, 16)}`
 }
 
+/** Inverse of `formatObjectGuid`.
+ * @param guid GUID string as stored in subjects.
+ * @returns The 16 raw bytes.
+ */
+export function parseObjectGuid(guid: string): Buffer {
+  const match = /^([0-9a-f]{8})-([0-9a-f]{4})-([0-9a-f]{4})-([0-9a-f]{4})-([0-9a-f]{12})$/.exec(guid)
+  if (match === null) throw new Error('not a GUID')
+  const le = (hex: string) => Buffer.from(hex, 'hex').reverse()
+  return Buffer.concat([le(match[1]!), le(match[2]!), le(match[3]!), Buffer.from(match[4]! + match[5]!, 'hex')])
+}
+
 /** Stand-in address when the directory has no usable email; same rule as the other providers.
  * @param subject Server-scoped subject.
  * @returns Placeholder address.
@@ -66,19 +77,71 @@ export function createLdapProvider(config: LdapConfig): PasswordSsoProvider {
     const value = Object.entries(entry).find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1]
     return (Array.isArray(value) ? value : value === undefined ? [] : [value]).map(item => Buffer.isBuffer(item) ? item.toString('utf8') : String(item))
   }
+  /** Open a connection (LDAPS, or StartTLS before anything else) and bind as the service account; any failure is an outage. */
+  async function connect(): Promise<Client> {
+    const client = new Client({ url: config.url, timeout: config.timeoutMs, connectTimeout: config.timeoutMs, ...config.startTls ? {} : { tlsOptions }, strictDN: true })
+    try {
+      // The upgraded socket has no host of its own; without it Node would check the certificate against `localhost`.
+      if (config.startTls) await client.startTLS({ ...tlsOptions, host: new URL(config.url).hostname.replace(/^\[|\]$/g, '') })
+      await client.bind(config.bindDn, config.bindPassword)
+      return client
+    } catch {
+      await client.unbind().catch(() => undefined)
+      throw new IdentityUnavailableError('sso')
+    }
+  }
+  /** Group DNs of an entry in the configured mode, normalized. */
+  async function groupsOf(client: Client, entry: Entry): Promise<string[]> {
+    let groups: string[]
+    if (config.groupMode === 'memberOf') groups = all(entry, 'memberOf')
+    else {
+      const value = escapeFilterValue(entry.dn)
+      const groupFilter = config.groupMode === 'nested' ? `(member:${IN_CHAIN}:=${value})` : `(&(objectClass=${escapeFilterValue(config.groupObjectClass)})(member=${value}))`
+      groups = (await client.search(config.groupBaseDn, { scope: 'sub', filter: groupFilter, attributes: ['1.1'] })).searchEntries.map(group => group.dn)
+    }
+    return [...new Set(groups.map(normalizeDn))]
+  }
+  const isGuid = config.idAttribute.toLowerCase() === 'objectguid'
+  /** Filter for a stored ID. objectGUID is matched on its raw bytes through a filter object: ldapts turns `\\XX` escapes in filter strings into
+   * code points, so bytes 0x80 and above would go out UTF-8 encoded and never match. */
+  const idFilter = (id: string): Filter | string => {
+    if (!isGuid) return `(&${config.userFilter}(${config.idAttribute}=${escapeFilterValue(id)}))`
+    const bytes = /^[0-9a-f]{8}-/.test(id) ? parseObjectGuid(id) : Buffer.from(id, 'hex')
+    return new AndFilter({ filters: [FilterParser.parseString(config.userFilter), new EqualityFilter({ attribute: config.idAttribute, value: bytes })] })
+  }
+
+
   return {
     kind: 'ldap',
+    directory: {
+      async lookup(subject): Promise<DirectoryRecord | undefined> {
+        const prefix = `${config.serverId}|`
+        if (!subject.startsWith(prefix)) return undefined
+        const id = subject.slice(prefix.length)
+        if (!id || id.length > 256) return undefined
+        const client = await connect()
+        try {
+          const attributes = ['memberOf', ...config.activeDirectory ? ['userAccountControl'] : []]
+          const { searchEntries } = await client.search(config.baseDn, { scope: 'sub', filter: idFilter(id), sizeLimit: 2, attributes })
+          // Exactly one entry or none; several entries for an immutable ID is a directory fault, not a reason to disable.
+          if (searchEntries.length > 1) throw new IdentityUnavailableError('sso')
+          if (searchEntries.length === 0) return { status: 'missing' }
+          const entry = searchEntries[0]!
+          if (config.activeDirectory && (Number(first(entry, 'userAccountControl')) & ACCOUNTDISABLE)) return { status: 'disabled' }
+          return { status: 'active', groups: await groupsOf(client, entry) }
+        } catch { throw new IdentityUnavailableError('sso') } finally {
+          await client.unbind().catch(() => undefined)
+        }
+      },
+    },
     async authenticate({ username, password }): Promise<SsoIdentity> {
       // RFC 4513 §5.1.2: a simple bind with an empty password is an unauthenticated bind that servers accept, so it is refused here.
       const name = username.trim()
       if (!password || password.length > 1024 || !name || name.length > 256 || /[\u0000-\u001f\u007f]/.test(name)) throw new SsoRejectedError('credentials')
       // One connection per login: no pooled session can ever carry a user's bind into another login.
       // ldapts opens implicit TLS whenever `tlsOptions` is set, so ldap:// with StartTLS must not pass them here.
-      const client = new Client({ url: config.url, timeout: config.timeoutMs, connectTimeout: config.timeoutMs, ...config.startTls ? {} : { tlsOptions }, strictDN: true })
+      const client = await connect()
       try {
-        // The upgraded socket has no host of its own; without it Node would check the certificate against `localhost`.
-        if (config.startTls) await client.startTLS({ ...tlsOptions, host: new URL(config.url).hostname.replace(/^\[|\]$/g, '') })
-        try { await client.bind(config.bindDn, config.bindPassword) } catch { throw new IdentityUnavailableError('sso') }
         const filter = `(&${config.userFilter}(${config.usernameAttribute}=${escapeFilterValue(name)}))`
         const attributes = [config.idAttribute, config.emailAttribute, config.nameAttribute, 'memberOf', ...config.activeDirectory ? ['userAccountControl'] : []]
         let entries: Entry[]
@@ -91,13 +154,7 @@ export function createLdapProvider(config: LdapConfig): PasswordSsoProvider {
         // Zero or several matches look exactly like a wrong password.
         if (entries.length !== 1) throw new SsoRejectedError('credentials')
         const entry = entries[0]!
-        let groups: string[]
-        if (config.groupMode === 'memberOf') groups = all(entry, 'memberOf')
-        else {
-          const value = escapeFilterValue(entry.dn)
-          const groupFilter = config.groupMode === 'nested' ? `(member:${IN_CHAIN}:=${value})` : `(&(objectClass=${escapeFilterValue(config.groupObjectClass)})(member=${value}))`
-          groups = (await client.search(config.groupBaseDn, { scope: 'sub', filter: groupFilter, attributes: ['1.1'] })).searchEntries.map(group => group.dn)
-        }
+        const groups = await groupsOf(client, entry)
         // The user's own bind comes last, after every service search on this connection.
         try { await client.bind(entry.dn, password) } catch (error) {
           if (error instanceof InvalidCredentialsError) throw new SsoRejectedError('credentials')
@@ -111,7 +168,7 @@ export function createLdapProvider(config: LdapConfig): PasswordSsoProvider {
         const subject = `${config.serverId}|${id}`
         const mail = all(entry, config.emailAttribute).map(value => value.trim()).find(value => EMAIL.test(value))
         const display = all(entry, config.nameAttribute).map(value => value.trim()).find(Boolean) ?? name
-        return { subject, email: mail?.toLowerCase() ?? ldapPlaceholderEmail(subject), name: display.slice(0, 128), groups: [...new Set(groups.map(normalizeDn))] }
+        return { subject, email: mail?.toLowerCase() ?? ldapPlaceholderEmail(subject), name: display.slice(0, 128), groups }
       } catch (error) {
         if (error instanceof SsoRejectedError || error instanceof IdentityUnavailableError) throw error
         // TLS failures, timeouts, refused connections and protocol errors: fail closed.

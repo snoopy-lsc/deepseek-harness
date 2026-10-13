@@ -294,9 +294,10 @@ export function publicHandler(deps: PublicDeps): (req: IncomingMessage, res: Ser
 /** Handle private session lookups: `POST /internal/session` with `{ cookie }`, answering the live session or 401.
  * A store failure answers 503 so the router never treats an outage as a valid or cached identity.
  * @param auth Better Auth instance.
+ * @param disabled Whether an account is deprovisioned.
  * @returns Node request listener.
  */
-export function sessionHandler(auth: IdentityAuth): (req: IncomingMessage, res: ServerResponse) => void {
+export function sessionHandler(auth: IdentityAuth, disabled: (userId: string) => boolean = () => false): (req: IncomingMessage, res: ServerResponse) => void {
   return (req, res) => {
     void (async () => {
       if (req.method !== 'POST' || req.url !== SESSION_PATH) throw new HttpError(404, 'not-found')
@@ -310,6 +311,10 @@ export function sessionHandler(auth: IdentityAuth): (req: IncomingMessage, res: 
       try { result = await auth.api.getSession({ headers: new Headers({ cookie }), query: { disableCookieCache: true } }) }
       catch { throw new IdentityUnavailableError('store') }
       if (result === null || !result.user.emailVerified || result.session.expiresAt.getTime() <= Date.now()) throw new HttpError(401, 'unauthenticated')
+      // Disabling deletes the sessions; this check also covers a session minted while the disable was being written.
+      let off: boolean
+      try { off = disabled(result.user.id) } catch { throw new IdentityUnavailableError('store') }
+      if (off) throw new HttpError(401, 'unauthenticated')
       send(res, 200, { userId: parseUserId(result.user.id), sessionId: result.session.id, expiresAt: result.session.expiresAt.getTime() })
     })().catch((error: unknown) => {
       if (error instanceof HttpError) send(res, error.status, { code: error.code })

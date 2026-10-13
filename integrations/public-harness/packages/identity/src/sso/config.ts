@@ -40,6 +40,16 @@ export type SsoConfig =
 /** An SP private key (PEM) with the certificate that carries its public key. */
 export interface SpKeyPair { readonly key: string; readonly cert: string }
 
+/** Automatic deprovisioning (`DSH_SSO_RECONCILE_*`, `DSH_SSO_MAX_INACTIVE_DAYS`). */
+export interface DeprovisionConfig {
+  /** Time between reconciliation runs; 0 turns the scheduler off. */
+  readonly intervalMs: number
+  /** Disable SSO accounts with no sign-in for this many days; 0 turns the policy off. */
+  readonly maxInactiveDays: number
+  /** Directory-driven disables allowed in one run; more means a misconfiguration or a directory fault, so the run disables nobody. */
+  readonly maxDisablePerRun: number
+}
+
 /** Administrator emergency password path; enabled only by a source-address allow-list. */
 export type EmergencyConfig = { readonly enabled: false } | { readonly enabled: true; readonly allowedIps: readonly string[] }
 
@@ -58,7 +68,7 @@ export function normalizeDn(dn: string): string {
  * @param mode Service mode; production requires HTTPS IdP URLs, local mode allows loopback HTTP for the mock IdPs.
  * @returns SSO and emergency settings.
  */
-export function parseSsoEnv(env: Readonly<Record<string, string | undefined>>, mode: 'production' | 'local'): { sso: SsoConfig; emergency: EmergencyConfig } {
+export function parseSsoEnv(env: Readonly<Record<string, string | undefined>>, mode: 'production' | 'local'): { sso: SsoConfig; emergency: EmergencyConfig; deprovision: DeprovisionConfig } {
   const need = (name: string, pattern: RegExp = /^\S(?:.*\S)?$/): string => {
     const value = env[name]
     if (typeof value !== 'string' || value.length > 4096 || /[\r\n\0]/.test(value) || !pattern.test(value)) throw new IdentityConfigError(name)
@@ -234,5 +244,19 @@ export function parseSsoEnv(env: Readonly<Record<string, string | undefined>>, m
     if (allowedIps.some(entry => !validIpEntry(entry))) throw new IdentityConfigError('DSH_SSO_EMERGENCY_ALLOWED_IPS')
     emergency = { enabled: true, allowedIps }
   }
-  return { sso, emergency }
+  const number = (name: string, fallback: string, min: number, max: number, zero = false) => {
+    const value = Number(optional(name, fallback, /^[0-9]{1,7}$/))
+    if (!(zero && value === 0) && (value < min || value > max)) throw new IdentityConfigError(name)
+    return value
+  }
+  const names = ['DSH_SSO_RECONCILE_INTERVAL_MINUTES', 'DSH_SSO_MAX_INACTIVE_DAYS', 'DSH_SSO_RECONCILE_MAX_DISABLE']
+  let deprovision: DeprovisionConfig = { intervalMs: 0, maxInactiveDays: 0, maxDisablePerRun: 10 }
+  if (sso.kind === 'off') {
+    const set = names.find(name => env[name] !== undefined && env[name] !== '')
+    if (set !== undefined) throw new IdentityConfigError(set)
+  } else {
+    deprovision = { intervalMs: number('DSH_SSO_RECONCILE_INTERVAL_MINUTES', '60', 5, 10_080, true) * 60_000, maxInactiveDays: number('DSH_SSO_MAX_INACTIVE_DAYS', '0', 1, 3650, true),
+      maxDisablePerRun: number('DSH_SSO_RECONCILE_MAX_DISABLE', '10', 1, 100_000) }
+  }
+  return { sso, emergency, deprovision }
 }

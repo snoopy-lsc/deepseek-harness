@@ -24,6 +24,20 @@ export interface SsoProvider {
   finish(input: { code: string; redirectUri: string; nonce: string; verifier: string }): Promise<SsoIdentity>
   /** Service-provider metadata to publish, for providers that have it (SAML). */
   metadata?(): string
+  /** Directory reconciliation, for providers with a directory API (WeCom, DingTalk). */
+  readonly directory?: DirectoryLookup
+}
+
+/** What the directory says about one bound subject during reconciliation. `missing` is a definitive "no such user" answer, never an error. */
+export type DirectoryRecord = { readonly status: 'active'; readonly groups: readonly string[] } | { readonly status: 'disabled' } | { readonly status: 'missing' }
+
+/** Directory read used by deprovisioning; providers without a directory API (OIDC, SAML) do not have it. */
+export interface DirectoryLookup {
+  /** Look up one subject.
+   * @param subject Stored subject.
+   * @returns The record, or undefined when the subject belongs to another directory; throws `IdentityUnavailableError` on any error, which never disables anyone.
+   */
+  lookup(subject: string): Promise<DirectoryRecord | undefined>
 }
 
 /** The IdP answered, but what it returned must not sign anyone in; the code is safe to show and to audit. */
@@ -40,4 +54,6 @@ export interface PasswordSsoProvider {
    * @returns The verified identity; throws `SsoRejectedError` (one code for every credential failure) or `IdentityUnavailableError`.
    */
   authenticate(input: { username: string; password: string }): Promise<SsoIdentity>
+  /** Directory reconciliation by immutable ID. */
+  readonly directory?: DirectoryLookup
 }

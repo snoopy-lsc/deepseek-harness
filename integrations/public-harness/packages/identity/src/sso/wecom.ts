@@ -5,7 +5,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { IdentityUnavailableError } from '../transports.ts'
 import type { SsoConfig } from './config.ts'
-import { SsoRejectedError, type SsoIdentity, type SsoProvider } from './provider.ts'
+import { SsoRejectedError, type DirectoryRecord, type SsoIdentity, type SsoProvider } from './provider.ts'
 
 type WecomConfig = Extract<SsoConfig, { kind: 'wecom' }>
 
@@ -79,8 +79,36 @@ export function createWecomProvider(config: WecomConfig, deps: { fetch?: typeof 
     return ids
   }
 
+  /** Department IDs plus, with recursion on, each allowed ancestor of one of them. */
+  async function groupsFor(departments: string[]): Promise<string[]> {
+    const groups = new Set(departments)
+    // A member of a sub-department counts as a member of each allowed ancestor department.
+    if (config.recursiveDepartments) {
+      for (const allowed of config.allowedGroups) {
+        const ids = await subtree(allowed)
+        if (departments.some(id => ids.has(id))) groups.add(allowed)
+      }
+    }
+    return [...groups]
+  }
+
+  const departmentsOf = (member: Record<string, unknown>) => Array.isArray(member.department) ? member.department.flatMap(id => typeof id === 'number' && Number.isSafeInteger(id) ? [String(id)] : []) : []
+
   return {
     kind: 'wecom',
+    directory: {
+      async lookup(subject): Promise<DirectoryRecord | undefined> {
+        const prefix = `${config.corpId}:`
+        if (!subject.startsWith(prefix)) return undefined
+        const member = await api('/cgi-bin/user/get', { userid: subject.slice(prefix.length) })
+        // 60111: no such member (deleted). 60011 (no permission, e.g. the member left the app's visible range) stays an error: it is not proof of departure.
+        if (member.errcode === 60111) return { status: 'missing' }
+        if (member.errcode !== 0) throw new IdentityUnavailableError('sso')
+        // status 1 is active; 2 disabled, 4 not activated and 5 resigned may not sign in.
+        if (member.status !== 1) return { status: 'disabled' }
+        return { status: 'active', groups: await groupsFor(departmentsOf(member)) }
+      },
+    },
     async begin({ redirectUri }) {
       // WeCom has no PKCE or nonce; the stored state (single use, browser-bound) is the CSRF defense the docs ask for.
       const secrets = { state: random(), nonce: random(), verifier: random() }
@@ -101,20 +129,13 @@ export function createWecomProvider(config: WecomConfig, deps: { fetch?: typeof 
       if (member.errcode !== 0) throw new IdentityUnavailableError('sso')
       if (member.status !== 1) throw new SsoRejectedError('inactive')
       const departments = Array.isArray(member.department) ? member.department.flatMap(id => typeof id === 'number' && Number.isSafeInteger(id) ? [String(id)] : []) : []
-      const groups = new Set(departments)
-      if (config.recursiveDepartments) {
-        // A member of a sub-department counts as a member of each allowed ancestor department.
-        for (const allowed of config.allowedGroups) {
-          const ids = await subtree(allowed)
-          if (departments.some(id => ids.has(id))) groups.add(allowed)
-        }
-      }
+      const groups = await groupsFor(departments)
       // userid is unique within one corp and case-insensitive; prefixing the corp ID keeps (provider, subject) unique if the corp ever changes.
       const subject = `${config.corpId}:${userid.toLowerCase()}`
       const directory = [member.biz_mail, member.email].find((value): value is string => typeof value === 'string' && EMAIL.test(value.trim()))
       const email = directory?.trim().toLowerCase() ?? wecomPlaceholderEmail(subject)
       const name = (typeof member.name === 'string' && member.name.trim() ? member.name.trim() : userid).slice(0, 128)
-      return { subject, email, name, groups: [...groups] }
+      return { subject, email, name, groups }
     },
   }
 }

@@ -54,6 +54,8 @@ export function ssoPlugin(deps: SsoPluginDeps) {
     if (userId !== undefined) {
       user = await adapter.findUserById(userId)
       if (user === null) throw fail('account-missing', { ...who, userId })
+      // Deprovisioned accounts stay out until an operator lifts the disable, even when the directory admits them again.
+      if (store.disabledAt(userId) !== undefined) throw fail('disabled', { ...who, userId })
     } else {
       // D2: never merge by email. An address already held by any account (invite, emergency or legacy) refuses the sign-in.
       if (await adapter.findUserByEmail(identity.email) !== null) throw fail('email-in-use', who)
@@ -70,6 +72,7 @@ export function ssoPlugin(deps: SsoPluginDeps) {
     }
     const session = await adapter.createSession(user.id)
     await setSessionCookie(ctx, { session, user })
+    store.touchLogin(kind, identity.subject, clock())
     store.audit({ event: 'sso-sign-in', outcome: 'ok', userId, ...who, ...ip === undefined ? {} : { ip } }, clock())
     return userId
   }

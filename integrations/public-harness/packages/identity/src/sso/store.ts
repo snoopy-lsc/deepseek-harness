@@ -11,7 +11,7 @@ export const AUDIT_RETENTION_MS = 365 * 86_400_000
 
 /** One audit entry; never holds passwords, codes or tokens. */
 export interface AuditEvent {
-  readonly event: 'sso-sign-in' | 'emergency-sign-in' | 'emergency-enroll' | 'emergency-revoke'
+  readonly event: 'sso-sign-in' | 'emergency-sign-in' | 'emergency-enroll' | 'emergency-revoke' | 'sso-disable' | 'sso-enable' | 'sso-reconcile'
   readonly outcome: 'ok' | 'denied' | 'error'
   readonly userId?: string
   readonly email?: string
@@ -26,6 +26,11 @@ export class SsoBindingError extends Error {
   override readonly name = 'SsoBindingError'
   constructor(readonly code: 'origin' | 'conflict') { super(`sso binding refused: ${code}`) }
 }
+
+/** One `(provider, subject)` binding with its last successful sign-in (undefined until the first sign-in after this column existed). */
+export interface SsoLink { readonly provider: string; readonly subject: string; readonly userId: string; readonly createdAt: number; readonly lastLoginAt: number | undefined }
+/** A deprovisioned account. */
+export interface DisabledAccount { readonly userId: string; readonly at: number; readonly reason: string }
 
 /** Saved login state for one browser. */
 export interface LoginState { readonly nonce: string; readonly verifier: string; readonly returnTo: string }
@@ -73,6 +78,19 @@ export interface SsoStore {
   failureCount(key: string, since: number): number
   /** Delete failure rows older than the window, expired login state and expired assertion IDs. */
   pruneFailures(now: number, windowMs: number): void
+  /** Bindings of one provider, oldest first. */
+  listLinks(provider: string): SsoLink[]
+  /** Record a successful sign-in of a bound subject. */
+  touchLogin(provider: string, subject: string, now: number): void
+  /** The disable record of an account, if any. */
+  disabledAt(userId: string): DisabledAccount | undefined
+  /** In one transaction: mark the account disabled, delete all its Better Auth sessions and write an `sso-disable` audit row.
+   * Returns false (and changes nothing) when it was already disabled. */
+  disableUser(userId: string, reason: string, now: number, email?: string): boolean
+  /** Lift a disable; existing sessions are not restored. Returns false when the account was not disabled. */
+  enableUser(userId: string, now: number, email?: string): boolean
+  /** Every disabled account, oldest first. */
+  listDisabled(): DisabledAccount[]
 }
 
 const hash = (value: string) => createHash('sha256').update(`sso-state\0${value}`).digest('hex')
@@ -93,7 +111,12 @@ export function createSsoStore(db: DatabaseSync): SsoStore {
     CREATE TABLE IF NOT EXISTS dsh_sso_assertion (hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS dsh_auth_failure (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL, at INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS dsh_auth_failure_key ON dsh_auth_failure (key, at);
-    CREATE INDEX IF NOT EXISTS dsh_auth_failure_at ON dsh_auth_failure (at);`)
+    CREATE INDEX IF NOT EXISTS dsh_auth_failure_at ON dsh_auth_failure (at);
+    CREATE TABLE IF NOT EXISTS dsh_user_disabled (user_id TEXT PRIMARY KEY, at INTEGER NOT NULL, reason TEXT NOT NULL);`)
+  // Added after the first release: older databases get the column in place; existing rows start without a last sign-in.
+  if (!(db.prepare('PRAGMA table_info(dsh_sso_link)').all() as Array<{ name: string }>).some(column => column.name === 'last_login_at')) {
+    db.exec('ALTER TABLE dsh_sso_link ADD COLUMN last_login_at INTEGER')
+  }
   const insertState = db.prepare('INSERT INTO dsh_sso_state (hash, browser, nonce, verifier, return_to, expires_at) VALUES (?, ?, ?, ?, ?, ?)')
   const takeState = db.prepare('DELETE FROM dsh_sso_state WHERE hash = ? RETURNING browser, nonce, verifier, return_to, expires_at')
   const dropExpired = db.prepare('DELETE FROM dsh_sso_state WHERE expires_at <= ?')
@@ -118,6 +141,16 @@ export function createSsoStore(db: DatabaseSync): SsoStore {
   const deleteFailure = db.prepare('DELETE FROM dsh_auth_failure WHERE id = ?')
   const clearFailures = db.prepare('DELETE FROM dsh_auth_failure WHERE key = ?')
   const pruneFailures = db.prepare('DELETE FROM dsh_auth_failure WHERE at <= ?')
+  const listLinks = db.prepare('SELECT provider, subject, user_id, created_at, last_login_at FROM dsh_sso_link WHERE provider = ? ORDER BY created_at, user_id')
+  const touchLogin = db.prepare('UPDATE dsh_sso_link SET last_login_at = ? WHERE provider = ? AND subject = ?')
+  const readDisabled = db.prepare('SELECT user_id, at, reason FROM dsh_user_disabled WHERE user_id = ?')
+  const insertDisabled = db.prepare('INSERT INTO dsh_user_disabled (user_id, at, reason) VALUES (?, ?, ?) ON CONFLICT(user_id) DO NOTHING')
+  const deleteDisabled = db.prepare('DELETE FROM dsh_user_disabled WHERE user_id = ?')
+  const listDisabled = db.prepare('SELECT user_id, at, reason FROM dsh_user_disabled ORDER BY at, user_id')
+  // Better Auth's own session table: deleting the rows revokes the sessions on the next lookup, because the cookie cache is off.
+  // Prepared on first use: the table is created by Better Auth's migration, after this store.
+  let dropSessions: ReturnType<DatabaseSync['prepare']> | undefined
+  const disabledRow = (row: Record<string, unknown> | undefined): DisabledAccount | undefined => row === undefined ? undefined : { userId: String(row.user_id), at: Number(row.at), reason: String(row.reason) }
   // Usernames and addresses are personal data; only a keyed hash is stored.
   const failureKey = (key: string) => createHash('sha256').update(`auth-failure\0${key}`).digest('hex')
   const origin = (userId: string) => (readOrigin.get(userId) as { origin: AccountOrigin } | undefined)?.origin
@@ -183,6 +216,27 @@ export function createSsoStore(db: DatabaseSync): SsoStore {
     pruneFailures(now, windowMs) {
       pruneFailures.run(now - windowMs); dropExpired.run(now); dropAssertions.run(now)
     },
+    listLinks: provider => (listLinks.all(provider) as Array<Record<string, unknown>>).map(row => ({ provider: String(row.provider), subject: String(row.subject), userId: String(row.user_id),
+      createdAt: Number(row.created_at), lastLoginAt: row.last_login_at === null ? undefined : Number(row.last_login_at) })),
+    touchLogin: (provider, subject, now) => { touchLogin.run(now, provider, subject) },
+    disabledAt: userId => disabledRow(readDisabled.get(userId) as Record<string, unknown> | undefined),
+    disableUser(userId, reason, now, email) {
+      return transaction(() => {
+        if (Number(insertDisabled.run(userId, now, reason).changes) !== 1) return false
+        dropSessions ??= db.prepare('DELETE FROM session WHERE userId = ?')
+        dropSessions.run(userId)
+        insertAudit.run(now, 'sso-disable', 'ok', userId, email ?? null, null, reason)
+        return true
+      })
+    },
+    enableUser(userId, now, email) {
+      return transaction(() => {
+        if (Number(deleteDisabled.run(userId).changes) !== 1) return false
+        insertAudit.run(now, 'sso-enable', 'ok', userId, email ?? null, null, null)
+        return true
+      })
+    },
+    listDisabled: () => (listDisabled.all() as Array<Record<string, unknown>>).map(row => disabledRow(row)!),
   }
   return store
 }

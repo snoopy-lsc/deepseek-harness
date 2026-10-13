@@ -8,7 +8,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { IdentityUnavailableError } from '../transports.ts'
 import type { SsoConfig } from './config.ts'
-import { SsoRejectedError, type SsoIdentity, type SsoProvider } from './provider.ts'
+import { SsoRejectedError, type DirectoryRecord, type SsoIdentity, type SsoProvider } from './provider.ts'
 
 type DingtalkConfig = Extract<SsoConfig, { kind: 'dingtalk' }>
 
@@ -100,8 +100,41 @@ export function createDingtalkProvider(config: DingtalkConfig, deps: { fetch?: t
     return ids
   }
 
+  /** Department IDs plus, with recursion on, each allowed ancestor of one of them. */
+  async function groupsFor(departments: string[]): Promise<string[]> {
+    const groups = new Set(departments)
+    // A member of a sub-department counts as a member of each allowed ancestor department.
+    if (config.recursiveDepartments) {
+      for (const allowed of config.allowedGroups) {
+        const ids = await subtree(allowed)
+        if (departments.some(id => ids.has(id))) groups.add(allowed)
+      }
+    }
+    return [...groups]
+  }
+
   return {
     kind: 'dingtalk',
+    directory: {
+      async lookup(subject): Promise<DirectoryRecord | undefined> {
+        const prefix = `${config.corpId}:`
+        if (!subject.startsWith(prefix)) return undefined
+        const lookup = await oapi('/topapi/user/getbyunionid', { unionid: subject.slice(prefix.length) })
+        // 60121: no such user in this organization (left or deleted).
+        if (lookup.errcode === 60121) return { status: 'missing' }
+        if (lookup.errcode !== 0) throw new IdentityUnavailableError('sso')
+        const { userid, contact_type: contactType } = result(lookup)
+        if (typeof userid !== 'string' || userid === '' || userid.length > 64) throw new IdentityUnavailableError('sso')
+        if (contactType !== 0) return { status: 'missing' }
+        const detail = await oapi('/topapi/v2/user/get', { userid, language: 'zh_CN' })
+        if (detail.errcode === 33012 || detail.errcode === 60121) return { status: 'missing' }
+        if (detail.errcode !== 0) throw new IdentityUnavailableError('sso')
+        const member = result(detail)
+        if (member.active !== true) return { status: 'disabled' }
+        const departments = Array.isArray(member.dept_id_list) ? member.dept_id_list.flatMap(id => typeof id === 'number' && Number.isSafeInteger(id) ? [String(id)] : []) : []
+        return { status: 'active', groups: await groupsFor(departments) }
+      },
+    },
     async begin({ redirectUri }) {
       // DingTalk documents neither PKCE nor a nonce for this flow; the stored state (single use, browser-bound) is the CSRF defense.
       const secrets = { state: random(), nonce: random(), verifier: random() }
@@ -135,19 +168,13 @@ export function createDingtalkProvider(config: DingtalkConfig, deps: { fetch?: t
       const member = result(detail)
       if (member.active !== true) throw new SsoRejectedError('inactive')
       const departments = Array.isArray(member.dept_id_list) ? member.dept_id_list.flatMap(id => typeof id === 'number' && Number.isSafeInteger(id) ? [String(id)] : []) : []
-      const groups = new Set(departments)
-      if (config.recursiveDepartments) {
-        for (const allowed of config.allowedGroups) {
-          const ids = await subtree(allowed)
-          if (departments.some(id => ids.has(id))) groups.add(allowed)
-        }
-      }
+      const groups = await groupsFor(departments)
       // unionId is system-generated and never changes; userid is admin-assigned. The corp prefix keeps (provider, subject) unique per organization.
       const subject = `${config.corpId}:${unionId}`
       const directory = [member.org_email, member.email].find((value): value is string => typeof value === 'string' && EMAIL.test(value.trim()))
       const email = directory?.trim().toLowerCase() ?? dingtalkPlaceholderEmail(subject)
       const name = (typeof member.name === 'string' && member.name.trim() ? member.name.trim() : userid).slice(0, 128)
-      return { subject, email, name, groups: [...groups] }
+      return { subject, email, name, groups }
     },
   }
 }
