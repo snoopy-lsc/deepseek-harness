@@ -97,6 +97,8 @@ sudo -u dsh-identity node …/emergency-cli.js --config /etc/dsh-public/identity
 sudo -u dsh-identity node …/emergency-cli.js --config /etc/dsh-public/identity.json revoke --email admin@corp.example
 ```
 
+`DSH_ADMIN_EMAILS` 以逗号分隔列出管理员地址；紧急账户同样是管理员。任何格式错误的条目都会使服务拒绝启动。`GET /account/api/me` 返回当前登录用户的 `{ id, email, name, role }`，`role` 为 `admin` 或 `member`；Harness Web 读取它来显示系统管理入口，管理 API 在服务端重新校验角色。
+
 紧急登录需要允许的来源地址、密码和新的验证器动态码；每个码只能用一次。普通密码表单拒绝已登记的管理员。每次 SSO 与紧急登录尝试都记入审计，超过 365 天的记录会被删除。
 
 <a id="understand-the-implementation"></a>

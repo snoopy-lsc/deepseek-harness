@@ -52,6 +52,21 @@ export interface IdentityConfig {
   readonly emergency: EmergencyConfig
   /** Automatic deprovisioning of SSO accounts from the environment. */
   readonly deprovision: DeprovisionConfig
+  /** Lower-case addresses granted the administrator role (`DSH_ADMIN_EMAILS`); emergency accounts are administrators too. */
+  readonly admins?: readonly string[]
+}
+
+/** Parse `DSH_ADMIN_EMAILS`: a comma-separated address list; any malformed or empty entry refuses startup.
+ * @param value Raw variable, or undefined when unset.
+ * @returns Lower-case addresses.
+ */
+export function parseAdminEmails(value: string | undefined): readonly string[] {
+  if (value === undefined || value.trim() === '') return []
+  return value.split(',').map(item => {
+    const email = item.trim().toLowerCase()
+    if (!/^[^\s@,]{1,64}@[^\s@,]{1,255}$/.test(email)) throw new IdentityConfigError('DSH_ADMIN_EMAILS')
+    return email
+  })
 }
 
 /** Configuration rejected before any effect; the message names the field, never a value. */
@@ -155,6 +170,7 @@ export function parseIdentityConfig(value: unknown, env: ProviderEnv = process.e
   if (mode === 'production' ? origin.protocol !== 'https:' : !loopback) throw new IdentityConfigError('publicOrigin')
   const { mail, captcha } = parseProviderEnv(env, mode)
   const { sso, emergency, deprovision } = parseSsoEnv(env, mode)
+  const admins = parseAdminEmails(env.DSH_ADMIN_EMAILS)
   const l = object(r.limits, ['signupPerIpPerHour', 'signupPerDay', 'resetPerEmailPerHour', 'loginPerIpPerMinute'], [], 'limits')
   if (r.enrollmentOpen !== undefined && typeof r.enrollmentOpen !== 'boolean') throw new IdentityConfigError('enrollmentOpen')
   const sessionSocketGid = r.sessionSocketGid
@@ -165,6 +181,6 @@ export function parseIdentityConfig(value: unknown, env: ProviderEnv = process.e
     limits: { signupPerIpPerHour: count(l.signupPerIpPerHour, 'limits'), signupPerDay: count(l.signupPerDay, 'limits'),
       resetPerEmailPerHour: count(l.resetPerEmailPerHour, 'limits'), loginPerIpPerMinute: count(l.loginPerIpPerMinute, 'limits') },
     sessionTtlSeconds: count(r.sessionTtlSeconds, 'sessionTtlSeconds'), verificationTtlSeconds: count(r.verificationTtlSeconds, 'verificationTtlSeconds'),
-    clientIpHeader: text(r.clientIpHeader, 'clientIpHeader', /^[a-z][a-z0-9-]{0,63}$/), enrollmentOpen: r.enrollmentOpen === true, sso, emergency, deprovision,
+    clientIpHeader: text(r.clientIpHeader, 'clientIpHeader', /^[a-z][a-z0-9-]{0,63}$/), enrollmentOpen: r.enrollmentOpen === true, sso, emergency, deprovision, admins,
   }
 }

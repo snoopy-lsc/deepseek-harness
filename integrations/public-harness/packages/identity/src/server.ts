@@ -22,6 +22,10 @@ export const EMERGENCY_LOCKOUT = { window: 15 * 60_000, perAccount: 5 } as const
 /** SAML assertion consumer service (HTTP-POST binding). */
 export const SAML_ACS_PATH = '/api/auth/sso/acs'
 const SAML_METADATA_PATH = '/api/auth/sso/metadata'
+/** The signed-in user's profile and server-decided role, read by the Harness Web shell. */
+export const ME_PATH = '/account/api/me'
+/** Roles the identity service assigns; only the server decides them. */
+export type AccountRole = 'admin' | 'member'
 const escapeHtml = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 /** Read the ACS form; anything but base64 and a plain RelayState is refused before it reaches a page or the provider. */
 function acsForm(body: Buffer): { response: string; relayState: string } {
@@ -131,6 +135,19 @@ export function publicHandler(deps: PublicDeps): (req: IncomingMessage, res: Ser
     const id = userIdByEmail(email)
     return id === undefined ? undefined : database.sso.origin(id)
   }
+  const admins = new Set(config.admins ?? [])
+  // The signed-in user's own profile and role. The role is decided here, from configuration and the account origin; the browser only reads it.
+  const profile = async (req: IncomingMessage, res: ServerResponse) => {
+    let result
+    try { result = await auth.api.getSession({ headers: new Headers({ cookie: req.headers.cookie ?? '' }), query: { disableCookieCache: true } }) }
+    catch { throw new IdentityUnavailableError('store') }
+    if (result === null || !result.user.emailVerified) throw new HttpError(401, 'unauthenticated')
+    const email = result.user.email.toLowerCase()
+    let origin
+    try { origin = database.sso.origin(result.user.id) } catch { throw new IdentityUnavailableError('store') }
+    const role: AccountRole = admins.has(email) || origin === 'emergency' ? 'admin' : 'member'
+    send(res, 200, { id: result.user.id, email, name: result.user.name, role })
+  }
   return (req, res) => {
     void (async () => {
       const path = (req.url ?? '/').split('?')[0]
@@ -158,6 +175,7 @@ export function publicHandler(deps: PublicDeps): (req: IncomingMessage, res: Ser
         res.end(deps.ssoMetadata)
         return
       }
+      if (path === ME_PATH && req.method === 'GET') { await profile(req, res); return }
       if (deps.pages !== undefined && await deps.pages(req, res, url)) return
       if (!url.pathname.startsWith('/api/auth/')) throw new HttpError(404, 'not-found')
       const ip = clientIp(req, config.clientIpHeader)

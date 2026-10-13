@@ -97,6 +97,8 @@ sudo -u dsh-identity node …/emergency-cli.js --config /etc/dsh-public/identity
 sudo -u dsh-identity node …/emergency-cli.js --config /etc/dsh-public/identity.json revoke --email admin@corp.example
 ```
 
+`DSH_ADMIN_EMAILS` lists administrator addresses, comma-separated; emergency accounts are administrators as well. A malformed entry refuses startup. `GET /account/api/me` answers the signed-in user's `{ id, email, name, role }` with `role` `admin` or `member`; Harness Web reads it to show the administration entry, and administrator APIs re-check the role on the server.
+
 An emergency sign-in needs an allowed source address, the password and a fresh authenticator code; each code works once. The ordinary password form refuses enrolled administrators. Every SSO and emergency attempt is audited, and rows older than 365 days are deleted.
 
 <a id="understand-the-implementation"></a>
