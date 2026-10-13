@@ -6,6 +6,7 @@ import { chromium, type Browser } from 'playwright-core'
 import { startIdentity } from '../src/index.ts'
 import { call, mailbox, setup } from './helpers.ts'
 import { MOCK_CLIENT_ID, MOCK_CLIENT_SECRET, startMockIdp, type MockIdp } from './mock-oidc.ts'
+import { MOCK_LDAP_BASE, MOCK_LDAP_BIND_DN, MOCK_LDAP_BIND_PASSWORD, MOCK_USER_PASSWORD, startMockLdap } from './mock-ldap.ts'
 import { MOCK_IDP_ENTITY_ID, MOCK_SP_ENTITY_ID, startMockSaml } from './mock-saml.ts'
 import { MOCK_DT_CLIENT_ID, MOCK_DT_CORP_ID, MOCK_DT_SECRET, startMockDingtalk } from './mock-dingtalk.ts'
 import { MOCK_AGENT_ID, MOCK_CORP_ID, MOCK_WECOM_SECRET, startMockWecom } from './mock-wecom.ts'
@@ -152,6 +153,37 @@ describe.skipIf(executable === undefined)('SAML login in a real browser', () => 
     await page.waitForURL(/\/account\/\?return=%2Fu%2F/)
     await page.waitForFunction(() => (document.querySelector('[data-session] p')?.textContent ?? '').includes('alice@corp.example'))
     expect((await context.cookies(SAML_ORIGIN)).some(entry => entry.name === 'dsh-account.session_token')).toBe(true)
+    await context.close()
+  })
+})
+
+describe.skipIf(executable === undefined)('LDAP login form in a real browser', () => {
+  const LDAP_ORIGIN = 'http://127.0.0.1:18448'
+  const local: Array<() => Promise<void>> = []
+  let browser: Browser
+  beforeAll(async () => {
+    const mock = await startMockLdap('starttls'); local.push(() => mock.close())
+    const { config } = await setup({ publicOrigin: LDAP_ORIGIN }, { DSH_SSO_PROVIDER: 'ldap', DSH_LDAP_URL: mock.url, DSH_LDAP_STARTTLS: 'true', DSH_LDAP_CA_FILE: mock.pki.caFile,
+      DSH_LDAP_BIND_DN: MOCK_LDAP_BIND_DN, DSH_LDAP_BIND_PASSWORD: MOCK_LDAP_BIND_PASSWORD, DSH_LDAP_BASE_DN: MOCK_LDAP_BASE, DSH_LDAP_USER_FILTER: '(objectClass=user)',
+      DSH_SSO_ALLOWED_GROUPS: `cn=Engineering,ou=groups,${MOCK_LDAP_BASE}` })
+    const identity = await startIdentity(config, { mail: mailbox().mail }); local.push(() => identity.close())
+    const proxy = await front(config.publicSocket, LDAP_ORIGIN); local.push(async () => { proxy.closeAllConnections(); proxy.close() })
+    browser = await chromium.launch({ executablePath: executable!, headless: true, chromiumSandbox: false })
+    local.push(() => browser.close())
+  })
+  afterAll(async () => { for (const cleanup of local.splice(0).reverse()) await cleanup() })
+
+  it('wrong_password_shows_the_generic_message_then_the_right_one_signs_in', async () => {
+    const context = await browser.newContext({ locale: 'zh-CN' }), page = await context.newPage()
+    await page.goto(`${LDAP_ORIGIN}/account/login`)
+    await page.fill('[data-action=ldap] [name=username]', 'alice')
+    await page.fill('[data-action=ldap] [name=password]', 'wrong-password')
+    await page.click('[data-action=ldap] button[type=submit]')
+    await page.waitForFunction(() => document.querySelector('[role=alert]')?.textContent === '登录失败。请检查用户名和密码，或联系管理员。')
+    await page.fill('[data-action=ldap] [name=password]', MOCK_USER_PASSWORD)
+    await page.click('[data-action=ldap] button[type=submit]')
+    await page.waitForURL(/\/account\/\?return=%2Fu%2F/)
+    await page.waitForFunction(() => (document.querySelector('[data-session] p')?.textContent ?? '') === 'alice@corp.example')
     await context.close()
   })
 })

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { IdentityConfigError } from '../src/config.ts'
 import { parseSsoEnv } from '../src/sso/config.ts'
 import { setup } from './helpers.ts'
+import { makeTestPki } from './mock-ldap.ts'
 import { makeTestKeys } from './mock-saml.ts'
 
 const SECRET = 'placeholder-client-secret-value'
@@ -27,7 +28,7 @@ describe('SSO environment', () => {
 
   it('invalid_settings_refuse_start_naming_the_variable', () => {
     const cases: Array<[Record<string, string | undefined>, string, 'production' | 'local']> = [
-      [{ DSH_SSO_PROVIDER: 'ldap' }, 'DSH_SSO_PROVIDER', 'production'],
+      [{ DSH_SSO_PROVIDER: 'kerberos' }, 'DSH_SSO_PROVIDER', 'production'],
       [{ DSH_SSO_PROVIDER: 'OIDC' }, 'DSH_SSO_PROVIDER', 'production'],
       [oidc({ DSH_OIDC_CLIENT_ID: undefined }), 'DSH_OIDC_CLIENT_ID', 'production'],
       [oidc({ DSH_OIDC_CLIENT_SECRET: '' }), 'DSH_OIDC_CLIENT_SECRET', 'production'],
@@ -157,5 +158,37 @@ describe('WeCom environment', () => {
       ]
       for (const [env, name] of cases) expect(() => parseSsoEnv(env, 'production'), name).toThrow(name)
     } finally { keys.cleanup() }
+  })
+
+  it('ldap_settings_require_tls_and_parse_ad_and_openldap_defaults', () => {
+    const pki = makeTestPki()
+    try {
+      const ldap = (extra: Record<string, string | undefined> = {}) => ({ DSH_SSO_PROVIDER: 'ldap', DSH_LDAP_URL: 'ldaps://dc1.corp.example', DSH_LDAP_BIND_DN: 'CN=svc,OU=Service,DC=corp,DC=example',
+        DSH_LDAP_BIND_PASSWORD: 'placeholder-bind-value', DSH_LDAP_BASE_DN: 'DC=corp,DC=example', DSH_SSO_ALLOWED_GROUPS: 'CN=Engineering, OU=Groups,DC=corp,DC=example;cn=ops,dc=corp,dc=example', ...extra })
+      expect(parseSsoEnv(ldap(), 'production').sso).toEqual({ kind: 'ldap', url: 'ldaps://dc1.corp.example', startTls: false, bindDn: 'CN=svc,OU=Service,DC=corp,DC=example',
+        bindPassword: 'placeholder-bind-value', baseDn: 'DC=corp,DC=example', userFilter: '(&(objectCategory=person)(objectClass=user))', usernameAttribute: 'sAMAccountName',
+        idAttribute: 'objectGUID', emailAttribute: 'mail', nameAttribute: 'displayName', groupMode: 'memberOf', groupBaseDn: 'DC=corp,DC=example', groupObjectClass: 'group',
+        activeDirectory: true, serverId: 'dc1.corp.example', allowedGroups: ['cn=engineering,ou=groups,dc=corp,dc=example', 'cn=ops,dc=corp,dc=example'], timeoutMs: 5000 })
+      expect(parseSsoEnv(ldap({ DSH_LDAP_URL: 'ldap://ldap.corp.example:389', DSH_LDAP_STARTTLS: 'true', DSH_LDAP_SCHEMA: 'openldap', DSH_LDAP_CA_FILE: pki.caFile, DSH_LDAP_GROUP_MODE: 'search' }), 'production').sso)
+        .toMatchObject({ startTls: true, ca: pki.ca, usernameAttribute: 'uid', idAttribute: 'entryUUID', groupObjectClass: 'groupOfNames', activeDirectory: false, serverId: 'ldap.corp.example:389' })
+      expect(parseSsoEnv(ldap({ DSH_LDAP_URL: 'ldap://127.0.0.1:3389' }), 'local').sso).toMatchObject({ url: 'ldap://127.0.0.1:3389', startTls: false })
+      const cases: Array<[Record<string, string | undefined>, string]> = [
+        [ldap({ DSH_LDAP_URL: 'ldap://dc1.corp.example' }), 'DSH_LDAP_URL'],
+        [ldap({ DSH_LDAP_URL: 'ldap://127.0.0.1:3389' }), 'DSH_LDAP_URL'],
+        [ldap({ DSH_LDAP_URL: 'ldaps://dc1.corp.example', DSH_LDAP_STARTTLS: 'true' }), 'DSH_LDAP_URL'],
+        [ldap({ DSH_LDAP_URL: 'ldaps://dc1.corp.example/dc=corp?x' }), 'DSH_LDAP_URL'],
+        [ldap({ DSH_LDAP_BIND_PASSWORD: '' }), 'DSH_LDAP_BIND_PASSWORD'],
+        [ldap({ DSH_LDAP_BIND_DN: undefined }), 'DSH_LDAP_BIND_DN'],
+        [ldap({ DSH_LDAP_CA_FILE: `${pki.dir}/missing.crt` }), 'DSH_LDAP_CA_FILE'],
+        [ldap({ DSH_LDAP_CA_FILE: `${pki.dir}/ca.key` }), 'DSH_LDAP_CA_FILE'],
+        [ldap({ DSH_LDAP_USER_FILTER: '(objectClass=user' }), 'DSH_LDAP_USER_FILTER'],
+        [ldap({ DSH_LDAP_USER_FILTER: 'objectClass=user' }), 'DSH_LDAP_USER_FILTER'],
+        [ldap({ DSH_LDAP_GROUP_MODE: 'nested', DSH_LDAP_SCHEMA: 'openldap' }), 'DSH_LDAP_GROUP_MODE'],
+        [ldap({ DSH_SSO_ALLOWED_GROUPS: 'engineering' }), 'DSH_SSO_ALLOWED_GROUPS'],
+        [ldap({ DSH_LDAP_ID_ATTRIBUTE: 'object guid' }), 'DSH_LDAP_ID_ATTRIBUTE'],
+        [ldap({ DSH_LDAP_TIMEOUT_MS: '100' }), 'DSH_LDAP_TIMEOUT_MS'],
+      ]
+      for (const [env, name] of cases) expect(() => parseSsoEnv(env, 'production'), name).toThrow(name)
+    } finally { pki.cleanup() }
   })
 })
