@@ -26,7 +26,7 @@ describe('SSO environment', () => {
 
   it('invalid_settings_refuse_start_naming_the_variable', () => {
     const cases: Array<[Record<string, string | undefined>, string, 'production' | 'local']> = [
-      [{ DSH_SSO_PROVIDER: 'dingtalk' }, 'DSH_SSO_PROVIDER', 'production'],
+      [{ DSH_SSO_PROVIDER: 'saml' }, 'DSH_SSO_PROVIDER', 'production'],
       [{ DSH_SSO_PROVIDER: 'OIDC' }, 'DSH_SSO_PROVIDER', 'production'],
       [oidc({ DSH_OIDC_CLIENT_ID: undefined }), 'DSH_OIDC_CLIENT_ID', 'production'],
       [oidc({ DSH_OIDC_CLIENT_SECRET: '' }), 'DSH_OIDC_CLIENT_SECRET', 'production'],
@@ -101,5 +101,31 @@ describe('WeCom environment', () => {
       expect((error as IdentityConfigError).field, field).toBe(field)
       expect((error as Error).message).not.toContain(WECOM_SECRET)
     }
+  })
+
+  const DT_SECRET = 'placeholder-dingtalk-app-secret'
+  const dingtalk = (extra: Record<string, string | undefined> = {}) => ({ DSH_SSO_PROVIDER: 'dingtalk', DSH_DINGTALK_CLIENT_ID: 'dingplaceholderkey', DSH_DINGTALK_CLIENT_SECRET: DT_SECRET,
+    DSH_DINGTALK_CORP_ID: 'dingplaceholdercorp', DSH_SSO_ALLOWED_GROUPS: '2, 409', ...extra })
+  it('dingtalk_settings_parse_with_public_defaults', () => {
+    expect(parseSsoEnv(dingtalk(), 'production').sso).toEqual({ kind: 'dingtalk', clientId: 'dingplaceholderkey', clientSecret: DT_SECRET, corpId: 'dingplaceholdercorp',
+      apiBase: 'https://api.dingtalk.com', oapiBase: 'https://oapi.dingtalk.com', loginUrl: 'https://login.dingtalk.com/oauth2/auth', exclusiveLogin: false,
+      allowedGroups: ['2', '409'], recursiveDepartments: true, timeoutMs: 5000 })
+    expect(parseSsoEnv(dingtalk({ DSH_DINGTALK_API_BASE: 'https://api.ding.corp.example', DSH_DINGTALK_OAPI_BASE: 'https://oapi.ding.corp.example/',
+      DSH_DINGTALK_LOGIN_URL: 'https://login.ding.corp.example/oauth2/auth', DSH_DINGTALK_EXCLUSIVE_LOGIN: 'true', DSH_DINGTALK_DEPARTMENT_RECURSIVE: 'false' }), 'production').sso)
+      .toMatchObject({ apiBase: 'https://api.ding.corp.example', oapiBase: 'https://oapi.ding.corp.example', exclusiveLogin: true, recursiveDepartments: false })
+  })
+  it('invalid_dingtalk_settings_refuse_start', () => {
+    const cases: Array<[Record<string, string | undefined>, string]> = [
+      [dingtalk({ DSH_DINGTALK_CLIENT_ID: undefined }), 'DSH_DINGTALK_CLIENT_ID'],
+      [dingtalk({ DSH_DINGTALK_CLIENT_SECRET: '' }), 'DSH_DINGTALK_CLIENT_SECRET'],
+      [dingtalk({ DSH_DINGTALK_CORP_ID: undefined }), 'DSH_DINGTALK_CORP_ID'],
+      [dingtalk({ DSH_SSO_ALLOWED_GROUPS: 'sales' }), 'DSH_SSO_ALLOWED_GROUPS'],
+      [dingtalk({ DSH_DINGTALK_OAPI_BASE: 'http://oapi.ding.corp.example' }), 'DSH_DINGTALK_OAPI_BASE'],
+      [dingtalk({ DSH_DINGTALK_API_BASE: 'https://api.example/v1.0' }), 'DSH_DINGTALK_API_BASE'],
+      [dingtalk({ DSH_DINGTALK_LOGIN_URL: 'https://login.example/?client_id=x' }), 'DSH_DINGTALK_LOGIN_URL'],
+      [dingtalk({ DSH_DINGTALK_EXCLUSIVE_LOGIN: '1' }), 'DSH_DINGTALK_EXCLUSIVE_LOGIN'],
+      [dingtalk({ DSH_DINGTALK_TIMEOUT_MS: '70000' }), 'DSH_DINGTALK_TIMEOUT_MS'],
+    ]
+    for (const [env, name] of cases) expect(() => parseSsoEnv(env, 'production'), name).toThrow(name)
   })
 })

@@ -6,6 +6,7 @@ import { chromium, type Browser } from 'playwright-core'
 import { startIdentity } from '../src/index.ts'
 import { call, mailbox, setup } from './helpers.ts'
 import { MOCK_CLIENT_ID, MOCK_CLIENT_SECRET, startMockIdp, type MockIdp } from './mock-oidc.ts'
+import { MOCK_DT_CLIENT_ID, MOCK_DT_CORP_ID, MOCK_DT_SECRET, startMockDingtalk } from './mock-dingtalk.ts'
 import { MOCK_AGENT_ID, MOCK_CORP_ID, MOCK_WECOM_SECRET, startMockWecom } from './mock-wecom.ts'
 
 const executable = process.env.PUBLIC_HARNESS_E2E_BROWSER
@@ -94,6 +95,33 @@ describe.skipIf(executable === undefined)('WeCom QR login in a real browser', ()
     await page.waitForURL(/\/account\/\?return=%2Fu%2F/)
     await page.waitForFunction(() => /@sso\.invalid$/.test(document.querySelector('[data-session] p')?.textContent ?? ''))
     expect((await context.cookies(WECOM_ORIGIN)).some(entry => entry.name === 'dsh-account.session_token')).toBe(true)
+    await context.close()
+  })
+})
+
+describe.skipIf(executable === undefined)('DingTalk login in a real browser', () => {
+  const DT_ORIGIN = 'http://127.0.0.1:18446'
+  const local: Array<() => Promise<void>> = []
+  let browser: Browser
+  beforeAll(async () => {
+    const mock = await startMockDingtalk(); local.push(() => mock.close())
+    const { config } = await setup({ publicOrigin: DT_ORIGIN }, { DSH_SSO_PROVIDER: 'dingtalk', DSH_DINGTALK_CLIENT_ID: MOCK_DT_CLIENT_ID, DSH_DINGTALK_CLIENT_SECRET: MOCK_DT_SECRET,
+      DSH_DINGTALK_CORP_ID: MOCK_DT_CORP_ID, DSH_DINGTALK_API_BASE: mock.base, DSH_DINGTALK_OAPI_BASE: mock.base, DSH_DINGTALK_LOGIN_URL: mock.loginUrl, DSH_SSO_ALLOWED_GROUPS: '2' })
+    const identity = await startIdentity(config, { mail: mailbox().mail }); local.push(() => identity.close())
+    const proxy = await front(config.publicSocket, DT_ORIGIN); local.push(async () => { proxy.closeAllConnections(); proxy.close() })
+    browser = await chromium.launch({ executablePath: executable!, headless: true, chromiumSandbox: false })
+    local.push(() => browser.close())
+  })
+  afterAll(async () => { for (const cleanup of local.splice(0).reverse()) await cleanup() })
+
+  it('scan_lands_on_the_account_page', async () => {
+    // The mock authorize page stands in for the QR scan and consent, and redirects straight back with an authCode.
+    const context = await browser.newContext({ locale: 'zh-CN' }), page = await context.newPage()
+    await page.goto(`${DT_ORIGIN}/account/login`)
+    await page.click('[data-sso-start]')
+    await page.waitForURL(/\/account\/\?return=%2Fu%2F/)
+    await page.waitForFunction(() => /^dingtalk-[0-9a-f]{32}@sso\.invalid$/.test(document.querySelector('[data-session] p')?.textContent ?? ''))
+    expect((await context.cookies(DT_ORIGIN)).some(entry => entry.name === 'dsh-account.session_token')).toBe(true)
     await context.close()
   })
 })
