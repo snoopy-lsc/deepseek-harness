@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it } from 'vitest'
 import { startIdentity } from '../src/index.ts'
+import { IdentityUnavailableError } from '../src/transports.ts'
 import { call, linkIn, mailbox, sessionCookie, setup } from './helpers.ts'
 
 const open: { close(): Promise<void> }[] = []
@@ -85,6 +86,22 @@ describe('verified registration', () => {
     const service = await startIdentity(broken, { mail: async () => { throw new Error('smtp down') } }); open.push(service)
     await signup(broken.publicSocket, 'h@example.test')
     expect((await signin(broken.publicSocket, 'h@example.test')).status).toBe(403)
+  })
+
+  it('provider outage answers 503 and admits nothing', async () => {
+    const { config } = await setup()
+    const service = await startIdentity(config, { mail: mailbox().mail, captcha: { kind: 'aliyun', invites: false, verify: async () => { throw new IdentityUnavailableError('captcha') } } })
+    open.push(service)
+    expect((await signup(config.publicSocket, 'i@example.test')).status).toBe(503)
+    const db = new DatabaseSync(config.databaseFile)
+    expect(db.prepare('SELECT count(*) AS n FROM user').get()).toEqual({ n: 0 })
+    db.close()
+  })
+
+  it('provider settings come only from the environment', async () => {
+    await expect(setup({ mail: { kind: 'sendmail', command: '/usr/sbin/sendmail', from: 'a@b.example' } })).rejects.toThrow(/fields/)
+    await expect(setup({}, { DSH_CAPTCHA_PROVIDER: 'hcaptcha' })).rejects.toThrow(/DSH_CAPTCHA_PROVIDER/)
+    await expect(setup({}, { DSH_MAIL_PROVIDER: undefined })).rejects.toThrow(/DSH_MAIL_PROVIDER/)
   })
 
   it('production configuration rejects test transports and plain HTTP', async () => {

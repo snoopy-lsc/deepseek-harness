@@ -1,5 +1,5 @@
-/** Private SQLite storage: Better Auth tables plus persistent admission counters and consumed one-time tokens. */
-import { createHash } from 'node:crypto'
+/** Private SQLite storage: Better Auth tables plus persistent admission counters, consumed one-time tokens and invite codes. */
+import { createHash, randomBytes } from 'node:crypto'
 import { constants } from 'node:fs'
 import { lstat, open } from 'node:fs/promises'
 import { DatabaseSync } from 'node:sqlite'
@@ -13,8 +13,30 @@ export interface IdentityDatabase {
   claimToken(kind: string, token: string, now?: number): boolean
   /** Undo a claim whose request did not complete, so a valid token is not burned by a failure. */
   releaseToken(kind: string, token: string): void
+  /** Store a new invite (only its hash) and return the code, shown once. */
+  mintInvite(ttlMs: number, note?: string, now?: number): { id: string; code: string; expiresAt: number }
+  /** Atomically mark an unexpired, unused invite as used by `email`; false for unknown, expired, revoked or used codes. */
+  claimInvite(code: string, email: string, now?: number): boolean
+  /** Return a claimed invite to unused when the registration it admitted did not complete. */
+  releaseInvite(code: string): void
+  /** Revoke an unused invite by its ID; false when no unused invite has that ID. */
+  revokeInvite(id: string, now?: number): boolean
+  /** Invite metadata for operators; never the code. */
+  listInvites(): InviteRecord[]
   close(): void
 }
+
+/** Operator view of one invite. */
+export interface InviteRecord { readonly id: string; readonly createdAt: number; readonly expiresAt: number; readonly usedAt: number | null; readonly usedBy: string | null; readonly revokedAt: number | null; readonly note: string | null }
+
+/** Invite code shape: `dshinv-` plus 26 base32 characters (130 random bits). */
+export const INVITE_CODE = /^dshinv-[a-z2-7]{26}$/
+const BASE32 = 'abcdefghijklmnopqrstuvwxyz234567'
+function newInviteCode(): string {
+  const bytes = randomBytes(26)
+  return `dshinv-${Array.from(bytes, byte => BASE32[byte & 31]).join('')}`
+}
+const inviteHash = (code: string) => createHash('sha256').update(`invite\0${code}`).digest('hex')
 
 const digest = (kind: string, token: string) => createHash('sha256').update(`${kind}\0${token}`).digest('hex')
 
@@ -29,13 +51,33 @@ export async function openIdentityDatabase(file: string): Promise<IdentityDataba
   const db = new DatabaseSync(file)
   db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
     CREATE TABLE IF NOT EXISTS dsh_rate (key TEXT PRIMARY KEY, window_start INTEGER NOT NULL, count INTEGER NOT NULL);
-    CREATE TABLE IF NOT EXISTS dsh_used_token (hash TEXT PRIMARY KEY, used_at INTEGER NOT NULL);`)
+    CREATE TABLE IF NOT EXISTS dsh_used_token (hash TEXT PRIMARY KEY, used_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS dsh_invite (hash TEXT PRIMARY KEY, id TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
+      used_at INTEGER, used_by TEXT, revoked_at INTEGER, note TEXT);`)
   const read = db.prepare('SELECT window_start, count FROM dsh_rate WHERE key = ?')
   const write = db.prepare('INSERT INTO dsh_rate (key, window_start, count) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET window_start = excluded.window_start, count = excluded.count')
   const claim = db.prepare('INSERT OR IGNORE INTO dsh_used_token (hash, used_at) VALUES (?, ?)')
   const release = db.prepare('DELETE FROM dsh_used_token WHERE hash = ?')
+  const insertInvite = db.prepare('INSERT INTO dsh_invite (hash, id, created_at, expires_at, note) VALUES (?, ?, ?, ?, ?)')
+  // A single UPDATE with every condition in its WHERE clause is atomic, so two concurrent signups cannot both claim one code.
+  const claimInvite = db.prepare('UPDATE dsh_invite SET used_at = ?, used_by = ? WHERE hash = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?')
+  const releaseInvite = db.prepare('UPDATE dsh_invite SET used_at = NULL, used_by = NULL WHERE hash = ?')
+  const revokeInvite = db.prepare('UPDATE dsh_invite SET revoked_at = ? WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL')
+  const listInvites = db.prepare('SELECT id, created_at, expires_at, used_at, used_by, revoked_at, note FROM dsh_invite ORDER BY created_at')
   return {
     db,
+    mintInvite(ttlMs, note, now = Date.now()) {
+      if (!Number.isSafeInteger(ttlMs) || ttlMs < 60_000) throw new Error('invite lifetime must be at least one minute')
+      const code = newInviteCode(), hash = inviteHash(code), id = hash.slice(0, 12)
+      insertInvite.run(hash, id, now, now + ttlMs, note ?? null)
+      return { id, code, expiresAt: now + ttlMs }
+    },
+    claimInvite: (code, email, now = Date.now()) => INVITE_CODE.test(code) && Number(claimInvite.run(now, email, inviteHash(code), now).changes) === 1,
+    releaseInvite: code => { if (INVITE_CODE.test(code)) releaseInvite.run(inviteHash(code)) },
+    revokeInvite: (id, now = Date.now()) => Number(revokeInvite.run(now, id).changes) === 1,
+    listInvites: () => (listInvites.all() as Array<Record<string, number | string | null>>).map(row => ({ id: String(row.id), createdAt: Number(row.created_at),
+      expiresAt: Number(row.expires_at), usedAt: row.used_at === null ? null : Number(row.used_at), usedBy: row.used_by === null ? null : String(row.used_by),
+      revokedAt: row.revoked_at === null ? null : Number(row.revoked_at), note: row.note === null ? null : String(row.note) })),
     consume(key, windowMs, max, now = Date.now()) {
       // BEGIN IMMEDIATE takes the write lock first, so two processes cannot both read the last free unit.
       db.exec('BEGIN IMMEDIATE')

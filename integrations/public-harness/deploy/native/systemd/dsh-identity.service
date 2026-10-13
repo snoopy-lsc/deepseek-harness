@@ -8,10 +8,13 @@ Type=simple
 User=dsh-identity
 Group=dsh-identity
 Environment=DSH_HOME=/var/lib/dsh-public/identity-home
+# Mail and CAPTCHA providers and their secrets (DSH_MAIL_*, DSH_CAPTCHA_*, DSH_SMTP_*, DSH_ALIYUN_CAPTCHA_*, DSH_TENCENT_CAPTCHA_*).
+# The operator creates this root-owned 0600 file on the host; it is never generated or shipped. Missing file or variables refuse startup.
+EnvironmentFile=/etc/dsh-public/identity-secrets/identity.env
 ExecStart=/usr/bin/node /opt/dsh-public/harness/apps/cli/lib/bin.js --profile identity
 Restart=on-failure
 RestartSec=3
-# Outbound HTTPS is needed only for CAPTCHA verification; mail goes through the local sendmail command.
+# Outbound HTTPS is needed for CAPTCHA verification (aliyun, tencent, turnstile); outbound SMTP over TLS for the smtp mail provider.
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

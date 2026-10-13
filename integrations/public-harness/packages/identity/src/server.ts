@@ -6,7 +6,8 @@ import { COOKIE_PREFIX } from './auth.ts'
 import type { IdentityConfig } from './config.ts'
 import type { IdentityDatabase } from './database.ts'
 import { MAX_SESSION_WIRE_BYTES, SESSION_PATH } from './session-wire.ts'
-import { IdentityUnavailableError, type CaptchaVerifier } from './transports.ts'
+import type { CaptchaProvider } from './captcha.ts'
+import { IdentityUnavailableError } from './transports.ts'
 import { parseUserId } from '@public-harness/contracts'
 
 const MAX_BODY = 64 * 1024
@@ -72,7 +73,7 @@ export interface PublicDeps {
   readonly config: IdentityConfig
   readonly auth: IdentityAuth
   readonly database: IdentityDatabase
-  readonly captcha: CaptchaVerifier
+  readonly captcha: CaptchaProvider
   readonly pages?: PagesHandler
   readonly clock?: () => number
 }
@@ -90,7 +91,13 @@ export function publicHandler(deps: PublicDeps): (req: IncomingMessage, res: Ser
   }
   const captcha = async (req: IncomingMessage, ip: string) => {
     const response = req.headers['x-captcha-response']
-    if (typeof response !== 'string' || !await deps.captcha(response, ip)) throw new HttpError(400, 'captcha')
+    if (typeof response !== 'string' || !await deps.captcha.verify(response, ip)) throw new HttpError(400, 'captcha')
+  }
+  const jsonEmail = (body: Buffer | undefined) => {
+    let email: unknown
+    try { email = (JSON.parse(body?.toString('utf8') ?? '') as { email?: unknown }).email } catch { throw new HttpError(400, 'body') }
+    if (typeof email !== 'string' || email.length > 320) throw new HttpError(400, 'body')
+    return email.trim().toLowerCase()
   }
   return (req, res) => {
     void (async () => {
@@ -100,24 +107,34 @@ export function publicHandler(deps: PublicDeps): (req: IncomingMessage, res: Ser
       if (!url.pathname.startsWith('/api/auth/')) throw new HttpError(404, 'not-found')
       const ip = clientIp(req, config.clientIpHeader), route = url.pathname.slice('/api/auth'.length)
       const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : await readBody(req, MAX_BODY)
-      let token: string | undefined
+      // Undo a single-use claim when the request it admitted does not complete, so a failure never burns a valid token or invite.
+      let release: (() => void) | undefined
       if (route === '/sign-up/email') {
-        if (!config.enrollmentOpen) throw new HttpError(403, 'enrollment-closed')
-        await captcha(req, ip)
-        limit(`signup-ip:${ip}`, HOUR, config.limits.signupPerIpPerHour)
-        limit('signup-day', 24 * HOUR, config.limits.signupPerDay)
+        if (deps.captcha.invites) {
+          // Invite-only mode: registration is never public; each operator-minted code admits exactly one account.
+          const email = jsonEmail(body)
+          limit(`signup-ip:${ip}`, HOUR, config.limits.signupPerIpPerHour)
+          const code = req.headers['x-invite-code']
+          if (typeof code !== 'string' || !database.claimInvite(code, email, clock())) throw new HttpError(403, 'invite')
+          release = () => database.releaseInvite(code)
+          try { limit('signup-day', 24 * HOUR, config.limits.signupPerDay) } catch (error) { release(); throw error }
+        } else {
+          if (!config.enrollmentOpen) throw new HttpError(403, 'enrollment-closed')
+          await captcha(req, ip)
+          limit(`signup-ip:${ip}`, HOUR, config.limits.signupPerIpPerHour)
+          limit('signup-day', 24 * HOUR, config.limits.signupPerDay)
+        }
       } else if (route === '/sign-in/email') {
         limit(`login-ip:${ip}`, 60_000, config.limits.loginPerIpPerMinute)
       } else if (route === '/request-password-reset') {
-        await captcha(req, ip)
-        let email: unknown
-        try { email = (JSON.parse(body?.toString('utf8') ?? '') as { email?: unknown }).email } catch { throw new HttpError(400, 'body') }
-        if (typeof email !== 'string') throw new HttpError(400, 'body')
-        limit(`reset:${email.trim().toLowerCase()}`, HOUR, config.limits.resetPerEmailPerHour)
+        if (deps.captcha.invites) limit(`reset-ip:${ip}`, HOUR, config.limits.signupPerIpPerHour)
+        else await captcha(req, ip)
+        limit(`reset:${jsonEmail(body)}`, HOUR, config.limits.resetPerEmailPerHour)
       } else if (route === '/verify-email') {
-        token = url.searchParams.get('token') ?? ''
+        const token = url.searchParams.get('token') ?? ''
         // Better Auth verification links are signed and stateless; the service makes each one single-use.
         if (!token || !database.claimToken('verify-email', token, clock())) throw new HttpError(400, 'token-used')
+        release = () => database.releaseToken('verify-email', token)
       }
       const headers = new Headers()
       for (const [name, value] of Object.entries(req.headers)) {
@@ -129,10 +146,10 @@ export function publicHandler(deps: PublicDeps): (req: IncomingMessage, res: Ser
       try {
         response = await auth.handler(new Request(url, { method: req.method, headers, ...body === undefined ? {} : { body: new Uint8Array(body) } }))
       } catch (error) {
-        if (token !== undefined) database.releaseToken('verify-email', token)
+        release?.()
         throw error
       }
-      if (token !== undefined && response.status >= 400) database.releaseToken('verify-email', token)
+      if (response.status >= 400) release?.()
       const out: Record<string, string | string[]> = { 'cache-control': 'no-store' }
       response.headers.forEach((value, name) => { if (name !== 'set-cookie') out[name] = value })
       const cookies = response.headers.getSetCookie()

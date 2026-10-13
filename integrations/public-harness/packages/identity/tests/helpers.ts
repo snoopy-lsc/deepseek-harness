@@ -2,19 +2,20 @@ import { mkdtemp, writeFile } from 'node:fs/promises'
 import { request } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { parseIdentityConfig, type IdentityConfig } from '../src/config.ts'
+import { parseIdentityConfig, type IdentityConfig, type ProviderEnv } from '../src/config.ts'
 import type { Mail } from '../src/transports.ts'
 
 export const ORIGIN = 'http://127.0.0.1:18443'
-export async function setup(overrides: Partial<Record<string, unknown>> = {}): Promise<{ dir: string; config: IdentityConfig }> {
+/** Local provider environment: file mailbox and the fixed test CAPTCHA. */
+export const localEnv = (dir: string): ProviderEnv => ({ DSH_MAIL_PROVIDER: 'mailbox', DSH_MAILBOX_DIR: dir, DSH_MAIL_FROM: 'noreply@example.test', DSH_CAPTCHA_PROVIDER: 'test', DSH_CAPTCHA_TEST_TOKEN: 'pass-captcha' })
+export async function setup(overrides: Partial<Record<string, unknown>> = {}, env: ProviderEnv = {}): Promise<{ dir: string; config: IdentityConfig }> {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-identity-'))
   await writeFile(join(dir, 'secret'), 'x'.repeat(48), { mode: 0o600 })
   const config = parseIdentityConfig({
     mode: 'local', publicOrigin: ORIGIN, publicSocket: join(dir, 'public.sock'), sessionSocket: join(dir, 'session.sock'), sessionSocketGid: process.getgid!(),
-    databaseFile: join(dir, 'identity.db'), secretFile: join(dir, 'secret'), mail: { kind: 'mailbox', dir, from: 'noreply@example.test' },
-    captcha: { kind: 'test', acceptToken: 'pass-captcha' },
+    databaseFile: join(dir, 'identity.db'), secretFile: join(dir, 'secret'),
     limits: { signupPerIpPerHour: 20, signupPerDay: 50, resetPerEmailPerHour: 5, loginPerIpPerMinute: 30 },
-    sessionTtlSeconds: 3600, verificationTtlSeconds: 600, clientIpHeader: 'x-forwarded-for', enrollmentOpen: true, ...overrides })
+    sessionTtlSeconds: 3600, verificationTtlSeconds: 600, clientIpHeader: 'x-forwarded-for', enrollmentOpen: true, ...overrides }, { ...localEnv(dir), ...env })
   return { dir, config }
 }
 export interface Reply { status: number; headers: Record<string, string | string[] | undefined>; body: string }

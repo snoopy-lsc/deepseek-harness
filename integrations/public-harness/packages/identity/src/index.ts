@@ -8,9 +8,13 @@ import { parseIdentityConfig, type IdentityConfig } from './config.ts'
 import { openIdentityDatabase } from './database.ts'
 import { createAccountPages } from './pages.ts'
 import { listenUnix, publicHandler, sessionHandler } from './server.ts'
-import { createCaptchaVerifier, createMailTransport, type CaptchaVerifier, type MailTransport } from './transports.ts'
+import { createCaptchaProvider, type CaptchaProvider } from './captcha.ts'
+import { createMailTransport } from './mail.ts'
+import type { MailTransport } from './transports.ts'
 
-export { parseIdentityConfig, type IdentityConfig } from './config.ts'
+export { parseIdentityConfig, parseProviderEnv, type IdentityConfig } from './config.ts'
+export { createCaptchaProvider, type CaptchaProvider } from './captcha.ts'
+export { createMailTransport } from './mail.ts'
 
 /** Read the signing secret from a private file; it is never logged.
  * @param file Secret file path.
@@ -26,18 +30,18 @@ export async function readSecret(file: string): Promise<string> {
 
 /** Start both listeners; signup alone allocates no account, instance or model grant.
  * @param config Validated settings.
- * @param overrides Injected transports for tests.
+ * @param overrides Injected providers for tests.
  * @returns Handle that closes listeners and the database.
  */
-export async function startIdentity(config: IdentityConfig, overrides: { mail?: MailTransport; captcha?: CaptchaVerifier; clock?: () => number } = {}): Promise<{ close(): Promise<void> }> {
+export async function startIdentity(config: IdentityConfig, overrides: { mail?: MailTransport; captcha?: CaptchaProvider; clock?: () => number } = {}): Promise<{ close(): Promise<void> }> {
   // Better Auth enables telemetry when this variable is set, regardless of options; the service sends nothing outbound.
   if (/^(1|true)$/i.test(process.env.BETTER_AUTH_TELEMETRY ?? '')) throw new Error('BETTER_AUTH_TELEMETRY must not be enabled')
   const database = await openIdentityDatabase(config.databaseFile)
   const servers: Server[] = []
   try {
     const auth = await createAuth(config, database, await readSecret(config.secretFile), overrides.mail ?? createMailTransport(config.mail))
-    const captcha = overrides.captcha ?? await createCaptchaVerifier(config.captcha)
-    servers.push(await listenUnix(publicHandler({ config, auth, database, captcha, pages: createAccountPages(config),
+    const captcha = overrides.captcha ?? createCaptchaProvider(config.captcha)
+    servers.push(await listenUnix(publicHandler({ config, auth, database, captcha, pages: createAccountPages(config, captcha),
       ...overrides.clock === undefined ? {} : { clock: overrides.clock } }), config.publicSocket, 0o660))
     servers.push(await listenUnix(sessionHandler(auth), config.sessionSocket, 0o660, config.sessionSocketGid))
   } catch (error) {
@@ -59,12 +63,12 @@ export const name = 'public-harness-identity'
 export interface PluginConfig { configFile: string }
 /** Cordis configuration schema. */
 export const Config: z<PluginConfig> = z.object({ configFile: z.string().required() })
-/** Start the identity service from its configuration file and close it with the owning context.
+/** Start the identity service from its configuration file plus the provider environment, and close it with the owning context.
  * @param ctx Owning Cordis context.
  * @param config Configuration file location.
  */
 export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
-  const service = await startIdentity(parseIdentityConfig(JSON.parse(await readFile(config.configFile, 'utf8'))))
+  const service = await startIdentity(parseIdentityConfig(JSON.parse(await readFile(config.configFile, 'utf8')), process.env))
   const owner = ctx as Context & Pick<Fiber, 'effect'>
   owner.effect(() => async () => { await service.close() }, 'public-harness.identity.close')
 }

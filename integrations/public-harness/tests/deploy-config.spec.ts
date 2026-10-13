@@ -491,7 +491,14 @@ describe('native deployment composition', () => {
     expect(units['dsh-quota']).toMatch(/^User=dsh-quota$/m)
     expect(units['dsh-router']).toMatch(/^RestrictAddressFamilies=AF_UNIX$/m)
     expect(units['dsh-identity']).toMatch(/^UnsetEnvironment=BETTER_AUTH_TELEMETRY$/m)
-    const identity = parseIdentityConfig(await json('deploy/native/config/identity.json.example'))
+    // Providers come from the operator's environment file; parse the example file with the example environment's shape.
+    const pairs = (await text('deploy/native/config/identity.env.example')).split('\n').filter(line => /^DSH_[A-Z_]+=/.test(line)).map(line => line.split('=') as [string, string])
+    // The shipped example carries no secret values; the host fills them in.
+    expect(pairs.filter(([key, value]) => /SECRET|PASSWORD|ACCESS_KEY_ID/.test(key) && value !== '')).toEqual([])
+    const env = Object.fromEntries(pairs.map(([key, value]) => [key, value || 'placeholder0']))
+    const identity = parseIdentityConfig(await json('deploy/native/config/identity.json.example'), env)
+    expect(identity.captcha.kind).toBe('aliyun')
+    expect(units['dsh-identity']).toMatch(/^EnvironmentFile=\/etc\/dsh-public\/identity-secrets\/identity\.env$/m)
     expect(identity.mode).toBe('production')
     expect(identity.enrollmentOpen).toBe(false)
     const router = parseTeamRouterConfig(await json('deploy/native/config/router.json.example'))

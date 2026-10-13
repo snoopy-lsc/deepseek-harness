@@ -2,6 +2,7 @@
 import { randomBytes } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { UserId } from '@public-harness/contracts'
+import type { CaptchaProvider, CaptchaWidget } from './captcha.ts'
 import type { IdentityConfig } from './config.ts'
 import type { PagesHandler } from './server.ts'
 
@@ -12,12 +13,16 @@ const copy = {
     email: 'Email', password: 'Password', name: 'Name', newPassword: 'New password', submit: 'Continue', loading: 'Working…',
     checkMail: 'Check your email for a verification link.', verified: 'Email verified. You can sign in now.', resetSent: 'If the address exists, a reset link was sent.',
     resetDone: 'Password changed. Sign in again.', closed: 'Registration is closed.', failed: 'The request failed: ', unavailable: 'The service is unavailable. Try again later.',
-    signedOut: 'You are signed out.', revokeOthers: 'Sign out other sessions', openHarness: 'Open my Harness' },
+    signedOut: 'You are signed out.', revokeOthers: 'Sign out other sessions', openHarness: 'Open my Harness',
+    verifyHuman: 'Verify you are human', captchaDone: 'Verification complete.', captchaMissing: 'Complete the human verification first.',
+    invite: 'Invite code', inviteOnly: 'Registration is by invitation. Enter your invite code.' },
   zh: { title: 'DeepSeek Harness 账户', register: '创建账户', login: '登录', logout: '退出登录', reset: '重置密码',
     email: '邮箱', password: '密码', name: '名称', newPassword: '新密码', submit: '继续', loading: '处理中…',
     checkMail: '请查收邮件中的验证链接。', verified: '邮箱已验证，现在可以登录。', resetSent: '如果该地址存在，重置链接已发送。',
     resetDone: '密码已修改，请重新登录。', closed: '注册已关闭。', failed: '请求失败：', unavailable: '服务暂不可用，请稍后重试。',
-    signedOut: '你已退出登录。', revokeOthers: '退出其他会话', openHarness: '打开我的 Harness' },
+    signedOut: '你已退出登录。', revokeOthers: '退出其他会话', openHarness: '打开我的 Harness',
+    verifyHuman: '人机验证', captchaDone: '验证完成。', captchaMissing: '请先完成人机验证。',
+    invite: '邀请码', inviteOnly: '注册需要邀请，请输入邀请码。' },
 } satisfies Record<Locale, Record<string, string>>
 /** Page copy keys, identical in every locale. */
 export type CopyKey = keyof typeof copy.en
@@ -60,30 +65,79 @@ export function safeReturnPath(value: string, userId: UserId): string {
 export function text(locale: Locale, key: CopyKey): string { return copy[locale][key] }
 
 type View = 'home' | 'register' | 'login' | 'reset' | 'verified'
-function form(locale: Locale, view: View, captchaSiteKey: boolean): string {
+/** What a page renders for human verification: a provider widget, invite codes, or the local fixed test token. */
+export type PageCaptcha = { readonly provider: 'test' } | { readonly provider: 'none' } | CaptchaWidget
+
+function captchaBlock(locale: Locale, captcha: PageCaptcha): string {
+  const t = (key: CopyKey) => escapeHtml(text(locale, key))
+  const button = `<button type="button" id="captcha-button" data-captcha-button>${t('verifyHuman')}</button> <span data-captcha-state role="status"></span>`
+  switch (captcha.provider) {
+    case 'test': return '<input name="captcha" type="hidden" data-test-captcha>'
+    case 'none': return ''
+    case 'turnstile': return '<div data-captcha></div>'
+    case 'aliyun': return `<div id="captcha-element" data-captcha></div>${button}`
+    case 'tencent': return `<div data-captcha></div>${button}`
+  }
+}
+
+function form(locale: Locale, view: View, captcha: PageCaptcha): string {
   const t = (key: CopyKey) => escapeHtml(text(locale, key))
   const field = (name: string, label: CopyKey, type: string) => `<label>${t(label)}<input name="${name}" type="${type}" required autocomplete="${type === 'password' ? 'current-password' : name}"></label>`
-  const captcha = captchaSiteKey ? '<div class="captcha" data-captcha></div>' : '<input name="captcha" type="hidden" data-test-captcha>'
-  if (view === 'register') return `<form data-action="register">${field('name', 'name', 'text')}${field('email', 'email', 'email')}${field('password', 'password', 'password')}${captcha}<button>${t('submit')}</button></form>`
-  if (view === 'login') return `<form data-action="login">${field('email', 'email', 'email')}${field('password', 'password', 'password')}<button>${t('submit')}</button></form>`
-  if (view === 'reset') return `<form data-action="reset-request">${field('email', 'email', 'email')}${captcha}<button>${t('submit')}</button></form><form data-action="reset" hidden>${field('newPassword', 'newPassword', 'password')}<button>${t('submit')}</button></form>`
+  const human = captchaBlock(locale, captcha)
+  const invite = captcha.provider === 'none' ? `<label>${t('invite')}<input name="invite" type="text" required autocomplete="off" spellcheck="false" pattern="dshinv-[a-z2-7]{26}"></label>` : ''
+  if (view === 'register') return `<form data-action="register">${field('name', 'name', 'text')}${field('email', 'email', 'email')}${field('password', 'password', 'password')}${invite}${human}<button type="submit">${t('submit')}</button></form>`
+  if (view === 'login') return `<form data-action="login">${field('email', 'email', 'email')}${field('password', 'password', 'password')}<button type="submit">${t('submit')}</button></form>`
+  if (view === 'reset') return `<form data-action="reset-request">${field('email', 'email', 'email')}${human}<button type="submit">${t('submit')}</button></form><form data-action="reset" hidden>${field('newPassword', 'newPassword', 'password')}<button type="submit">${t('submit')}</button></form>`
   if (view === 'verified') return `<p role="status">${t('verified')}</p><a href="/account/login">${t('login')}</a>`
   return `<div data-session></div><button data-action="logout" hidden>${t('logout')}</button><button data-action="revoke-others" hidden>${t('revokeOthers')}</button>`
 }
 
+/** Content-Security-Policy for an account page: nonce-bound first-party script and style, plus exactly the sources the configured widget needs.
+ * @param nonce Per-response nonce.
+ * @param captcha Page CAPTCHA mode.
+ * @returns Header value.
+ */
+export function contentSecurityPolicy(nonce: string, captcha: PageCaptcha): string {
+  const csp = 'csp' in captcha ? captcha.csp : undefined
+  const list = (base: string[], extra: readonly string[] = []) => [...base, ...extra].join(' ')
+  const directives = [
+    "default-src 'none'",
+    `script-src ${list([`'nonce-${nonce}'`], csp?.script)}`,
+    // Widget SDKs that inject inline styles need 'unsafe-inline'; a nonce would disable it, so those pages drop the style nonce.
+    `style-src ${csp?.inlineStyle === true ? list(["'self'", "'unsafe-inline'"], csp.style) : list([`'nonce-${nonce}'`], csp?.style)}`,
+    `connect-src ${list(["'self'"], csp?.connect)}`,
+    ...csp !== undefined && csp.frame.length ? [`frame-src ${list([], csp.frame)}`] : [],
+    ...csp !== undefined && csp.img.length ? [`img-src ${list([], csp.img)}`] : [],
+    "form-action 'self'", "frame-ancestors 'none'", "base-uri 'none'",
+  ]
+  return directives.join('; ')
+}
+
 const SCRIPT = `
-const L=JSON.parse(document.getElementById('copy').textContent),out=document.querySelector('[role=alert]');
+const L=JSON.parse(document.getElementById('copy').textContent),C=JSON.parse(document.getElementById('captcha').textContent),out=document.querySelector('[role=alert]');
 const say=(m)=>{out.textContent=m};
 async function call(path,body,extra){const r=await fetch('/api/auth'+path,{method:body===undefined?'GET':'POST',headers:{'content-type':'application/json',...extra},body:body===undefined?undefined:JSON.stringify(body),credentials:'same-origin'});
  let j=null;try{j=await r.json()}catch{} if(r.status===503)throw new Error(L.unavailable); if(!r.ok)throw new Error(L.failed+((j&&(j.code||j.message))||r.status)); return j}
-const captcha=(f)=>{const t=f.querySelector('[data-test-captcha]');return {'x-captcha-response':t?(new URLSearchParams(location.search).get('captcha')||''):(window.dshCaptcha||'')}};
-for(const f of document.querySelectorAll('form'))f.addEventListener('submit',async e=>{e.preventDefault();const d=Object.fromEntries(new FormData(f));const b=f.querySelector('button');b.disabled=true;say(L.loading);
- try{const a=f.dataset.action;
-  if(a==='register'){await call('/sign-up/email',{name:d.name,email:d.email,password:d.password,callbackURL:'/account/verified'},captcha(f));say(L.checkMail)}
+let tok='';const mark=(ok)=>{for(const s of document.querySelectorAll('[data-captcha-state]'))s.textContent=ok?L.captchaDone:''};
+const load=(cb)=>{const s=document.createElement('script');s.src=C.script;s.async=true;s.onload=cb;s.onerror=()=>say(L.unavailable);document.head.append(s)};
+const human=document.querySelector('[data-captcha]');
+const aliInit=()=>window.initAliyunCaptcha({SceneId:C.params.sceneId,mode:'popup',element:'#captcha-element',button:'#captcha-button',success:(p)=>{tok=p;mark(true)},fail:()=>{tok='';mark(false)},getInstance:()=>{}});
+if(human&&C.provider==='turnstile')load(()=>window.turnstile.render(human,{sitekey:C.params.siteKey,callback:(t)=>{tok=t},'expired-callback':()=>{tok=''}}));
+if(human&&C.provider==='aliyun'){window.AliyunCaptchaConfig={region:C.params.region,prefix:C.params.prefix};load(aliInit)}
+if(human&&C.provider==='tencent')document.querySelector('[data-captcha-button]').addEventListener('click',()=>{const go=()=>new window.TencentCaptcha(C.params.appId,(r)=>{
+ if(r&&r.ret===0&&r.ticket&&!/^trerror/.test(r.ticket)){tok=JSON.stringify({ticket:r.ticket,randstr:r.randstr});mark(true)}else{tok='';mark(false)}}).show();window.TencentCaptcha?go():load(go)});
+const resetHuman=()=>{tok='';mark(false);if(C.provider==='turnstile'&&window.turnstile)window.turnstile.reset(human);if(C.provider==='aliyun'&&window.initAliyunCaptcha)aliInit()};
+function gate(f,d){if(f.querySelector('[data-test-captcha]'))return {'x-captcha-response':new URLSearchParams(location.search).get('captcha')||''};
+ if(C.provider==='none')return d.invite===undefined?{}:{'x-invite-code':String(d.invite).trim()};
+ if(!tok)throw new Error(L.captchaMissing);return {'x-captcha-response':tok}}
+for(const f of document.querySelectorAll('form'))f.addEventListener('submit',async e=>{e.preventDefault();const d=Object.fromEntries(new FormData(f));const b=f.querySelector('button[type=submit]');b.disabled=true;say(L.loading);
+ const a=f.dataset.action;let used=false;
+ try{
+  if(a==='register'){const h=gate(f,d);used=true;await call('/sign-up/email',{name:d.name,email:d.email,password:d.password,callbackURL:'/account/verified'},h);say(L.checkMail)}
   else if(a==='login'){const r=await call('/sign-in/email',{email:d.email,password:d.password});location.assign('/account/?return='+encodeURIComponent(new URLSearchParams(location.search).get('return')||''))}
-  else if(a==='reset-request'){await call('/request-password-reset',{email:d.email,redirectTo:'/account/reset'},captcha(f));say(L.resetSent)}
+  else if(a==='reset-request'){const h=gate(f,d);used=true;await call('/request-password-reset',{email:d.email,redirectTo:'/account/reset'},h);say(L.resetSent)}
   else if(a==='reset'){await call('/reset-password',{newPassword:d.newPassword,token:new URLSearchParams(location.search).get('token')});say(L.resetDone)}
- }catch(err){say(err.message)}finally{b.disabled=false}});
+ }catch(err){say(err.message)}finally{b.disabled=false;if(used)resetHuman()}});
 const token=new URLSearchParams(location.search).get('token');if(token&&document.querySelector('[data-action=reset]')){document.querySelector('[data-action=reset]').hidden=false;document.querySelector('[data-action=reset-request]').hidden=true}
 const s=document.querySelector('[data-session]');
 if(s){call('/get-session').then(j=>{if(!j){s.innerHTML='';const a=document.createElement('a');a.href='/account/login';a.textContent=L.login;s.append(a);return}
@@ -98,34 +152,48 @@ document.querySelector('[data-action=revoke-others]')?.addEventListener('click',
  * @param view Page.
  * @param nonce CSP nonce.
  * @param notice Optional server notice, escaped.
+ * @param captcha Human verification mode; defaults to the local test token.
  * @returns HTML document.
  */
-export function renderPage(locale: Locale, view: View, nonce: string, notice = ''): string {
+export function renderPage(locale: Locale, view: View, nonce: string, notice = '', captcha: PageCaptcha = { provider: 'test' }): string {
   const t = (key: CopyKey) => escapeHtml(text(locale, key))
   const nav = `<nav><a href="/account/register">${t('register')}</a> <a href="/account/login">${t('login')}</a> <a href="/account/reset">${t('reset')}</a> <a href="?lang=${locale === 'en' ? 'zh' : 'en'}">${locale === 'en' ? '中文' : 'English'}</a></nav>`
   // The copy is embedded as JSON inside a non-executing script element; `<` is escaped so no text can close it.
   const json = JSON.stringify(copy[locale]).replace(/</g, '\\u003c')
+  // Only public widget parameters are embedded; secrets never reach the page.
+  const widget = JSON.stringify('csp' in captcha ? { provider: captcha.provider, script: captcha.script, params: captcha.params } : { provider: captcha.provider }).replace(/</g, '\\u003c')
   return `<!doctype html><html lang="${locale === 'zh' ? 'zh-CN' : 'en'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${t('title')}</title>
 <style nonce="${nonce}">body{font-family:system-ui,sans-serif;max-width:28rem;margin:3rem auto;padding:0 1rem;color:#1f2329}label{display:block;margin:.75rem 0}input{display:block;width:100%;padding:.5rem;margin-top:.25rem}button{margin-top:1rem;padding:.5rem 1rem;background:#4d6bfe;color:#fff;border:0;border-radius:6px}nav a{margin-right:.75rem}[role=alert]{min-height:1.5rem;color:#b42318}</style></head>
-<body data-harness="/u/{id}/"><h1>${t('title')}</h1>${nav}<main>${form(locale, view, false)}</main><p role="alert">${escapeHtml(notice)}</p>
-<script type="application/json" id="copy">${json}</script><script nonce="${nonce}">${SCRIPT}</script></body></html>`
+<body data-harness="/u/{id}/"><h1>${t('title')}</h1>${nav}<main>${form(locale, view, captcha)}</main><p role="alert">${escapeHtml(notice)}</p>
+<script type="application/json" id="copy">${json}</script><script type="application/json" id="captcha">${widget}</script><script nonce="${nonce}">${SCRIPT}</script></body></html>`
+}
+
+/** Map a provider to what its pages render.
+ * @param provider Configured provider.
+ * @returns Page CAPTCHA mode.
+ */
+export function pageCaptcha(provider: Pick<CaptchaProvider, 'kind' | 'widget'>): PageCaptcha {
+  if (provider.widget !== undefined) return provider.widget
+  return provider.kind === 'none' ? { provider: 'none' } : { provider: 'test' }
 }
 
 /** Serve `/account/*`; everything else falls through.
  * @param config Settings.
+ * @param provider Configured human verification, which decides the widget and CSP.
  * @returns Pages handler.
  */
-export function createAccountPages(config: IdentityConfig): PagesHandler {
+export function createAccountPages(config: IdentityConfig, provider: Pick<CaptchaProvider, 'kind' | 'widget'>): PagesHandler {
+  const captcha = pageCaptcha(provider)
   const views: Record<string, View> = { '/account/': 'home', '/account/register': 'register', '/account/login': 'login', '/account/reset': 'reset', '/account/verified': 'verified' }
   return async (req: IncomingMessage, res: ServerResponse, url: URL) => {
     const view = views[url.pathname]
     if (view === undefined || (req.method !== 'GET' && req.method !== 'HEAD')) return false
     const locale = pickLocale(url, req.headers['accept-language'])
     const nonce = randomBytes(16).toString('base64')
-    const notice = view === 'register' && !config.enrollmentOpen ? text(locale, 'closed') : ''
+    const notice = view !== 'register' ? '' : captcha.provider === 'none' ? text(locale, 'inviteOnly') : config.enrollmentOpen ? '' : text(locale, 'closed')
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-frame-options': 'DENY', 'referrer-policy': 'no-referrer',
-      'content-security-policy': `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'` })
-    res.end(req.method === 'HEAD' ? undefined : renderPage(locale, view, nonce, notice))
+      'content-security-policy': contentSecurityPolicy(nonce, captcha) })
+    res.end(req.method === 'HEAD' ? undefined : renderPage(locale, view, nonce, notice, captcha))
     return true
   }
 }
