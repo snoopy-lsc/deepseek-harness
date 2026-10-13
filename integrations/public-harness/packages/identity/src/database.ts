@@ -57,7 +57,8 @@ export async function openIdentityDatabase(file: string): Promise<IdentityDataba
   if (existing === undefined) await (await open(file, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)).close()
   else if (!existing.isFile() || (existing.mode & 0o077) !== 0 || existing.uid !== process.getuid?.()) throw new Error('identity database is not a private regular file')
   const db = new DatabaseSync(file)
-  db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
+  // busy_timeout first: switching to WAL and migrating also take locks, and a second process (CLI, another worker) must wait, not fail.
+  db.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;
     CREATE TABLE IF NOT EXISTS dsh_rate (key TEXT PRIMARY KEY, window_start INTEGER NOT NULL, count INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS dsh_used_token (hash TEXT PRIMARY KEY, used_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS dsh_invite (hash TEXT PRIMARY KEY, id TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
