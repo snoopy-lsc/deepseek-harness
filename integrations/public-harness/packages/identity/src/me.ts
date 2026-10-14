@@ -9,8 +9,8 @@ import { IdentityUnavailableError } from './transports.ts'
 
 /** The signed-in user's profile and server-decided role, read by the Harness Web shell. */
 export const ME_PATH = '/account/api/me'
-/** Roles the identity service assigns; only the server decides them. */
-export type AccountRole = 'admin' | 'member'
+export type { AccountRole } from './roles.ts'
+import { createRoles, type AccountRole } from './roles.ts'
 /** How the account signs in: a password (registered or invited), the emergency path, or an SSO provider kind. */
 export type SignInMethod = 'password' | 'emergency' | string
 
@@ -65,7 +65,7 @@ async function jsonBody(req: IncomingMessage): Promise<Record<string, unknown>> 
  */
 export function meRoutes(deps: MeDeps): (req: IncomingMessage, res: ServerResponse, path: string) => Promise<boolean> {
   const { config, auth, database, clock } = deps
-  const admins = new Set(config.admins ?? [])
+  const roles = createRoles(config, database)
   const db = database.db
   const listSessions = db.prepare('SELECT id, createdAt, updatedAt, expiresAt, ipAddress, userAgent FROM session WHERE userId = ? ORDER BY updatedAt DESC')
   const deleteOne = db.prepare('DELETE FROM session WHERE id = ? AND userId = ?')
@@ -97,8 +97,8 @@ export function meRoutes(deps: MeDeps): (req: IncomingMessage, res: ServerRespon
     const { user, session: current } = await session(req)
     const email = user.email.toLowerCase()
     if (sub === '') {
-      const { provider, passwordChange, origin } = method(user.id)
-      const role: AccountRole = admins.has(email) || origin === 'emergency' ? 'admin' : 'member'
+      const { provider, passwordChange } = method(user.id)
+      const role: AccountRole = store(() => roles.role(user.id, email))
       send(res, 200, { id: user.id, email, name: user.name, role, provider, passwordChange }); return true
     }
     if (sub === '/security') {

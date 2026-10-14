@@ -13,6 +13,8 @@ import { checkEmergency, EmergencyDeniedError } from './sso/emergency.ts'
 import { ipAllowed } from './sso/ip.ts'
 import { parseUserId } from '@public-harness/contracts'
 import { MeError, meRoutes, type UsageSource } from './me.ts'
+import { AdminError, adminRoutes } from './admin.ts'
+import type { QuotaAdmin } from './quota-account.ts'
 
 const MAX_BODY = 64 * 1024
 /** SAML responses with many groups exceed the JSON body limit. */
@@ -104,6 +106,8 @@ export interface PublicDeps {
   readonly ssoMetadata?: string
   /** The user's own quota usage for the personal center; without it `/account/api/me/usage` answers 404. */
   readonly usage?: UsageSource
+  /** Daily allowance editor for `/api/admin/quota*`; without it those endpoints answer 404. */
+  readonly quota?: QuotaAdmin
 }
 
 /** Handle one public request: origin checks, admission gates, then Better Auth.
@@ -136,6 +140,7 @@ export function publicHandler(deps: PublicDeps): (req: IncomingMessage, res: Ser
     return id === undefined ? undefined : database.sso.origin(id)
   }
   const me = meRoutes({ config, auth, database, clock, limit, ip: req => clientIp(req, config.clientIpHeader), ...deps.usage === undefined ? {} : { usage: deps.usage } })
+  const admin = adminRoutes({ config, auth, database, clock, limit, ip: req => clientIp(req, config.clientIpHeader), ...deps.quota === undefined ? {} : { quota: deps.quota } })
   return (req, res) => {
     void (async () => {
       const path = (req.url ?? '/').split('?')[0]
@@ -164,6 +169,7 @@ export function publicHandler(deps: PublicDeps): (req: IncomingMessage, res: Ser
         return
       }
       if (await me(req, res, path)) return
+      if (await admin(req, res, path)) return
       if (deps.pages !== undefined && await deps.pages(req, res, url)) return
       if (!url.pathname.startsWith('/api/auth/')) throw new HttpError(404, 'not-found')
       const ip = clientIp(req, config.clientIpHeader)
@@ -290,7 +296,7 @@ export function publicHandler(deps: PublicDeps): (req: IncomingMessage, res: Ser
       res.end(Buffer.from(await response.arrayBuffer()))
     })().catch((error: unknown) => {
       if (res.headersSent) { res.destroy(); return }
-      if (error instanceof HttpError || error instanceof MeError) send(res, error.status, { code: error.code })
+      if (error instanceof HttpError || error instanceof MeError) send(res, error.status, { code: error.code, ...error instanceof AdminError ? error.extra : {} })
       else if (error instanceof IdentityUnavailableError) send(res, 503, { code: 'unavailable' })
       else send(res, 500, { code: 'internal' })
     })

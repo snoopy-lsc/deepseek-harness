@@ -13,6 +13,7 @@ export const AUDIT_RETENTION_MS = 365 * 86_400_000
 export interface AuditEvent {
   readonly event: 'sso-sign-in' | 'emergency-sign-in' | 'emergency-enroll' | 'emergency-revoke' | 'sso-disable' | 'sso-enable' | 'sso-reconcile'
     | 'password-change' | 'session-revoke' | 'sessions-revoke-others'
+    | 'admin-invite-create' | 'admin-invite-revoke' | 'admin-user-disable' | 'admin-user-enable' | 'admin-role-change' | 'admin-quota-change' | 'admin-reauth'
   readonly outcome: 'ok' | 'denied' | 'error'
   readonly userId?: string
   readonly email?: string
