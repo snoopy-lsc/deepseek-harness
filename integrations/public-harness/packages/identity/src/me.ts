@@ -21,7 +21,13 @@ export interface PersonalUsage {
   readonly limitTokens: number
   readonly resetAt: string
   readonly history: ReadonlyArray<{ readonly day: string; readonly tokens: number }>
+  /** Over-limit policy and where the user stands; absent from ledgers that predate the policy. */
+  readonly overLimit?: OverLimitMode
+  readonly state?: 'ok' | 'grace' | 'over' | 'blocked'
+  readonly hardLimitTokens?: number | null
 }
+/** What the quota proxy does at the personal daily limit: refuse (`block`), admit a grace share then refuse (`grace`), or only warn (`warn`). */
+export type OverLimitMode = 'block' | 'grace' | 'warn'
 /** Read-only source of one user's usage, supplied by the deployment that owns the ledger. */
 export type UsageSource = (userId: string) => Promise<PersonalUsage | undefined>
 

@@ -2,7 +2,7 @@ import { join } from 'node:path'
 import { startLineServer } from '@public-harness/contracts'
 import { afterEach, describe, expect, it } from 'vitest'
 import { startIdentity } from '../src/index.ts'
-import { createQuotaAccountClient, parseLimits } from '../src/quota-account.ts'
+import { createQuotaAccountClient, parseLimits, parseUsage } from '../src/quota-account.ts'
 import { call, linkIn, localEnv, mailbox, sessionCookie, setup } from './helpers.ts'
 
 const open: { close(): Promise<void> }[] = []
@@ -33,6 +33,12 @@ describe('quota account socket (production usage source)', () => {
 
   it('client_validates_replies', async () => {
     expect(() => parseLimits({ configuredDailyTokens: -1, defaultDailyTokens: 1, overrides: [] })).toThrow()
+    expect(parseLimits({ configuredDailyTokens: 1, defaultDailyTokens: 1, overrides: [] }).overLimit).toEqual({ mode: 'block', gracePercent: 10 })
+    expect(() => parseLimits({ configuredDailyTokens: 1, defaultDailyTokens: 1, overrides: [], overLimit: { mode: 'loose', gracePercent: 1 } })).toThrow()
+    const base = { day: '2026-10-14', usedTokens: 5, limitTokens: 4, resetAt: '2026-10-15T00:00:00.000Z', history: [] }
+    expect(parseUsage({ ...base, overLimit: 'grace', state: 'grace', hardLimitTokens: 6 })).toMatchObject({ overLimit: 'grace', state: 'grace', hardLimitTokens: 6 })
+    expect(parseUsage({ ...base, overLimit: 'warn', state: 'over', hardLimitTokens: null }).hardLimitTokens).toBeNull()
+    expect(() => parseUsage({ ...base, state: 'weird' })).toThrow()
     const { dir } = await setup()
     const seen = await fakeQuota(join(dir, 'q.sock'))
     const client = createQuotaAccountClient(join(dir, 'q.sock'))

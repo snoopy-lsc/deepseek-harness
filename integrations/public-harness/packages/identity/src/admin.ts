@@ -30,8 +30,8 @@ export class AdminError extends MeError { constructor(status: number, code: stri
 
 /** Endpoints, by method; used by the routing table and by the test that proves members are refused everywhere. */
 export const ADMIN_ENDPOINTS = {
-  GET: ['/invites', '/users', '/audit', '/sso', '/quota'],
-  POST: ['/invites', '/invites/revoke', '/users/disable', '/users/enable', '/users/role', '/quota/default', '/quota/user'],
+  GET: ['/invites', '/users', '/audit', '/audit.csv', '/sso', '/quota'],
+  POST: ['/invites', '/invites/revoke', '/users/disable', '/users/enable', '/users/role', '/quota/default', '/quota/user', '/quota/over-limit'],
 } as const
 
 /** Collaborators of the admin routes. */
@@ -46,6 +46,19 @@ export interface AdminDeps {
 }
 
 const time = (value: unknown) => value === null || value === undefined ? null : typeof value === 'number' ? value : Date.parse(String(value))
+/** Most rows one CSV export carries; narrower filters reach older rows. */
+export const AUDIT_EXPORT_MAX = 50_000
+const EXPORT_PAGE = 500
+
+/** One CSV field: always quoted with inner quotes doubled, and a leading = + - @ tab or CR neutralised with an apostrophe so spreadsheets do not run it as a formula. */
+export function csvCell(value: unknown): string {
+  let text = value === null || value === undefined ? '' : String(value)
+  if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`
+  return `"${text.replace(/"/g, '""')}"`
+}
+/** One CSV record, CRLF-terminated. */
+export const csvRow = (cells: readonly unknown[]): string => `${cells.map(csvCell).join(',')}\r\n`
+
 function send(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
   res.end(JSON.stringify(body))
@@ -98,6 +111,8 @@ export function adminRoutes(deps: AdminDeps): (req: IncomingMessage, res: Server
   const auditPage = db.prepare(`SELECT id, at, event, outcome, user_id, email, ip, detail FROM dsh_audit
     WHERE (?1 = '' OR event = ?1) AND (?2 = '' OR outcome = ?2) AND (?3 = '' OR lower(coalesce(email, '')) LIKE ?3 ESCAPE '\\' OR lower(coalesce(detail, '')) LIKE ?3 ESCAPE '\\')
     AND (?4 = 0 OR id < ?4) ORDER BY id DESC LIMIT ?5`)
+  const auditCount = db.prepare(`SELECT count(*) AS n FROM dsh_audit
+    WHERE (?1 = '' OR event = ?1) AND (?2 = '' OR outcome = ?2) AND (?3 = '' OR lower(coalesce(email, '')) LIKE ?3 ESCAPE '\\' OR lower(coalesce(detail, '')) LIKE ?3 ESCAPE '\\')`)
   const lastReconcile = db.prepare("SELECT at, outcome, detail FROM dsh_audit WHERE event = 'sso-reconcile' ORDER BY id DESC LIMIT 1")
 
   const audit = (event: AuditEvent['event'], outcome: AuditEvent['outcome'], actor: string, req: IncomingMessage, target?: { id: string; email: string }, detail = '') =>
@@ -179,6 +194,30 @@ export function adminRoutes(deps: AdminDeps): (req: IncomingMessage, res: Server
           .filter(user => (role !== 'admin' && role !== 'member' || user.role === role) && (status !== 'active' && status !== 'disabled' || user.status === status))
         send(res, 200, { total: all.length, offset, limit, users: all.slice(offset, offset + limit), self: session.user.id }); return true
       }
+      if (sub === '/audit.csv') {
+        // Same filters as the viewer; streamed newest first in pages, capped at AUDIT_EXPORT_MAX rows, and the export itself is audited first.
+        deps.limit(`admin-export:${session.user.id}`, HOUR, 10)
+        const event = query.get('event') ?? '', outcome = query.get('outcome') ?? '', q = query.get('q') ?? ''
+        if (event.length > 64 || outcome.length > 16 || q.length > 200) throw new MeError(400, 'query')
+        const total = Number(store(() => (auditCount.get(event, outcome, like(q)) as { n: number }).n))
+        const rows = Math.min(total, AUDIT_EXPORT_MAX)
+        audit('admin-audit-export', 'ok', actor, req, undefined, `rows=${rows}${total > rows ? ' truncated' : ''} event=${event || '*'} outcome=${outcome || '*'} q=${JSON.stringify(q)}`)
+        const stamp = new Date(clock()).toISOString().slice(0, 10).replace(/-/g, '')
+        res.writeHead(200, { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': `attachment; filename="audit-${stamp}.csv"`,
+          'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'x-audit-export-rows': String(rows), 'x-audit-export-truncated': total > rows ? '1' : '0' })
+        if (verb === 'HEAD') { res.end(); return true }
+        // The byte-order mark makes Excel read the file as UTF-8 (Chinese names and details).
+        res.write(`\uFEFF${csvRow(['id', 'time (UTC)', 'event', 'outcome', 'email', 'user id', 'ip', 'detail'])}`)
+        let before = 0, written = 0
+        while (written < rows) {
+          const page = store(() => auditPage.all(event, outcome, like(q), before, Math.min(EXPORT_PAGE, rows - written)) as Array<Record<string, unknown>>)
+          if (page.length === 0) break
+          const chunk = page.map(row => csvRow([row.id, new Date(Number(row.at)).toISOString(), row.event, row.outcome, row.email, row.user_id, row.ip, row.detail])).join('')
+          written += page.length; before = Number(page.at(-1)!.id)
+          if (!res.write(chunk)) await new Promise<void>(resolve => res.once('drain', () => resolve()))
+        }
+        res.end(); return true
+      }
       if (sub === '/audit') {
         const limit = Math.max(1, Math.min(Number(query.get('limit')) || 50, 200)), before = Math.max(0, Number(query.get('before')) || 0)
         const event = query.get('event') ?? '', outcome = query.get('outcome') ?? ''
@@ -251,6 +290,16 @@ export function adminRoutes(deps: AdminDeps): (req: IncomingMessage, res: Server
       const changed = store(() => roles.setGrant(user.id, body.role === 'admin', actor, clock()))
       if (changed) audit('admin-role-change', 'ok', actor, req, user, `role=${body.role as string}`)
       send(res, 200, { role: store(() => roles.role(user.id, user.email)), changed }); return true
+    }
+    if (sub === '/quota/over-limit') {
+      const mode = body.mode, gracePercent = body.gracePercent ?? 10
+      if ((mode !== 'block' && mode !== 'grace' && mode !== 'warn') || typeof gracePercent !== 'number' || !Number.isSafeInteger(gracePercent) || gracePercent < 1 || gracePercent > 100) {
+        throw new MeError(400, 'body')
+      }
+      await reauth(req, session, body, 'quota')
+      const limits = await quotaCall(quota => quota.setOverLimit(mode, gracePercent))
+      audit('admin-over-limit-change', 'ok', actor, req, undefined, `mode=${mode}${mode === 'grace' ? ` grace=${gracePercent}%` : ''}`)
+      send(res, 200, limits); return true
     }
     // Allowance changes: the quota ledger checks the ceiling (the site's daily limit) and answers with the new limits.
     const dailyTokens = tokens(body.dailyTokens)

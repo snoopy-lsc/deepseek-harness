@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it } from 'vitest'
-import { ADMIN_ENDPOINTS, redactSso, SSO_REAUTH_WINDOW_MS } from '../src/admin.ts'
+import { ADMIN_ENDPOINTS, csvCell, csvRow, redactSso, SSO_REAUTH_WINDOW_MS } from '../src/admin.ts'
 import { startIdentity } from '../src/index.ts'
 import type { QuotaAdmin, QuotaLimits } from '../src/quota-account.ts'
 import { call, linkIn, localEnv, mailbox, sessionCookie, setup } from './helpers.ts'
@@ -10,11 +10,12 @@ afterEach(async () => { for (const service of open.splice(0)) await service.clos
 const PASSWORD = 'correct horse battery'
 
 function fakeQuota(): QuotaAdmin & { calls: unknown[] } {
-  let limits: QuotaLimits = { configuredDailyTokens: 400000, defaultDailyTokens: 400000, overrides: [] }
+  let limits: QuotaLimits = { configuredDailyTokens: 400000, defaultDailyTokens: 400000, overrides: [], overLimit: { mode: 'block', gracePercent: 10 } }
   const calls: unknown[] = []
   return { calls, limits: async () => limits,
     setDefault: async n => { calls.push(['default', n]); limits = { ...limits, defaultDailyTokens: n ?? 400000, ...n === null ? {} : { defaultOverride: n } }; return limits },
-    setUser: async (id, n) => { calls.push(['user', id, n]); limits = { ...limits, overrides: n === null ? [] : [{ userId: id, dailyTokens: n }] }; return limits } }
+    setUser: async (id, n) => { calls.push(['user', id, n]); limits = { ...limits, overrides: n === null ? [] : [{ userId: id, dailyTokens: n }] }; return limits },
+    setOverLimit: async (mode, gracePercent) => { calls.push(['over-limit', mode, gracePercent]); limits = { ...limits, overLimit: { mode, gracePercent } }; return limits } }
 }
 
 async function site(options: { quota?: boolean; clock?: () => number } = {}) {
@@ -61,7 +62,8 @@ describe('/api/admin', () => {
       expect(json(reply)).toEqual({ code: 'forbidden' })
       expect((await s.post(path, {}, 'dsh-account.session_token=forged')).status, `POST ${path}`).toBe(401)
     }
-    expect(s.audit().filter(row => row.event.startsWith('admin-'))).toEqual([])
+    // Only the administrator's own export left a row.
+    expect(s.audit().filter(row => row.event.startsWith('admin-')).map(row => row.event)).toEqual(['admin-audit-export'])
   })
 
   it('writes_need_the_site_origin_and_json', async () => {
@@ -143,6 +145,51 @@ describe('/api/admin', () => {
     expect((await s.post('/quota/default', { dailyTokens: -1, password: PASSWORD }, s.root.cookie)).status).toBe(400)
     expect(s.quota.calls).toEqual([['user', s.member.id, 5000], ['default', 100000]])
     expect(s.audit().filter(r => r.event === 'admin-quota-change').map(r => r.detail)).toEqual(['by=root@example.test daily=5000', 'by=root@example.test default=100000'])
+  })
+
+  it('the_over_limit_policy_is_set_with_reauth_and_audit_and_rejects_unknown_modes', async () => {
+    const s = await site()
+    expect((await s.post('/quota/over-limit', { mode: 'grace', gracePercent: 20 }, s.root.cookie)).status).toBe(401)
+    expect(json(await s.post('/quota/over-limit', { mode: 'grace', gracePercent: 20, password: PASSWORD }, s.root.cookie)).overLimit).toEqual({ mode: 'grace', gracePercent: 20 })
+    expect(json(await s.post('/quota/over-limit', { mode: 'warn', password: PASSWORD }, s.root.cookie)).overLimit).toEqual({ mode: 'warn', gracePercent: 10 })
+    for (const bad of [{ mode: 'loose' }, { mode: 'grace', gracePercent: 0 }, { mode: 'grace', gracePercent: 101 }, { mode: 'grace', gracePercent: '5' }]) {
+      expect((await s.post('/quota/over-limit', { ...bad, password: PASSWORD }, s.root.cookie)).status).toBe(400)
+    }
+    expect(s.quota.calls).toEqual([['over-limit', 'grace', 20], ['over-limit', 'warn', 10]])
+    expect(s.audit().filter(r => r.event === 'admin-over-limit-change').map(r => r.detail)).toEqual(['by=root@example.test mode=grace grace=20%', 'by=root@example.test mode=warn'])
+  })
+
+  it('audit_csv_export_honours_filters_neutralises_formulas_is_audited_and_rate_limited', async () => {
+    const s = await site()
+    expect((await s.post('/invites', {}, s.root.cookie)).status).toBe(200)
+    // Rows whose text a spreadsheet would run as formulas, plus quotes, commas, newlines and Chinese.
+    for (const id of ['=HYPERLINK("http://x")', '+1', '-2', '@SUM(A1)', '\tTAB', '\rCR', 'a,"b"\nc', '中文邀请']) {
+      const db = new DatabaseSync(s.config.databaseFile)
+      db.prepare("INSERT INTO dsh_audit (at, event, outcome, email, detail) VALUES (?, 'sso-login', 'denied', ?, ?)").run(Date.now(), 'x@example.test', id)
+      db.close()
+    }
+    const reply = await s.get('/audit.csv?event=sso-login&outcome=denied', s.root.cookie)
+    expect(reply.status).toBe(200)
+    expect(reply.headers['content-type']).toBe('text/csv; charset=utf-8')
+    expect(reply.headers['content-disposition']).toMatch(/^attachment; filename="audit-\d{8}\.csv"$/)
+    expect(reply.headers['x-audit-export-rows']).toBe('8')
+    expect(reply.body.startsWith('\uFEFF"id","time (UTC)","event","outcome","email","user id","ip","detail"\r\n')).toBe(true)
+    expect(reply.body).toContain('"\'=HYPERLINK(""http://x"")"')
+    for (const cell of ['"\'+1"', '"\'-2"', '"\'@SUM(A1)"', '"\'\tTAB"', '"\'\rCR"', '"a,""b""\nc"', '"中文邀请"']) expect(reply.body).toContain(cell)
+    expect(reply.body).not.toContain('"admin-invite-create"')
+    const exports = s.audit().filter(r => r.event === 'admin-audit-export')
+    expect(exports.map(r => r.detail)).toEqual(['by=root@example.test rows=8 event=sso-login outcome=denied q=""'])
+    expect((await s.get('/audit.csv', s.member.cookie)).status).toBe(403)
+    for (let i = 0; i < 9; i++) expect((await s.get('/audit.csv?q=none', s.root.cookie)).status).toBe(200)
+    expect((await s.get('/audit.csv?q=none', s.root.cookie)).status).toBe(429)
+  })
+
+  it('csv_cells_quote_everything_and_prefix_formula_starts', () => {
+    expect(csvCell(null)).toBe('""')
+    expect(csvCell('=1+1')).toBe(`"'=1+1"`)
+    expect(csvCell('a"b')).toBe('"a""b"')
+    expect(csvCell(42)).toBe('"42"')
+    expect(csvRow(['-x', 'ok'])).toBe(`"'-x","ok"\r\n`)
   })
 
   it('quota_endpoints_answer_404_without_a_ledger_and_sso_view_redacts_secrets', async () => {
