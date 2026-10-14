@@ -21,11 +21,12 @@ describe('quota account channel', () => {
     expect(await requestLine(socket, { op: 'usage', userId: 'alice' })).toMatchObject({ day: '2026-10-14', usedTokens: 25, limitTokens: 100 })
     expect(await requestLine(socket, { op: 'set-user', userId: 'alice', dailyTokens: 200 })).toMatchObject({ overrides: [{ userId: 'alice', dailyTokens: 200 }] })
     expect(await requestLine(socket, { op: 'set-default', dailyTokens: 50 })).toMatchObject({ defaultDailyTokens: 50 })
-    expect(await requestLine(socket, { op: 'limits' })).toEqual({ configuredDailyTokens: 100, defaultDailyTokens: 50, defaultOverride: 50, overrides: [{ userId: 'alice', dailyTokens: 200 }] })
+    expect(await requestLine(socket, { op: 'limits' })).toEqual({ configuredDailyTokens: 100, defaultDailyTokens: 50, defaultOverride: 50, overrides: [{ userId: 'alice', dailyTokens: 200 }], overLimit: { mode: 'block', gracePercent: 10 } })
+    expect(await requestLine(socket, { op: 'set-over-limit', mode: 'grace', gracePercent: 15 })).toMatchObject({ overLimit: { mode: 'grace', gracePercent: 15 } })
   })
 
   it('refuses_anything_but_the_exact_request_shapes', () => {
     for (const bad of [null, [], { op: 'usage' }, { op: 'usage', userId: 'a', extra: 1 }, { op: 'set-default', dailyTokens: 0 }, { op: 'set-user', userId: 'a', dailyTokens: 1.5 },
-      { op: 'set-user', userId: '../x', dailyTokens: 5 }, { op: 'reserve', userId: 'a' }]) expect(() => parseAccountRequest(bad)).toThrow()
+      { op: 'set-user', userId: '../x', dailyTokens: 5 }, { op: 'reserve', userId: 'a' }, { op: 'set-over-limit', mode: 'loose', gracePercent: 5 }, { op: 'set-over-limit', mode: 'grace', gracePercent: 0 }]) expect(() => parseAccountRequest(bad)).toThrow()
   })
 })

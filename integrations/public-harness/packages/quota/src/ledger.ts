@@ -44,7 +44,19 @@ export interface PersonalUsage {
   readonly resetAt: string
   /** Oldest first, at most seven days ending today. */
   readonly history: ReadonlyArray<{ readonly day: string; readonly tokens: number }>
+  /** The site's over-limit policy. */
+  readonly overLimit: OverLimitMode
+  /** `ok` under the limit; `grace` past it but still admitted; `over` past it with the advisory (`warn`) policy; `blocked` when new requests are refused. */
+  readonly state: 'ok' | 'grace' | 'over' | 'blocked'
+  /** Where new requests stop: the limit (`block`), the limit plus the grace share (`grace`), or null (`warn`). */
+  readonly hardLimitTokens: number | null
 }
+
+/** What happens when a user reaches the personal daily limit: `block` refuses new requests; `grace` admits up to `gracePercent` more,
+ * then refuses; `warn` keeps admitting (the limit is advisory) and only the site daily limit refuses. Users are told in every mode. */
+export type OverLimitMode = 'block' | 'grace' | 'warn'
+/** The site's over-limit policy. */
+export interface OverLimitPolicy { readonly mode: OverLimitMode; readonly gracePercent: number }
 
 /** Daily personal allowances: the configured value, an optional site-wide override, and per-user overrides. */
 export interface QuotaLimits {
@@ -53,6 +65,7 @@ export interface QuotaLimits {
   readonly defaultDailyTokens: number
   readonly defaultOverride?: number
   readonly overrides: ReadonlyArray<{ readonly userId: string; readonly dailyTokens: number }>
+  readonly overLimit: OverLimitPolicy
 }
 
 /** A specific capacity limit rejected admission before upstream access. */
@@ -104,6 +117,8 @@ export function createQuotaLedger(config: QuotaConfig, clock: () => Date = () =>
   setDefaultLimit(dailyTokens: number | null): Promise<void>
   /** Set (or with null clear) one user's personal allowance; at most the site daily limit. */
   setUserLimit(userId: UserId, dailyTokens: number | null): Promise<void>
+  /** Set the over-limit policy; `gracePercent` is 1–100 and only used by `grace`. */
+  setOverLimit(mode: OverLimitMode, gracePercent: number): Promise<void>
 } {
   validateQuotaConfig(config)
   if (process.platform !== 'win32' && (statSync(dirname(config.databasePath)).mode & 0o077) !== 0) {
@@ -125,6 +140,7 @@ export function createQuotaLedger(config: QuotaConfig, clock: () => Date = () =>
     database.exec('CREATE INDEX IF NOT EXISTS reservations_day_user ON reservations(day, user_id)')
     database.exec('CREATE TABLE IF NOT EXISTS personal_limits (user_id TEXT PRIMARY KEY, daily_tokens INTEGER NOT NULL CHECK (daily_tokens > 0)) STRICT')
     database.exec("CREATE TABLE IF NOT EXISTS limit_settings (name TEXT PRIMARY KEY CHECK (name = 'default'), daily_tokens INTEGER NOT NULL CHECK (daily_tokens > 0)) STRICT")
+    database.exec("CREATE TABLE IF NOT EXISTS over_limit_policy (name TEXT PRIMARY KEY CHECK (name = 'site'), mode TEXT NOT NULL CHECK (mode IN ('block', 'grace', 'warn')), grace_percent INTEGER NOT NULL CHECK (grace_percent BETWEEN 1 AND 100)) STRICT")
     database.exec('CREATE INDEX IF NOT EXISTS reservations_pending ON reservations(charged_tokens, user_id)')
     transaction(database, () => {
       database.prepare('UPDATE reservations SET charged_tokens = maximum_tokens WHERE charged_tokens IS NULL').run()
@@ -148,6 +164,15 @@ export function createQuotaLedger(config: QuotaConfig, clock: () => Date = () =>
   const dropUser = database.prepare('DELETE FROM personal_limits WHERE user_id = ?')
   const putDefault = database.prepare("INSERT INTO limit_settings (name, daily_tokens) VALUES ('default', ?) ON CONFLICT(name) DO UPDATE SET daily_tokens = excluded.daily_tokens")
   const dropDefault = database.prepare("DELETE FROM limit_settings WHERE name = 'default'")
+  const readPolicy = database.prepare("SELECT mode, grace_percent FROM over_limit_policy WHERE name = 'site'")
+  const writePolicy = database.prepare("INSERT INTO over_limit_policy (name, mode, grace_percent) VALUES ('site', ?, ?) ON CONFLICT(name) DO UPDATE SET mode = excluded.mode, grace_percent = excluded.grace_percent")
+  const policy = (): OverLimitPolicy => {
+    const row = readPolicy.get() as { mode: OverLimitMode; grace_percent: number } | undefined
+    return row === undefined ? { mode: 'block', gracePercent: 10 } : { mode: row.mode, gracePercent: Number(row.grace_percent) }
+  }
+  /** Tokens at which new requests stop for this limit, or undefined when the personal limit is advisory. */
+  const hardLimit = (limit: number, current: OverLimitPolicy): number | undefined =>
+    current.mode === 'block' ? limit : current.mode === 'grace' ? limit + Math.floor(limit * current.gracePercent / 100) : undefined
   const fallback = (): number => (defaultLimit.get()?.['value'] as number | undefined) ?? config.personalDailyTokens
   const personalLimit = (userId: string): number => (userLimit.get(userId)?.['value'] as number | undefined) ?? fallback()
   const checkLimit = (value: number): void => {
@@ -171,14 +196,16 @@ export function createQuotaLedger(config: QuotaConfig, clock: () => Date = () =>
       const day = now.toISOString().slice(0, 10)
       const first = new Date(now.valueOf() - 6 * 86_400_000).toISOString().slice(0, 10)
       const history = (personalHistory.all(userId, first, day) as Array<{ day: string; tokens: number }>).map(row => ({ day: String(row.day), tokens: Number(row.tokens) }))
-      return { day, usedTokens: scalar(personalTokens, day, userId), limitTokens: personalLimit(userId), resetAt: quotaResetAt(now), history }
+      const used = scalar(personalTokens, day, userId), limit = personalLimit(userId), current = policy(), hard = hardLimit(limit, current)
+      const state = used < limit ? 'ok' : hard !== undefined && used >= hard ? 'blocked' : current.mode === 'grace' ? 'grace' : 'over'
+      return { day, usedTokens: used, limitTokens: limit, resetAt: quotaResetAt(now), history, overLimit: current.mode, state, hardLimitTokens: hard ?? null }
     },
     async limits() {
       requireOpen()
       const override = defaultLimit.get()?.['value'] as number | undefined
       return { configuredDailyTokens: config.personalDailyTokens, defaultDailyTokens: override ?? config.personalDailyTokens,
         ...override === undefined ? {} : { defaultOverride: override },
-        overrides: (allOverrides.all() as Array<{ user_id: string; daily_tokens: number }>).map(row => ({ userId: String(row.user_id), dailyTokens: Number(row.daily_tokens) })) }
+        overrides: (allOverrides.all() as Array<{ user_id: string; daily_tokens: number }>).map(row => ({ userId: String(row.user_id), dailyTokens: Number(row.daily_tokens) })), overLimit: policy() }
     },
     async setDefaultLimit(dailyTokens) {
       requireOpen()
@@ -189,6 +216,12 @@ export function createQuotaLedger(config: QuotaConfig, clock: () => Date = () =>
       requireOpen()
       if (dailyTokens === null) { dropUser.run(userId); return }
       checkLimit(dailyTokens); putUser.run(userId, dailyTokens)
+    },
+    async setOverLimit(mode, gracePercent) {
+      requireOpen()
+      if (mode !== 'block' && mode !== 'grace' && mode !== 'warn') throw new Error('over-limit mode must be block, grace or warn')
+      if (!Number.isSafeInteger(gracePercent) || gracePercent < 1 || gracePercent > 100) throw new Error('grace percent must be an integer from 1 to 100')
+      writePolicy.run(mode, gracePercent)
     },
     async reserve(userId, maximumTokens) {
       requireOpen()
@@ -201,8 +234,9 @@ export function createQuotaLedger(config: QuotaConfig, clock: () => Date = () =>
         if (scalar(sitePending) >= config.siteConcurrency) throw new QuotaExceededError('site concurrency')
         const daily = (reason: 'personal daily' | 'site daily', used: number, limit: number): QuotaExceededError =>
           new QuotaExceededError(reason, { remainingTokens: Math.max(0, limit - used), requestedTokens: maximumTokens, resetAt: quotaResetAt(now) })
-        const personalUsed = scalar(personalTokens, day, userId), personalDaily = personalLimit(userId)
-        if (personalUsed > personalDaily - maximumTokens) throw daily('personal daily', personalUsed, personalDaily)
+        // The policy decides where the personal limit stops admission; `warn` leaves only the site limit.
+        const personalUsed = scalar(personalTokens, day, userId), personalStop = hardLimit(personalLimit(userId), policy())
+        if (personalStop !== undefined && personalUsed > personalStop - maximumTokens) throw daily('personal daily', personalUsed, personalStop)
         const siteUsed = scalar(siteTokens, day)
         if (siteUsed > config.siteDailyTokens - maximumTokens) throw daily('site daily', siteUsed, config.siteDailyTokens)
         const id = randomUUID() as ReservationId
