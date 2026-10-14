@@ -1,5 +1,7 @@
 {
   "controlSocket": "/var/lib/dsh-public/quota-control/quota.sock",
+  "accountSocket": "/var/lib/dsh-public/quota-account/account.sock",
+  "accountSocketGid": 990,
   "service": {
     "stateDir": "/var/lib/dsh-public/quota",
     "upstreamRoot": "https://model-upstream.example.com/v1",

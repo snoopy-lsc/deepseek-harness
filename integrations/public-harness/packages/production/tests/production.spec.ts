@@ -1,5 +1,5 @@
 import { generateKeyPairSync, sign } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { createServer, request as httpRequest } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -127,6 +127,17 @@ describe('strict production configuration files', () => {
     expect(() => parseTeamRouterConfig({ ...router, publicAuthority: 'a b' })).toThrow(/publicAuthority/)
     expect(() => parseTeamRouterConfig({ ...router, publicAuthority: 'harness.example.com:443' })).toThrow(/default port/)
     expect(parseTeamRouterConfig({ ...router, publicAuthority: 'staging.example.com:8443' }).publicAuthority).toBe('staging.example.com:8443')
+  })
+
+  it('quota profile may open the identity account socket with one group', async () => {
+    const example = JSON.parse(await readFile(new URL('../../../deploy/production/config/quota.example.json', import.meta.url), 'utf8'))
+    const parsed = parseQuotaProfileConfig(example)
+    expect(parsed.accountSocket).toBe('/var/lib/dsh-public/quota-account/account.sock')
+    expect(parsed.accountSocketGid).toBe(990)
+    const { accountSocket: _a, accountSocketGid: _g, ...without } = example
+    expect(parseQuotaProfileConfig(without).accountSocket).toBeUndefined()
+    expect(() => parseQuotaProfileConfig({ ...example, accountSocket: 'account.sock' })).toThrow(/absolute/)
+    expect(() => parseQuotaProfileConfig({ ...without, accountSocketGid: 990 })).toThrow(/accountSocket/)
   })
 
   it('rejects incomplete quota and provisioner profiles before anything starts', () => {

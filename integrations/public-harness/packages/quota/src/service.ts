@@ -1,4 +1,5 @@
 /** Production composition: durable ledger, pinned upstream, instance-bound listeners, and a private control surface. */
+import type { QuotaAccountLedger } from './account.ts'
 import { lstat, readFile } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import { portsFrom, validatePortRange, type PortRange, type UserId } from '@public-harness/contracts'
@@ -85,6 +86,8 @@ export interface QuotaService {
   close(userId: UserId): Promise<void>
   shutdown(): Promise<void>
   readonly healthSecret: string
+  /** Ledger reads and allowance edits served to the identity service over the account socket. */
+  readonly account: QuotaAccountLedger
 }
 
 /** Start the production quota service. The platform key never leaves this process. */
@@ -116,7 +119,7 @@ export async function createQuotaService(config: QuotaServiceConfig, options: { 
     await existing?.close()
   }
   return {
-    healthSecret, inspect,
+    healthSecret, inspect, account: ledger,
     async healthy() { return (await inspect()).available },
     async open(userId, instanceId) {
       await closeListener(userId)

@@ -29,7 +29,7 @@ SystemCallArchitectures=native
 CapabilityBoundingSet=
 AmbientCapabilities=
 UMask=0077
-StateDirectory=dsh-public/quota dsh-public/quota-control dsh-public/quota-home
+StateDirectory=dsh-public/quota dsh-public/quota-control dsh-public/quota-home dsh-public/quota-account:0750
 StateDirectoryMode=0700
 ReadOnlyPaths=/etc/dsh-public /opt/dsh-public
 
