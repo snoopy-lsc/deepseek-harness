@@ -8,8 +8,8 @@ import { QuotaNotice, dictionaries } from './quota.tsx'
 import { installTheme } from './theme.ts'
 import { installShell } from './shell.ts'
 
-/** Required services: the browser slot registry, locale, and ui-theme's token registry. */
-export const inject = ['slots', 'locale', 'theme']
+/** Required services: the browser slot registry, locale, ui-theme's token registry and the layout (the administration submenu follows the selected panel). */
+export const inject = ['slots', 'locale', 'theme', 'layout']
 
 /** Register brand occupants and platform quota copy.
  * @param ctx - browser root carrying slots and locale services.
