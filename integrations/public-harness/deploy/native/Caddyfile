@@ -40,7 +40,7 @@
 	request_header -X-Original-Uri
 	request_header -X-Dsh-Client-Ip
 
-	@account path /account/* /api/auth/*
+	@account path /account/* /api/auth/* /api/admin/*
 	handle @account {
 		reverse_proxy unix/{$DSH_IDENTITY_SOCKET} {
 			header_up Host {hostport}
