@@ -46,6 +46,15 @@ export interface PersonalUsage {
   readonly history: ReadonlyArray<{ readonly day: string; readonly tokens: number }>
 }
 
+/** Daily personal allowances: the configured value, an optional site-wide override, and per-user overrides. */
+export interface QuotaLimits {
+  readonly configuredDailyTokens: number
+  /** What a user without an override gets: the default override when set, else the configured value. */
+  readonly defaultDailyTokens: number
+  readonly defaultOverride?: number
+  readonly overrides: ReadonlyArray<{ readonly userId: string; readonly dailyTokens: number }>
+}
+
 /** A specific capacity limit rejected admission before upstream access. */
 export class QuotaExceededError extends Error {
   /**
@@ -89,6 +98,12 @@ export function createQuotaLedger(config: QuotaConfig, clock: () => Date = () =>
   status(): Promise<QuotaAggregate>
   /** Read-only usage of one user; pending reservations count at their upper bound, as admission does. */
   usage(userId: UserId): Promise<PersonalUsage>
+  /** Current allowances. */
+  limits(): Promise<QuotaLimits>
+  /** Set (or with null clear) the site-wide default personal allowance; at most the site daily limit. */
+  setDefaultLimit(dailyTokens: number | null): Promise<void>
+  /** Set (or with null clear) one user's personal allowance; at most the site daily limit. */
+  setUserLimit(userId: UserId, dailyTokens: number | null): Promise<void>
 } {
   validateQuotaConfig(config)
   if (process.platform !== 'win32' && (statSync(dirname(config.databasePath)).mode & 0o077) !== 0) {
@@ -108,6 +123,8 @@ export function createQuotaLedger(config: QuotaConfig, clock: () => Date = () =>
       charged_tokens INTEGER CHECK (charged_tokens >= 0)
     ) STRICT`)
     database.exec('CREATE INDEX IF NOT EXISTS reservations_day_user ON reservations(day, user_id)')
+    database.exec('CREATE TABLE IF NOT EXISTS personal_limits (user_id TEXT PRIMARY KEY, daily_tokens INTEGER NOT NULL CHECK (daily_tokens > 0)) STRICT')
+    database.exec("CREATE TABLE IF NOT EXISTS limit_settings (name TEXT PRIMARY KEY CHECK (name = 'default'), daily_tokens INTEGER NOT NULL CHECK (daily_tokens > 0)) STRICT")
     database.exec('CREATE INDEX IF NOT EXISTS reservations_pending ON reservations(charged_tokens, user_id)')
     transaction(database, () => {
       database.prepare('UPDATE reservations SET charged_tokens = maximum_tokens WHERE charged_tokens IS NULL').run()
@@ -124,6 +141,19 @@ export function createQuotaLedger(config: QuotaConfig, clock: () => Date = () =>
   const selection = database.prepare('SELECT charged_tokens FROM reservations WHERE id = ?')
   const settlement = database.prepare('UPDATE reservations SET charged_tokens = ? WHERE id = ? AND charged_tokens IS NULL')
   const personalHistory = database.prepare('SELECT day, SUM(COALESCE(charged_tokens, maximum_tokens)) AS tokens FROM reservations WHERE user_id = ? AND day >= ? AND day <= ? GROUP BY day ORDER BY day')
+  const userLimit = database.prepare('SELECT daily_tokens AS value FROM personal_limits WHERE user_id = ?')
+  const defaultLimit = database.prepare("SELECT daily_tokens AS value FROM limit_settings WHERE name = 'default'")
+  const allOverrides = database.prepare('SELECT user_id, daily_tokens FROM personal_limits ORDER BY user_id')
+  const putUser = database.prepare('INSERT INTO personal_limits (user_id, daily_tokens) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET daily_tokens = excluded.daily_tokens')
+  const dropUser = database.prepare('DELETE FROM personal_limits WHERE user_id = ?')
+  const putDefault = database.prepare("INSERT INTO limit_settings (name, daily_tokens) VALUES ('default', ?) ON CONFLICT(name) DO UPDATE SET daily_tokens = excluded.daily_tokens")
+  const dropDefault = database.prepare("DELETE FROM limit_settings WHERE name = 'default'")
+  const fallback = (): number => (defaultLimit.get()?.['value'] as number | undefined) ?? config.personalDailyTokens
+  const personalLimit = (userId: string): number => (userLimit.get(userId)?.['value'] as number | undefined) ?? fallback()
+  const checkLimit = (value: number): void => {
+    if (!Number.isSafeInteger(value) || value <= 0) throw new Error('daily limit must be a positive safe integer')
+    if (value > config.siteDailyTokens) throw new Error('daily limit cannot exceed the site daily limit')
+  }
   const requireOpen = (): void => { if (closed) throw new Error('quota ledger is closed') }
   return {
     async status() {
@@ -141,7 +171,24 @@ export function createQuotaLedger(config: QuotaConfig, clock: () => Date = () =>
       const day = now.toISOString().slice(0, 10)
       const first = new Date(now.valueOf() - 6 * 86_400_000).toISOString().slice(0, 10)
       const history = (personalHistory.all(userId, first, day) as Array<{ day: string; tokens: number }>).map(row => ({ day: String(row.day), tokens: Number(row.tokens) }))
-      return { day, usedTokens: scalar(personalTokens, day, userId), limitTokens: config.personalDailyTokens, resetAt: quotaResetAt(now), history }
+      return { day, usedTokens: scalar(personalTokens, day, userId), limitTokens: personalLimit(userId), resetAt: quotaResetAt(now), history }
+    },
+    async limits() {
+      requireOpen()
+      const override = defaultLimit.get()?.['value'] as number | undefined
+      return { configuredDailyTokens: config.personalDailyTokens, defaultDailyTokens: override ?? config.personalDailyTokens,
+        ...override === undefined ? {} : { defaultOverride: override },
+        overrides: (allOverrides.all() as Array<{ user_id: string; daily_tokens: number }>).map(row => ({ userId: String(row.user_id), dailyTokens: Number(row.daily_tokens) })) }
+    },
+    async setDefaultLimit(dailyTokens) {
+      requireOpen()
+      if (dailyTokens === null) { dropDefault.run(); return }
+      checkLimit(dailyTokens); putDefault.run(dailyTokens)
+    },
+    async setUserLimit(userId, dailyTokens) {
+      requireOpen()
+      if (dailyTokens === null) { dropUser.run(userId); return }
+      checkLimit(dailyTokens); putUser.run(userId, dailyTokens)
     },
     async reserve(userId, maximumTokens) {
       requireOpen()
@@ -154,8 +201,8 @@ export function createQuotaLedger(config: QuotaConfig, clock: () => Date = () =>
         if (scalar(sitePending) >= config.siteConcurrency) throw new QuotaExceededError('site concurrency')
         const daily = (reason: 'personal daily' | 'site daily', used: number, limit: number): QuotaExceededError =>
           new QuotaExceededError(reason, { remainingTokens: Math.max(0, limit - used), requestedTokens: maximumTokens, resetAt: quotaResetAt(now) })
-        const personalUsed = scalar(personalTokens, day, userId)
-        if (personalUsed > config.personalDailyTokens - maximumTokens) throw daily('personal daily', personalUsed, config.personalDailyTokens)
+        const personalUsed = scalar(personalTokens, day, userId), personalDaily = personalLimit(userId)
+        if (personalUsed > personalDaily - maximumTokens) throw daily('personal daily', personalUsed, personalDaily)
         const siteUsed = scalar(siteTokens, day)
         if (siteUsed > config.siteDailyTokens - maximumTokens) throw daily('site daily', siteUsed, config.siteDailyTokens)
         const id = randomUUID() as ReservationId

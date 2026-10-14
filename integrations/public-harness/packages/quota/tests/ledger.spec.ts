@@ -134,3 +134,32 @@ describe('personal usage', () => {
     expect((await ledger.usage(parseUserId('carol'))).history).toEqual([])
   })
 })
+
+describe('daily limits', () => {
+  it('a_per_user_limit_and_a_default_override_replace_the_configured_allowance', async () => {
+    const { open, config } = await fixture()
+    const ledger = open()
+    const alice = parseUserId('alice'), bob = parseUserId('bob')
+    expect(await ledger.limits()).toEqual({ configuredDailyTokens: 100, defaultDailyTokens: 100, overrides: [] })
+    await ledger.setDefaultLimit(60)
+    await ledger.setUserLimit(alice, 150)
+    expect(await ledger.limits()).toEqual({ configuredDailyTokens: 100, defaultDailyTokens: 60, defaultOverride: 60, overrides: [{ userId: 'alice', dailyTokens: 150 }] })
+    expect((await ledger.usage(alice)).limitTokens).toBe(150)
+    expect((await ledger.usage(bob)).limitTokens).toBe(60)
+    await ledger.settle((await ledger.reserve(alice, 120)).id, 120)
+    await expect(ledger.reserve(bob, 70)).rejects.toMatchObject({ reason: 'personal daily' })
+    await ledger.setUserLimit(alice, null)
+    await ledger.setDefaultLimit(null)
+    expect(await ledger.limits()).toEqual({ configuredDailyTokens: 100, defaultDailyTokens: 100, overrides: [] })
+    await expect(ledger.setUserLimit(alice, 0)).rejects.toThrow(/positive/)
+    await expect(ledger.setDefaultLimit(config.siteDailyTokens + 1)).rejects.toThrow(/site/)
+  })
+
+  it('limits_survive_a_restart', async () => {
+    const { open } = await fixture()
+    const first = open()
+    await first.setUserLimit(parseUserId('alice'), 80)
+    first.close()
+    expect((await open().limits()).overrides).toEqual([{ userId: 'alice', dailyTokens: 80 }])
+  })
+})
