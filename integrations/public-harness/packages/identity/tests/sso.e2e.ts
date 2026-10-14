@@ -43,12 +43,14 @@ describe.skipIf(executable === undefined)('enterprise SSO in a real browser', ()
   })
   afterAll(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
 
-  it('company_login_lands_on_the_account_page', async () => {
+  it('company_login_lands_in_the_users_own_route', async () => {
     const context = await browser.newContext(), page = await context.newPage()
     await page.goto(`${ORIGIN}/account/login?lang=en`)
     expect(await page.locator('form[data-action=login]').count()).toBe(0)
     await page.click('[data-sso-start]')
     await page.waitForURL(/\/u\/[^/]+\/$/)
+    // Sign-in lands straight in the user's own route; the account page then shows the session.
+    await page.goto(`${ORIGIN}/account/`)
     await page.waitForFunction(() => document.querySelector('[data-session] p')?.textContent === 'dana@corp.example')
     const cookie = (await context.cookies(ORIGIN)).find(entry => entry.name === 'dsh-account.session_token')!
     expect(cookie.httpOnly).toBe(true)
@@ -89,12 +91,14 @@ describe.skipIf(executable === undefined)('WeCom QR login in a real browser', ()
   })
   afterAll(async () => { for (const cleanup of local.splice(0).reverse()) await cleanup() })
 
-  it('scan_lands_on_the_account_page', async () => {
+  it('scan_lands_in_the_users_own_route', async () => {
     // The mock login page stands in for the QR scan and redirects straight back with a code.
     const context = await browser.newContext({ locale: 'zh-CN' }), page = await context.newPage()
     await page.goto(`${WECOM_ORIGIN}/account/login`)
     await page.click('[data-sso-start]')
     await page.waitForURL(/\/u\/[^/]+\/$/)
+    // Sign-in lands straight in the user's own route; the account page then shows the session.
+    await page.goto(`${WECOM_ORIGIN}/account/`)
     await page.waitForFunction(() => /@sso\.invalid$/.test(document.querySelector('[data-session] p')?.textContent ?? ''))
     expect((await context.cookies(WECOM_ORIGIN)).some(entry => entry.name === 'dsh-account.session_token')).toBe(true)
     await context.close()
@@ -116,12 +120,14 @@ describe.skipIf(executable === undefined)('DingTalk login in a real browser', ()
   })
   afterAll(async () => { for (const cleanup of local.splice(0).reverse()) await cleanup() })
 
-  it('scan_lands_on_the_account_page', async () => {
+  it('scan_lands_in_the_users_own_route', async () => {
     // The mock authorize page stands in for the QR scan and consent, and redirects straight back with an authCode.
     const context = await browser.newContext({ locale: 'zh-CN' }), page = await context.newPage()
     await page.goto(`${DT_ORIGIN}/account/login`)
     await page.click('[data-sso-start]')
     await page.waitForURL(/\/u\/[^/]+\/$/)
+    // Sign-in lands straight in the user's own route; the account page then shows the session.
+    await page.goto(`${DT_ORIGIN}/account/`)
     await page.waitForFunction(() => /^dingtalk-[0-9a-f]{32}@sso\.invalid$/.test(document.querySelector('[data-session] p')?.textContent ?? ''))
     expect((await context.cookies(DT_ORIGIN)).some(entry => entry.name === 'dsh-account.session_token')).toBe(true)
     await context.close()
@@ -145,12 +151,14 @@ describe.skipIf(executable === undefined)('SAML login in a real browser', () => 
   })
   afterAll(async () => { for (const cleanup of local.splice(0).reverse()) await cleanup() })
 
-  it('idp_post_lands_on_the_account_page', async () => {
+  it('idp_post_lands_in_the_users_own_route', async () => {
     // The mock IdP page auto-posts the signed response to the ACS, as a real IdP does after authentication.
     const context = await browser.newContext({ locale: 'en-US' }), page = await context.newPage()
     await page.goto(`${SAML_ORIGIN}/account/login`)
     await page.click('[data-sso-start]')
     await page.waitForURL(/\/u\/[^/]+\/$/)
+    // Sign-in lands straight in the user's own route; the account page then shows the session.
+    await page.goto(`${SAML_ORIGIN}/account/`)
     await page.waitForFunction(() => (document.querySelector('[data-session] p')?.textContent ?? '').includes('alice@corp.example'))
     expect((await context.cookies(SAML_ORIGIN)).some(entry => entry.name === 'dsh-account.session_token')).toBe(true)
     await context.close()
@@ -183,6 +191,8 @@ describe.skipIf(executable === undefined)('LDAP login form in a real browser', (
     await page.fill('[data-action=ldap] [name=password]', MOCK_USER_PASSWORD)
     await page.click('[data-action=ldap] button[type=submit]')
     await page.waitForURL(/\/u\/[^/]+\/$/)
+    // Sign-in lands straight in the user's own route; the account page then shows the session.
+    await page.goto(`${LDAP_ORIGIN}/account/`)
     await page.waitForFunction(() => (document.querySelector('[data-session] p')?.textContent ?? '') === 'alice@corp.example')
     await context.close()
   })
