@@ -6,6 +6,7 @@ import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import { useCallback, useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react'
 import type { AccountApi, AccountProfile, AccountSecurity, AccountSession, AccountUsage } from './me.ts'
 import { AccountApiError } from './me.ts'
+import { overLimitText } from './quota.tsx'
 
 /** Locale-owned personal center copy. */
 export const personalDictionaries = {
@@ -18,7 +19,10 @@ export const personalDictionaries = {
     short: 'Use at least 12 characters.', reauth: 'The current password is wrong.', changed: 'Password changed. Other sessions were signed out.',
     sessions: 'Sessions and devices', thisDevice: 'This device', lastActive: 'Active {date}', unknownDevice: 'Unknown device', revoke: 'Sign out',
     revokeOthers: 'Sign out other sessions', revokedOthers: 'Signed out {count} other sessions.', noOthers: 'No other sessions.',
-    usage: 'Usage', today: 'Today', resets: 'Resets {date}', tokens: '{used} / {limit} tokens', history: 'Last 7 days', noHistory: 'No usage in the last 7 days.', noUsage: 'Usage is not available on this deployment.',
+    usage: 'Usage', today: 'Today', resets: 'Resets {date}', tokens: '{used} / {limit} tokens', history: 'Last 7 days', noHistory: 'No usage in the last 7 days.', policy_block: 'At the limit new requests stop', policy_grace: 'Past the limit a grace share still runs', policy_warn: 'The limit is advisory: requests keep running with a warning',
+    overGrace: 'You have used your daily allowance ({limit} tokens). A grace of {left} tokens remains today; after that new requests stop until {reset}.',
+    overWarn: 'You have used your daily allowance ({limit} tokens). Requests still run, but please slow down; it resets {reset}.',
+    overBlocked: 'Your daily allowance ({limit} tokens) is used up. New requests stop until {reset}.', noUsage: 'Usage is not available on this deployment.',
     preferences: 'Preferences', appearance: 'Appearance and language', appearanceHint: 'Theme, colour mode and interface language.', open: 'Open settings',
     failed: 'Something went wrong. Try again.', loading: 'Loading…' },
   zh: { title: '个人中心', account: '账户', name: '名称', email: '邮箱', role: '角色', role_admin: '管理员', role_member: '成员',
@@ -30,7 +34,10 @@ export const personalDictionaries = {
     short: '密码至少 12 个字符。', reauth: '当前密码不正确。', changed: '密码已修改，其他会话已退出登录。',
     sessions: '会话与设备', thisDevice: '当前设备', lastActive: '活跃于 {date}', unknownDevice: '未知设备', revoke: '退出登录',
     revokeOthers: '退出其他会话', revokedOthers: '已退出 {count} 个其他会话。', noOthers: '没有其他会话。',
-    usage: '用量', today: '今日', resets: '{date} 重置', tokens: '{used} / {limit} tokens', history: '最近 7 天', noHistory: '最近 7 天没有用量。', noUsage: '此部署未提供用量信息。',
+    usage: '用量', today: '今日', resets: '{date} 重置', tokens: '{used} / {limit} tokens', history: '最近 7 天', noHistory: '最近 7 天没有用量。', policy_block: '达到额度后新的请求将暂停', policy_grace: '超出额度后仍有一部分宽限额度', policy_warn: '额度仅作提醒：超出后请求仍会继续',
+    overGrace: '你今日的额度（{limit} tokens）已用完，还剩 {left} tokens 的宽限额度；用完后新的请求将暂停，直到 {reset}。',
+    overWarn: '你今日的额度（{limit} tokens）已用完。请求仍可继续，但请控制用量；额度将于 {reset} 重置。',
+    overBlocked: '你今日的额度（{limit} tokens）已用完，新的请求将暂停，直到 {reset}。', noUsage: '此部署未提供用量信息。',
     preferences: '偏好设置', appearance: '外观与语言', appearanceHint: '主题、深浅色模式与界面语言。', open: '打开设置',
     failed: '操作失败，请重试。', loading: '加载中…' },
 }
@@ -143,14 +150,18 @@ function Usage({ api, t }: { api: AccountApi; t: T }) {
   if (usage === null) return <Row title={t('noUsage')} end />
   const share = Math.min(1, usage.limitTokens === 0 ? 0 : usage.usedTokens / usage.limitTokens)
   const peak = Math.max(1, ...usage.history.map(day => day.tokens))
+  const over = overLimitText(usage, t)
   return <>
+    {over !== undefined && <p role={usage.state === 'blocked' ? 'alert' : 'status'} data-team-personal-over={usage.state} style={{ margin: '12px 0 0', padding: '10px 12px', borderRadius: 10, fontSize: 13, lineHeight: '20px',
+      background: 'var(--dsw-alias-interactive-bg-hover)', color: usage.state === 'blocked' ? 'var(--dsw-alias-state-error, #d92d20)' : 'var(--dsw-alias-label-primary)' }}>
+      <Tag tone={usage.state === 'blocked' ? 'danger' : 'warning'}>{t(`policy_${usage.overLimit ?? 'block'}`)}</Tag> {over}</p>}
     <Row title={t('today')} detail={fill(t('resets'), { date: date(usage.resetAt) })}>
       <span style={label}>{fill(t('tokens'), { used: usage.usedTokens.toLocaleString(), limit: usage.limitTokens.toLocaleString() })}</span>
     </Row>
     <div style={{ padding: '0 0 16px', borderBottom: '0.5px solid var(--dsw-alias-border-l2)' }}>
       <div role="meter" aria-valuemin={0} aria-valuemax={usage.limitTokens} aria-valuenow={usage.usedTokens} aria-label={t('today')}
         style={{ height: 6, borderRadius: 3, background: 'var(--dsw-alias-interactive-bg-hover)', overflow: 'hidden' }}>
-        <div style={{ width: `${Math.round(share * 100)}%`, height: '100%', background: 'var(--dsw-alias-button-primary-fill)' }} />
+        <div style={{ width: `${Math.round(share * 100)}%`, height: '100%', background: usage.state === 'blocked' || usage.state === 'grace' || usage.state === 'over' ? 'var(--dsw-alias-state-warning, #f79009)' : 'var(--dsw-alias-button-primary-fill)' }} />
       </div>
     </div>
     <div style={{ ...last, flexDirection: 'column', alignItems: 'stretch' }}>

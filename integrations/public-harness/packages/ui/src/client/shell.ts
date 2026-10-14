@@ -9,6 +9,7 @@ import { PersonalCenter, personalDictionaries } from './personal.tsx'
 import { ADMIN_PANEL, AdminIcon, PROFILE_PANEL, ProfileIcon, navDictionaries } from './nav.tsx'
 import { AdminMenu, AdminPage, adminDictionaries, createSectionState } from './admin.tsx'
 import { createAdminApi, type AdminApi } from './admin-api.ts'
+import { OverLimitNotice } from './quota.tsx'
 
 const NS = 'publicHarnessNav'
 const ADMIN_NS = 'publicHarnessAdmin'
@@ -29,6 +30,7 @@ export function registerEntries(ctx: Context, profile: AccountProfile, api: Acco
   const off = [
     ctx.slots.register({ name: 'main', key: PROFILE_PANEL, locale: 'publicHarnessPersonal', inject: () => ({ profile, api, openSettings }) }, PersonalCenter),
     ctx.slots.register({ name: 'sidebar.panellist', id: PROFILE_PANEL, order: 80, locale: NS, label: () => t('profile') }, ProfileIcon),
+    ctx.slots.register({ name: 'shell.overlay', id: 'team.over-limit', locale: 'publicHarness', inject: () => ({ api }) }, OverLimitNotice),
   ]
   if (profile.role === 'admin') {
     const section = createSectionState()

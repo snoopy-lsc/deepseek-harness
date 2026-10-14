@@ -47,6 +47,12 @@ export interface AccountUsage {
   readonly limitTokens: number
   readonly resetAt: string
   readonly history: ReadonlyArray<{ readonly day: string; readonly tokens: number }>
+  /** Site over-limit policy: `block` refuses at the limit, `grace` admits a grace share first, `warn` only warns. */
+  readonly overLimit?: 'block' | 'grace' | 'warn'
+  /** Where the user stands against that policy. */
+  readonly state?: 'ok' | 'grace' | 'over' | 'blocked'
+  /** Where new requests stop; null when the limit is advisory. */
+  readonly hardLimitTokens?: number | null
 }
 
 /** A refused personal center request, carrying the server's stable code. */

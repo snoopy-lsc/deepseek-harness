@@ -22,7 +22,10 @@ export interface AdminSso {
   readonly reconcile: { scheduled: boolean; intervalMs: number; last: { at: number; outcome: string; detail: string | null } | null }
   readonly disabledAccounts: number
 }
-export interface AdminQuota { readonly configuredDailyTokens: number; readonly defaultDailyTokens: number; readonly defaultOverride?: number; readonly overrides: ReadonlyArray<{ readonly userId: string; readonly dailyTokens: number }> }
+export interface AdminQuota { readonly configuredDailyTokens: number; readonly defaultDailyTokens: number; readonly defaultOverride?: number; readonly overrides: ReadonlyArray<{ readonly userId: string; readonly dailyTokens: number }>
+  readonly overLimit?: { readonly mode: OverLimitMode; readonly gracePercent: number } }
+/** What the quota proxy does when a user reaches the personal daily limit. */
+export type OverLimitMode = 'block' | 'grace' | 'warn'
 
 /** A refused call; `method` says how to re-authenticate when `code` is `reauth-required` or `reauth`. */
 export class AdminApiError extends Error {
@@ -46,6 +49,9 @@ export interface AdminApi {
   quota(): Promise<AdminQuota | undefined>
   setDefaultQuota(dailyTokens: number | null, proof?: Proof): Promise<AdminQuota>
   setUserQuota(userId: string, dailyTokens: number | null, proof?: Proof): Promise<AdminQuota>
+  setOverLimit(mode: OverLimitMode, gracePercent: number, proof?: Proof): Promise<AdminQuota>
+  /** Download address of the CSV export for these audit filters (same-origin; the browser's session authenticates it). */
+  auditCsvUrl(query: { event?: string; outcome?: string; q?: string }): string
 }
 
 /** Build the client: same-origin GETs and JSON POSTs.
@@ -88,5 +94,7 @@ export function createAdminApi(fetcher?: typeof fetch): AdminApi {
     },
     setDefaultQuota: async (dailyTokens, p) => await request('/quota/default', { dailyTokens, ...proof(p) }) as AdminQuota,
     setUserQuota: async (userId, dailyTokens, p) => await request('/quota/user', { userId, dailyTokens, ...proof(p) }) as AdminQuota,
+    setOverLimit: async (mode, gracePercent, p) => await request('/quota/over-limit', { mode, gracePercent, ...proof(p) }) as AdminQuota,
+    auditCsvUrl: query => `${ADMIN_PATH}/audit.csv${qs(query)}`,
   }
 }

@@ -3,7 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({ Button: 'Button', Tag: 'Tag', Input: 'Input', IconUserOutlineRegular: 'IconUser', IconShieldOutlineRegular: 'IconShield',
   IconBrowseOutlineRegular: 'I', IconGaugeOutlineRegular: 'I', IconLinkOutlineRegular: 'I', IconSlidersTwoOutlineRegular: 'I',
   IconChecklistOutlineRegular: 'I', IconChevronLeftOutlineRegular: 'I', IconPlusOutlineRegular: 'I', IconSearchOutlineRegular: 'I', IconUsersOutlineRegular: 'I',
-  Modal: 'Modal', SegmentedControl: 'SegmentedControl', writeClipboard: async () => true }))
+  Modal: 'Modal', Toast: 'Toast', SegmentedControl: 'SegmentedControl', writeClipboard: async () => true }))
 import { loadProfile } from '../src/client/me.ts'
 import { installShell } from '../src/client/shell.ts'
 
@@ -31,10 +31,10 @@ describe('unified shell entries', () => {
   it('everyone_gets_the_personal_entry_but_only_admins_get_administration', async () => {
     const member = fakeContext()
     await installShell(member.ctx, async () => profile('member'))
-    expect([...member.live.keys()].sort()).toEqual(['main:team.profile', 'sidebar.panellist:team.profile'])
+    expect([...member.live.keys()].sort()).toEqual(['main:team.profile', 'shell.overlay:team.over-limit', 'sidebar.panellist:team.profile'])
     const admin = fakeContext()
     await installShell(admin.ctx, async () => profile('admin'))
-    expect([...admin.live.keys()].sort()).toEqual(['main:team.admin', 'main:team.profile', 'sidebar.panellist:team.admin', 'sidebar.panellist:team.profile'])
+    expect([...admin.live.keys()].sort()).toEqual(['main:team.admin', 'main:team.profile', 'shell.overlay:team.over-limit', 'sidebar.panellist:team.admin', 'sidebar.panellist:team.profile'])
     admin.dispose()
     expect(admin.live.size).toBe(0)
   })

@@ -6,7 +6,7 @@ import { Button, IconChecklistOutlineRegular, IconChevronLeftOutlineRegular, Ico
   IconSearchOutlineRegular, IconUsersOutlineRegular, Input, Modal, SegmentedControl, Tag, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import { useCallback, useEffect, useState, useSyncExternalStore, type CSSProperties, type FormEvent, type ReactNode } from 'react'
-import { AdminApiError, type AdminApi, type AdminAuditPage, type AdminInvite, type AdminQuota, type AdminSso, type AdminUser, type AdminUserPage, type Proof } from './admin-api.ts'
+import { AdminApiError, type AdminApi, type AdminAuditPage, type AdminInvite, type AdminQuota, type AdminSso, type AdminUser, type AdminUserPage, type OverLimitMode, type Proof } from './admin-api.ts'
 
 /** Locale-owned administration copy. */
 export const adminDictionaries = {
@@ -33,6 +33,12 @@ export const adminDictionaries = {
     configured: 'Configured daily limit', defaultLimit: 'Default daily limit', defaultHint: 'Applies to everyone without a personal limit; at most the site limit.', tokens: '{n} tokens',
     save: 'Save', reset: 'Use configured', perUser: 'Personal limits', addOverride: 'Set a personal limit', user: 'User', dailyTokens: 'Daily tokens', remove: 'Remove', noOverrides: 'No personal limits.',
     noQuota: 'The quota ledger is not connected to this deployment.', invalidTokens: 'Enter a whole number above zero.',
+    overLimit: 'When someone reaches their limit', mode_block: 'Block', mode_grace: 'Grace', mode_warn: 'Warn only',
+    modeHint_block: 'New requests are refused until the daily reset. Users see the allowance notice.',
+    modeHint_grace: 'Requests keep running for an extra share of the limit, with a warning; then they are refused.',
+    modeHint_warn: 'The personal limit is advisory: requests keep running with a warning. The site daily limit still refuses.',
+    gracePercent: 'Grace (% of the limit)', invalidGrace: 'Enter a whole percentage from 1 to 100.',
+    exportCsv: 'Export CSV', exportHint: 'Exports the entries matching these filters (newest first, at most 50,000 rows). The export is recorded in this log.',
   },
   zh: {
     title: '系统管理', back: '返回会话', menu: '系统管理分区',
@@ -57,6 +63,12 @@ export const adminDictionaries = {
     configured: '配置的每日额度', defaultLimit: '默认每日额度', defaultHint: '适用于没有个人额度的所有人；不能超过站点额度。', tokens: '{n} tokens',
     save: '保存', reset: '恢复配置值', perUser: '个人额度', addOverride: '设置个人额度', user: '用户', dailyTokens: '每日 tokens', remove: '移除', noOverrides: '没有个人额度。',
     noQuota: '此部署未连接额度账本。', invalidTokens: '请输入大于零的整数。',
+    overLimit: '用户达到额度后', mode_block: '阻止', mode_grace: '宽限', mode_warn: '仅提醒',
+    modeHint_block: '在每日重置前拒绝新的请求，用户会看到额度提示。',
+    modeHint_grace: '在额度之外再允许一定比例的用量并提醒用户，超出后拒绝。',
+    modeHint_warn: '个人额度仅作提醒：请求继续并提示用户；站点每日额度仍会拒绝。',
+    gracePercent: '宽限比例（额度的 %）', invalidGrace: '请输入 1 到 100 之间的整数百分比。',
+    exportCsv: '导出 CSV', exportHint: '导出符合当前筛选条件的记录（最新在前，最多 50,000 条）。导出操作本身也会记录在此日志中。',
   },
 }
 
@@ -162,7 +174,8 @@ function useReauth(t: T, onError: (error: unknown) => void) {
 function ReauthDialog({ t, pending, onCancel, onPassword }: { t: T; pending: Pending; onCancel: () => void; onPassword: (password: string) => void }) {
   const [password, setPassword] = useState('')
   const submit = (event: FormEvent) => { event.preventDefault(); if (password) onPassword(password) }
-  const ret = `${globalThis.location?.pathname ?? '/'}`
+  // Back to this very page (path, query and fragment) after the sign-in; the server re-checks it against the user's own route.
+  const ret = `${globalThis.location?.pathname ?? '/'}${globalThis.location?.search ?? ''}${globalThis.location?.hash ?? ''}`
   return <Modal open onClose={onCancel} title={t('reauthTitle')} closeLabel={t('cancel')} description={pending.method === 'password' ? t('reauthPassword') : t('reauthSso')}>
     {pending.method === 'password'
       ? <form onSubmit={submit} data-team-admin-reauth="password" style={{ display: 'grid', gap: 12 }}>
@@ -289,7 +302,12 @@ function Audit({ api, t }: { api: AdminApi; t: T }) {
       <SegmentedControl id="team-admin-outcome" label={t('outcome')} value={outcome} onChange={setOutcome}
         options={[{ value: '', label: t('all') }, { value: 'ok', label: t('ok') }, { value: 'denied', label: t('denied') }, { value: 'error', label: t('error') }]} />
       <Input style={{ minWidth: 240 }} icon={<IconSearchOutlineRegular size={16} />} placeholder={t('filter')} aria-label={t('filter')} value={q} onChange={e => setQ(e.target.value)} />
+      <Button variant="outline" data-team-admin-export onClick={() => {
+        // A same-origin link with the session cookie; the server streams the file as an attachment, so the page stays put.
+        const link = globalThis.document.createElement('a'); link.href = api.auditCsvUrl({ event, outcome, q }); link.download = ''; link.click()
+      }}>{t('exportCsv')}</Button>
     </div>
+    <div style={{ ...hint, marginTop: -8 }}>{t('exportHint')}</div>
     <Card testId="audit">
       {entries === undefined ? <Row title={t('loading')} end /> : entries === null ? <Row title={t('failed')} end /> : entries.length === 0 ? <Row title={t('noAudit')} end />
         : entries.map((entry, index) => <Row key={entry.id} end={index === entries.length - 1 && next === null}
@@ -346,6 +364,10 @@ function Quota({ api, t }: { api: AdminApi; t: T }) {
   const tokens = (n: number) => fill(t('tokens'), { n: n.toLocaleString() })
   return <>
     <Note note={note} />
+    <OverLimitCard quota={quota} t={t} onSave={(mode, grace) => {
+      if (mode === 'grace' && !(/^[1-9][0-9]?$|^100$/.test(grace))) { setNote({ ok: false, text: t('invalidGrace') }); return }
+      save(proof => api.setOverLimit(mode, mode === 'grace' ? Number(grace) : quota.overLimit?.gracePercent ?? 10, proof))
+    }} />
     <Card testId="quota-default">
       <Row title={t('configured')}><span style={label}>{tokens(quota.configuredDailyTokens)}</span></Row>
       <form style={{ padding: '14px 0' }} onSubmit={event => { event.preventDefault(); const n = parse(defaultValue); if (n === undefined) { setNote({ ok: false, text: t('invalidTokens') }); return } save(proof => api.setDefaultQuota(n, proof)) }}>
@@ -376,6 +398,25 @@ function Quota({ api, t }: { api: AdminApi; t: T }) {
     </Card>
     {dialog}
   </>
+}
+
+function OverLimitCard({ quota, t, onSave }: { quota: AdminQuota; t: T; onSave: (mode: OverLimitMode, grace: string) => void }) {
+  const current = quota.overLimit ?? { mode: 'block' as const, gracePercent: 10 }
+  const [mode, setMode] = useState<OverLimitMode>(current.mode), [grace, setGrace] = useState(String(current.gracePercent))
+  useEffect(() => { setMode(current.mode); setGrace(String(current.gracePercent)) }, [current.mode, current.gracePercent])
+  return <Card testId="quota-over-limit">
+    <form style={{ padding: '14px 0' }} onSubmit={event => { event.preventDefault(); onSave(mode, grace) }}>
+      <div style={label}>{t('overLimit')}</div>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginTop: 10 }}>
+        <SegmentedControl id="team-admin-over-limit" label={t('overLimit')} value={mode} onChange={setMode}
+          options={[{ value: 'block', label: t('mode_block') }, { value: 'grace', label: t('mode_grace') }, { value: 'warn', label: t('mode_warn') }]} />
+        {mode === 'grace' && <label style={{ ...field, gridAutoFlow: 'column', alignItems: 'center', gap: 8 }}>{t('gracePercent')}
+          <Input style={{ width: 80 }} inputMode="numeric" value={grace} onChange={e => setGrace(e.target.value.replace(/\D/g, ''))} /></label>}
+        <Button type="submit" variant="primary">{t('save')}</Button>
+      </div>
+      <div style={hint}>{t(`modeHint_${mode}`)}</div>
+    </form>
+  </Card>
 }
 
 /** The administration main panel: the section chosen in the sidebar submenu.

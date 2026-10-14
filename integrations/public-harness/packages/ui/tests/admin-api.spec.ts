@@ -19,6 +19,15 @@ describe('administration client', () => {
     expect(JSON.parse(String(r.calls[1]!.init.body))).toEqual({ userId: 'u1', reason: 'left', password: 'pw' })
     await r.api.setUserQuota('u1', null)
     expect(JSON.parse(String(r.calls[2]!.init.body))).toEqual({ userId: 'u1', dailyTokens: null })
+    await r.api.setOverLimit('grace', 15, { password: 'pw' })
+    expect(r.calls[3]!.url).toBe('/api/admin/quota/over-limit')
+    expect(JSON.parse(String(r.calls[3]!.init.body))).toEqual({ mode: 'grace', gracePercent: 15, password: 'pw' })
+  })
+
+  it('builds_the_csv_export_address_from_the_current_filters', () => {
+    const { api } = recorder()
+    expect(api.auditCsvUrl({})).toBe('/api/admin/audit.csv')
+    expect(api.auditCsvUrl({ event: 'admin-user-disable', outcome: '', q: 'a&b=中' })).toBe('/api/admin/audit.csv?event=admin-user-disable&q=a%26b%3D%E4%B8%AD')
   })
 
   it('surfaces_the_server_code_and_reauth_method', async () => {
