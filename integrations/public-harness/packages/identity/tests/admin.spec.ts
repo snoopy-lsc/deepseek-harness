@@ -102,7 +102,7 @@ describe('/api/admin', () => {
     expect([wrong.status, json(wrong).code]).toEqual([403, 'reauth'])
     expect((await s.post('/users/disable', { userId: s.member.id, password: PASSWORD, reason: 'left' }, s.root.cookie)).status).toBe(200)
     expect((await call(s.config.publicSocket, 'GET', '/account/api/me', undefined, { cookie: s.member.cookie })).status).toBe(401)
-    expect(json(await s.get('/users?status=disabled', s.root.cookie)).users).toEqual([expect.objectContaining({ id: s.member.id, disabledReason: 'admin:left' })])
+    expect(json(await s.get('/users?status=disabled', s.root.cookie)).users).toEqual([expect.objectContaining({ id: s.member.id, disabledReason: 'admin:left', lastLoginAt: expect.any(Number) })])
     expect((await s.post('/users/enable', { userId: s.member.id }, s.root.cookie)).status).toBe(200)
     expect(s.audit().filter(r => r.user_id === s.member.id && r.event !== 'password-change').map(r => [r.event, r.outcome])).toEqual([
       ['sso-disable', 'ok'], ['admin-user-disable', 'ok'], ['sso-enable', 'ok'], ['admin-user-enable', 'ok']])

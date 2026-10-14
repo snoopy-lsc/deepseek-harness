@@ -85,6 +85,16 @@ export function adminRoutes(deps: AdminDeps): (req: IncomingMessage, res: Server
   const userById = db.prepare('SELECT id, email, name, createdAt FROM user WHERE id = ?')
   const allUsers = db.prepare("SELECT id, email, name, createdAt FROM user WHERE (?1 = '' OR lower(email) LIKE ?1 ESCAPE '\\' OR lower(name) LIKE ?1 ESCAPE '\\') ORDER BY createdAt")
   const lastSession = db.prepare('SELECT max(createdAt) AS at FROM session WHERE userId = ?')
+  // Sessions disappear on sign-out, expiry and disable; the last sign-in seen is kept so a disabled account still shows it.
+  db.exec('CREATE TABLE IF NOT EXISTS dsh_last_login (user_id TEXT PRIMARY KEY, at INTEGER NOT NULL)')
+  const keepLogin = db.prepare('INSERT INTO dsh_last_login (user_id, at) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET at = max(at, excluded.at)')
+  const keptLogin = db.prepare('SELECT at FROM dsh_last_login WHERE user_id = ?')
+  const lastLogin = (id: string): number | null => {
+    const live = time((lastSession.get(id) as { at: unknown } | undefined)?.at)
+    if (live !== null && !Number.isNaN(live)) keepLogin.run(id, live)
+    const kept = (keptLogin.get(id) as { at: number } | undefined)?.at
+    return kept ?? null
+  }
   const auditPage = db.prepare(`SELECT id, at, event, outcome, user_id, email, ip, detail FROM dsh_audit
     WHERE (?1 = '' OR event = ?1) AND (?2 = '' OR outcome = ?2) AND (?3 = '' OR lower(coalesce(email, '')) LIKE ?3 ESCAPE '\\' OR lower(coalesce(detail, '')) LIKE ?3 ESCAPE '\\')
     AND (?4 = 0 OR id < ?4) ORDER BY id DESC LIMIT ?5`)
@@ -140,7 +150,7 @@ export function adminRoutes(deps: AdminDeps): (req: IncomingMessage, res: Server
     const id = String(row.id), email = String(row.email).toLowerCase()
     const source = roles.source(id, email), origin = database.sso.origin(id), disabled = database.sso.disabledAt(id)
     const links = database.sso.linksOf(id)
-    const sessionAt = time((lastSession.get(id) as { at: unknown } | undefined)?.at)
+    const sessionAt = lastLogin(id)
     const linkAt = links.reduce<number | null>((max, link) => link.lastLoginAt !== undefined && (max === null || link.lastLoginAt > max) ? link.lastLoginAt : max, null)
     return { id, email, name: String(row.name), createdAt: time(row.createdAt), role: source === undefined ? 'member' : 'admin', roleSource: source ?? null,
       status: disabled === undefined ? 'active' : 'disabled', disabledAt: disabled?.at ?? null, disabledReason: disabled?.reason ?? null,
@@ -222,6 +232,7 @@ export function adminRoutes(deps: AdminDeps): (req: IncomingMessage, res: Server
       // Disabling yourself would end this session mid-action; another administrator does it.
       if (user.id === session.user.id) throw new MeError(409, 'self')
       await reauth(req, session, body, 'disable')
+      store(() => lastLogin(user.id))
       // The deprovisioning path: one transaction drops every session and writes its own `sso-disable` row.
       store(() => database.sso.disableUser(user.id, `admin:${reason}`, clock(), user.email))
       audit('admin-user-disable', 'ok', actor, req, user, `reason=${reason}`)
