@@ -30,7 +30,7 @@ describe('DingTalk sign-in', () => {
     const { mock, config } = await start()
     const first = await scanLogin(config.publicSocket, mock)
     expect(first.status).toBe(302)
-    expect(String(first.headers.location)).toMatch(/^\/account\/\?return=/)
+    expect(String(first.headers.location)).toMatch(/^\/u\//)
     const session = await call(config.sessionSocket, 'POST', '/internal/session', { cookie: sessionCookie(first)! })
     expect(session.status).toBe(200)
     const userId = JSON.parse(session.body).userId as string

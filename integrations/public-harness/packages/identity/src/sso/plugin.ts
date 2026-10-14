@@ -13,7 +13,8 @@ import { SsoBindingError, STATE_TTL_MS, type SsoStore } from './store.ts'
 /** Browser-binding cookie name for one sign-in attempt. */
 export const SSO_BROWSER_COOKIE = 'dsh-sso'
 const CALLBACK = '/api/auth/sso/callback'
-const RETURN = /^\/(?:account|u\/[A-Za-z0-9_-]{1,128})\/$/
+/** Shape kept until sign-in completes; the destination itself is checked against the signed-in user by safeReturnPath. */
+const RETURN = /^\/[^\/\\][^\s]{0,510}$/
 /** LDAP lockout: failures per (username, IP) and per username, in a sliding window, persisted in the identity database. */
 export const LDAP_LOCKOUT = { window: 15 * 60_000, perUserIp: 5, perUser: 20 } as const
 
@@ -119,7 +120,7 @@ export function ssoPlugin(deps: SsoPluginDeps) {
       }
       const userId = await complete(ctx, identity, fail, ip)
       const back = asked ? safeReturnPath(asked, parseUserId(userId)) : `/u/${userId}/`
-      return ctx.json({ redirect: `/account/?return=${encodeURIComponent(back)}` })
+      return ctx.json({ redirect: back })
     }),
   })
   if (!('begin' in provider)) return { id: 'dsh-sso', endpoints: ldapEndpoint(provider) }
@@ -165,7 +166,7 @@ export function ssoPlugin(deps: SsoPluginDeps) {
         }
         const userId = await complete(ctx, identity, fail, ip)
         const back = saved.returnTo ? safeReturnPath(saved.returnTo, parseUserId(userId)) : `/u/${userId}/`
-        throw ctx.redirect(`/account/?return=${encodeURIComponent(back)}`)
+        throw ctx.redirect(back)
       }),
     },
   }

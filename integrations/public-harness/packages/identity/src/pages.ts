@@ -62,15 +62,31 @@ export function pickLocale(url: URL, acceptLanguage: string | undefined): Locale
   return /^\s*zh\b/i.test(acceptLanguage ?? '') ? 'zh' : 'en'
 }
 
-/** The only post-login destinations: the signed-in user's own Harness route or the account page.
+/** Post-login destination check shared by the server and the inline page script (embedded via its source, so plain JavaScript only).
+ * Accepts the account page or any page under the user's own route, with its query and fragment; rejects absolute and protocol-relative URLs,
+ * backslashes, control characters and whitespace, dot segments, percent-encoded slashes, backslashes or dots, and double encoding.
+ * @param value Requested return path.
+ * @param own The user's own route, `/u/<id>/`.
+ * @returns The path when it is safe, else `own`.
+ */
+export function returnTarget(value: unknown, own: string): string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 512 || value.charAt(0) !== '/' || value.charAt(1) === '/') return own
+  if (/[\\\s\u0000-\u001f\u007f]/.test(value) || /%(?:2f|5c|2e|25|0[0-9a-f]|1[0-9a-f]|7f|20)/i.test(value)) return own
+  let decoded
+  try { decoded = decodeURIComponent(value) } catch { return own }
+  const path = decoded.split(/[?#]/)[0]
+  if (/(?:^|\/)\.\.?(?:\/|$)/.test(path) || path.indexOf('//') !== -1) return own
+  if (path === '/account/' || path.indexOf(own) === 0) return value
+  return own
+}
+
+/** The only post-login destinations: the account page or a page under the signed-in user's own Harness route.
  * @param value Requested return path.
  * @param userId Signed-in user.
  * @returns A same-origin path; anything else falls back to the user's route.
  */
 export function safeReturnPath(value: string, userId: UserId): string {
-  const own = `/u/${userId}/`
-  if (value === '/account/' || value === own) return value
-  return own
+  return returnTarget(value, `/u/${userId}/`)
 }
 
 /** Look up a localized string.
@@ -165,7 +181,7 @@ const SCRIPT = `
 const L=JSON.parse(document.getElementById('copy').textContent),C=JSON.parse(document.getElementById('captcha').textContent),out=document.querySelector('[role=alert]');
 const say=(m)=>{out.textContent=m};
 // After sign-in everyone goes straight to their own chat; the return parameter may only name the account page or that same route.
-const home=(r)=>{const id=r&&r.user&&r.user.id;if(typeof id!=='string'||!/^[A-Za-z0-9_-]+$/.test(id))return '/account/';const own='/u/'+id+'/',w=new URLSearchParams(location.search).get('return')||'';return w==='/account/'||w===own?w:own}
+const home=(r)=>{const id=r&&r.user&&r.user.id;if(typeof id!=='string'||!/^[A-Za-z0-9_-]+$/.test(id))return '/account/';return (${returnTarget.toString()})(new URLSearchParams(location.search).get('return')||'','/u/'+id+'/')}
 async function call(path,body,extra){const r=await fetch('/api/auth'+path,{method:body===undefined?'GET':'POST',headers:{'content-type':'application/json',...extra},body:body===undefined?undefined:JSON.stringify(body),credentials:'same-origin'});
  let j=null;try{j=await r.json()}catch{} if(r.status===503)throw new Error(L.unavailable); if(!r.ok&&j&&j.code==='INVALID_EMAIL_OR_PASSWORD')throw new Error(L.badLogin); if(!r.ok)throw new Error(L.failed+((j&&(j.code||j.message))||r.status)); return j}
 let tok='';const mark=(ok)=>{for(const s of document.querySelectorAll('[data-captcha-state]'))s.textContent=ok?L.captchaDone:''};

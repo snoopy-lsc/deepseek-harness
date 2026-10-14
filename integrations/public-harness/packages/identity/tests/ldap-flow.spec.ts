@@ -24,7 +24,7 @@ describe('LDAP sign-in', () => {
     const { config, mock } = await start()
     const first = await signIn(config.publicSocket, 'alice')
     expect(first.status).toBe(200)
-    expect(JSON.parse(first.body).redirect).toMatch(/^\/account\/\?return=%2Fu%2F/)
+    expect(JSON.parse(first.body).redirect).toMatch(/^\/u\//)
     const userId = JSON.parse((await call(config.sessionSocket, 'POST', '/internal/session', { cookie: sessionCookie(first)! })).body).userId as string
     const second = await signIn(config.publicSocket, 'ALICE')
     expect(JSON.parse((await call(config.sessionSocket, 'POST', '/internal/session', { cookie: sessionCookie(second)! })).body).userId).toBe(userId)

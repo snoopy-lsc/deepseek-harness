@@ -1,15 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import { parseUserId } from '@public-harness/contracts'
 import { identityStylesheet } from '@public-harness/ui'
-import { escapeHtml, pickLocale, renderPage, safeReturnPath, ssoErrorText, text } from '../src/pages.ts'
+import { escapeHtml, pickLocale, renderPage, returnTarget, safeReturnPath, ssoErrorText, text } from '../src/pages.ts'
 
 describe('account pages', () => {
   it('return_path_cannot_leave_owner_route', () => {
     const alice = parseUserId('alice')
     expect(safeReturnPath('/u/alice/', alice)).toBe('/u/alice/')
     expect(safeReturnPath('/account/', alice)).toBe('/account/')
-    for (const hostile of ['https://evil.example/', '//evil.example/', '/u/bob/', '/u/alice/../bob/', '%2F%2Fevil.example', '/\\evil.example', 'javascript:alert(1)']) {
-      expect(safeReturnPath(hostile, alice)).toBe('/u/alice/')
+    // Any page under the user's own route keeps its query and fragment.
+    expect(safeReturnPath('/u/alice/settings?tab=quota#usage', alice)).toBe('/u/alice/settings?tab=quota#usage')
+    expect(safeReturnPath('/u/alice/s/%E4%B8%AD', alice)).toBe('/u/alice/s/%E4%B8%AD')
+    for (const hostile of ['https://evil.example/', '//evil.example/', '/u/bob/', '/u/alice/../bob/', '%2F%2Fevil.example', '/\\evil.example', 'javascript:alert(1)',
+      '/u/alice/..%2F..%2Fbob/', '/%2F%2Fevil.example', '/%5Cevil.example', '/u/alice/%2e%2e/bob/', '/u/alice/%252e%252e/bob/', '/u/alice//evil', '/u/alice/\\..',
+      '/u/alice/\t', '/u/alice/%0d%0aSet-Cookie:x', ' /u/alice/', '/u/alicex/', '/account/login', 'http:/u/alice/', '/u/alice/./x', '/u/alice/%E4%B8', '']) {
+      expect(safeReturnPath(hostile, alice), hostile).toBe('/u/alice/')
     }
   })
 
@@ -19,7 +24,8 @@ describe('account pages', () => {
     expect(page).not.toContain("location.assign('/account/')}")
     expect(page).toContain("location.assign(home(r))")
     // Only the account page or the user's own route are accepted from `return`; everything else falls back to the chat.
-    expect(page).toContain("w==='/account/'||w===own?w:own")
+    expect(page).toContain("location.assign(home(r))")
+    expect(page).toContain(returnTarget.toString())
   })
 
   it('pages_share_the_team_theme_inside_the_nonce_bound_style', () => {

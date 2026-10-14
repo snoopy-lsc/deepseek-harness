@@ -37,7 +37,7 @@ describe('SAML sign-in', () => {
     const { mock, config } = await start()
     const { reply } = await samlLogin(config.publicSocket, config.publicOrigin, mock)
     expect(reply.status).toBe(302)
-    expect(String(reply.headers.location)).toMatch(/^\/account\/\?return=/)
+    expect(String(reply.headers.location)).toMatch(/^\/u\//)
     const userId = JSON.parse((await call(config.sessionSocket, 'POST', '/internal/session', { cookie: sessionCookie(reply)! })).body).userId as string
     const again = await samlLogin(config.publicSocket, config.publicOrigin, mock)
     expect(JSON.parse((await call(config.sessionSocket, 'POST', '/internal/session', { cookie: sessionCookie(again.reply)! })).body).userId).toBe(userId)
@@ -92,7 +92,7 @@ describe('SAML sign-in', () => {
     mock.next = { encryptFor: enc.cert }
     const { reply } = await samlLogin(config.publicSocket, config.publicOrigin, mock)
     expect(reply.status).toBe(302)
-    expect(String(reply.headers.location)).toMatch(/^\/account\/\?return=/)
+    expect(String(reply.headers.location)).toMatch(/^\/u\//)
     expect(mock.signatures.at(-1)?.valid).toBe(true)
     // The same IdP sending a plain assertion is refused: the declared encryption cannot be downgraded.
     mock.next = {}

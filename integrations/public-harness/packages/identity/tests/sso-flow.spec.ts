@@ -34,21 +34,31 @@ const lookup = (socket: string, cookie: string) => call(socket, 'POST', '/intern
 const userCount = (file: string) => Number((new DatabaseSync(file).prepare('SELECT count(*) AS n FROM user').get() as { n: number }).n)
 
 describe('enterprise SSO sign-in', () => {
+  it('returns_to_the_originating_page_and_rejects_foreign_or_encoded_targets', async () => {
+    const { idp, config } = await start()
+    const first = await ssoLogin(config.publicSocket, idp)
+    const userId = JSON.parse((await lookup(config.sessionSocket, sessionCookie(first.reply)!)).body).userId as string
+    // The originating page (here a settings deep link) is restored; hostile or foreign targets fall back to the user's route.
+    expect(String((await ssoLogin(config.publicSocket, idp, { returnTo: `/u/${userId}/?panel=team.admin#audit` })).reply.headers.location)).toBe(`/u/${userId}/?panel=team.admin#audit`)
+    for (const hostile of ['//evil.example/', '/u/someone-else/', `/u/${userId}/%2e%2e/x`, '/\\evil.example', 'https://evil.example/']) {
+      expect(String((await ssoLogin(config.publicSocket, idp, { returnTo: hostile })).reply.headers.location), hostile).toBe(`/u/${userId}/`)
+    }
+  })
+
   it('first_login_creates_a_verified_account_and_later_logins_reuse_it', async () => {
     const { idp, config } = await start()
     const { reply } = await ssoLogin(config.publicSocket, idp)
     expect(reply.status).toBe(302)
-    const location = new URL(String(reply.headers.location), config.publicOrigin)
-    expect(location.pathname).toBe('/account/')
     const cookie = sessionCookie(reply)!
     const session = await lookup(config.sessionSocket, cookie)
     expect(session.status).toBe(200)
     const userId = JSON.parse(session.body).userId as string
-    expect(location.searchParams.get('return')).toBe(`/u/${userId}/`)
+    // Straight back into Harness, not via the account page.
+    expect(String(reply.headers.location)).toBe(`/u/${userId}/`)
 
     idp.user = { ...idp.user, email: 'alice.renamed@corp.example', name: 'Alice R' }
     const second = await ssoLogin(config.publicSocket, idp, { returnTo: '/account/' })
-    expect(new URL(String(second.reply.headers.location), config.publicOrigin).searchParams.get('return')).toBe('/account/')
+    expect(String(second.reply.headers.location)).toBe('/account/')
     expect(JSON.parse((await lookup(config.sessionSocket, sessionCookie(second.reply)!)).body).userId).toBe(userId)
     expect(userCount(config.databaseFile)).toBe(1)
     const db = await openIdentityDatabase(config.databaseFile)
