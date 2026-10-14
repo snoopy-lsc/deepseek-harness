@@ -51,6 +51,10 @@ export function QuotaNotice({ matched, t }: { matched: QuotaNoticeOwnerProps } &
 
 /** How often Harness re-reads the user's own usage for the over-limit warning. */
 export const OVER_LIMIT_POLL_MS = 60_000
+/** First reading after start-up, once the host's own start-up banners (same top-centre seat, 4 s life) have gone. */
+export const OVER_LIMIT_FIRST_CHECK_MS = 4_500
+/** The warning is a full sentence, so it holds longer than the host's 3 s default. */
+export const OVER_LIMIT_HOLD_MS = 8_000
 
 /** Over-limit warning in Harness: polls the user's own usage and shows the host Toast once per state and day when past the limit
  * (refusals themselves arrive through shell.quota-notice).
@@ -69,10 +73,10 @@ export function OverLimitNotice({ api, t }: { api: AccountApi } & PropsLocale<'p
         if (message !== undefined && !seen.has(key)) { seen.add(key); setText(message) }
       }, () => undefined)
     }
-    check()
+    const first = setTimeout(check, OVER_LIMIT_FIRST_CHECK_MS)
     const timer = setInterval(check, OVER_LIMIT_POLL_MS)
     globalThis.addEventListener?.('focus', check)
-    return () => { live = false; clearInterval(timer); globalThis.removeEventListener?.('focus', check) }
+    return () => { live = false; clearTimeout(first); clearInterval(timer); globalThis.removeEventListener?.('focus', check) }
   }, [api, t])
-  return text === undefined ? null : <div data-team-over-limit><Toast text={text} onDone={() => setText(undefined)} /></div>
+  return text === undefined ? null : <div data-team-over-limit><Toast text={text} holdMs={OVER_LIMIT_HOLD_MS} onDone={() => setText(undefined)} /></div>
 }

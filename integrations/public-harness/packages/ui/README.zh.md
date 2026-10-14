@@ -35,7 +35,7 @@ kind: "package-library"
 
 浏览器入口通过 `ctx.theme.overrideTokens` 注册 `team-enterprise` 层：只修改 `--dsw-*` 的颜色、阴影与菜单滤镜 token，因此 Harness 的按钮、图标、圆角和布局保持原样。一个插件自有的 `<style>` 元素与 ui-theme 自身的样式表一样随插件挂载和移除，提供桌面背景以及毛玻璃侧栏、输入框和对话框。它只选择 slot 名称、data 属性和 role（`[data-slot="sidebar"]`、`[data-composer-card]`、`[data-composer-seat]`、`[role="dialog"]`），从不依赖构建生成的类名。半透明表面读取 `--team-*` 属性，`prefers-reduced-transparency: reduce` 时改为实色。单元测试保证每个文字 token 在最坏桌面颜色上满足 WCAG AA（4.5:1）。
 
-加载后插件从身份服务读取 `/account/api/me`。每位已登录用户都会在 `sidebar.panellist` 中获得个人中心入口及对应的 `main` 页面；只有服务端判定的 `admin` 角色才会增加系统管理入口。系统管理打开时，它的子菜单（用户、邀请码、审计日志、单点登录、额度和返回行）以更低优先级注册 `sidebar.workspaces`，在同一侧栏中替换会话浏览区；返回后即移除。各分区通过 `createAdminApi` 调用 `/api/admin/*`，服务端要求时显示重新认证对话框（密码或重新 SSO 登录）。审计日志分区可把筛选后的日志导出为 CSV，额度分区可切换超额策略（阻止、宽限、仅提醒）。超出额度后，`shell.overlay` 中的条目每分钟及窗口获得焦点时读取用户用量，并按状态每天显示一次宿主 Toast；拒绝提示仍经 `shell.quota-notice` 显示，个人中心在用量条上方显示同一句话。插件注入 `layout` 以跟随当前面板。宿主导出的 `identityStylesheet()` 让身份服务的账户页面使用同一套配色。
+加载后插件从身份服务读取 `/account/api/me`。每位已登录用户都会在 `sidebar.panellist` 中获得个人中心入口及对应的 `main` 页面；只有服务端判定的 `admin` 角色才会增加系统管理入口。系统管理打开时，它的子菜单（用户、邀请码、审计日志、单点登录、额度和返回行）以更低优先级注册 `sidebar.workspaces`，在同一侧栏中替换会话浏览区；返回后即移除。各分区通过 `createAdminApi` 调用 `/api/admin/*`，服务端要求时显示重新认证对话框（密码或重新 SSO 登录）。审计日志分区可把筛选后的日志导出为 CSV，额度分区可切换超额策略（阻止、宽限、仅提醒）。超出额度后，`shell.overlay` 中的条目在启动 4.5 秒后（宿主启动提示消失后）、每分钟及窗口获得焦点时读取用户用量，并按状态每天显示一次宿主 Toast（停留 8 秒）；拒绝提示仍经 `shell.quota-notice` 显示，个人中心在用量条上方显示同一句话。插件注入 `layout` 以跟随当前面板。宿主导出的 `identityStylesheet()` 让身份服务的账户页面使用同一套配色。
 
 <a id="further-exploration"></a>
 ## 延伸阅读
