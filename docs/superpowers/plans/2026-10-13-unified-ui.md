@@ -114,8 +114,29 @@ English | [中文](2026-10-13-unified-ui.zh.md)
 
 - [x] While administration is open its submenu shadows the session browser in the same sidebar (`sidebar.workspaces` at a lower priority) with a back row; members never get the entry.
 - [x] Users, invites, audit log, SSO and quota sections built from Harness primitives and settings-row geometry, with a confirmation dialog for disable and a re-authentication dialog.
-- [ ] CSV export of the audit log and an over-limit behaviour switch are deferred.
+- [x] CSV export of the audit log and the over-limit behaviour switch: done in Phase 4.
 
 ### Task 3.4: Gates and screenshots
 
 - [x] Real-service screenshots in light and dark: submenu, every section, disable with SSO re-authentication, last-admin refusal, back to sessions, personal usage through the account socket, and a member without the entry (the member's API calls answer 403).
+
+## Phase 4: Export, Over-Limit Policy and Return Paths
+
+### Task 4.1: Audit CSV export
+
+- [x] `GET /api/admin/audit.csv` takes the viewer's filters (`event`, `outcome`, `q`), streams newest first in pages of 500, and stops at 50,000 rows (`x-audit-export-rows`, `x-audit-export-truncated`). Every field is quoted with doubled inner quotes; a field starting with `=`, `+`, `-`, `@`, tab or CR gets a leading `'`; the file starts with a UTF-8 byte-order mark so Excel reads Chinese. Admin only, 10 exports per hour per administrator, and each export writes an `admin-audit-export` row (row count and filters) before streaming.
+
+### Task 4.2: Over-limit policy
+
+- [x] Decided options: `block` (default: new requests are refused at the personal daily limit), `grace` (admitted up to the limit plus `gracePercent`, 1–100, of it, with a warning; then refused) and `warn` (the personal limit is advisory; only the site daily limit refuses). The quota ledger enforces it at reservation, so the quota proxy applies it to every model call; usage reports `overLimit`, `state` (`ok`, `grace`, `over`, `blocked`) and `hardLimitTokens`.
+- [x] The account socket gains `set-over-limit`; `POST /api/admin/quota/over-limit` needs re-authentication and is audited (`admin-over-limit-change`). The Quota section has the switch.
+- [x] Users see the refusal through `shell.quota-notice` as before; past the limit Harness shows a Toast warning (`shell.overlay`, usage polled every minute and on focus, once per state and day), and the personal center shows the same sentence above the meter.
+
+### Task 4.3: Return paths
+
+- [x] SSO (redirect and LDAP) and password sign-in go straight to the requested page: the account page or any page under the user's own `/u/<id>/` route, with its query and fragment. Absolute and protocol-relative URLs, backslashes, whitespace and control characters, dot segments, encoded slashes, backslashes or dots, double encoding and other users' routes fall back to the user's route. One function serves the server and the page script. Re-sign-in from administration returns to the exact page.
+
+### Task 4.4: Clean-up, gates and screenshots
+
+- [x] Evaluation leftovers removed through the admin API (audited): zhangwei's personal limit and the Phase 3 test invites.
+- [x] Real-service screenshots in light and dark: export button and CSV preview, over-limit settings, the user-side warning in Harness and the personal center, SSO re-sign-in returning to the originating page, and the cleaned allowances and invites.
