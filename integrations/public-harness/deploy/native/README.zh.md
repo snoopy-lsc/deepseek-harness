@@ -39,10 +39,10 @@ tsx deploy/native/scripts/host-preflight.ts /etc/dsh-public/provisioner.json /et
 | 服务 | 账号 | 监听 | 可访问 |
 | --- | --- | --- | --- |
 | Caddy | `caddy` | 公网 443 | 身份公共 socket、路由器 socket |
-| `dsh-identity` | `dsh-identity` | `identity/public.sock`、`identity-session/session.sock` | 自己的 SQLite 文件、sendmail 或 SMTP 中继、CAPTCHA 服务（阿里云、腾讯云或 Turnstile） |
+| `dsh-identity` | `dsh-identity` | `identity/public.sock`、`identity-session/session.sock` | 自己的 SQLite 文件、额度账户 socket、sendmail 或 SMTP 中继、CAPTCHA 服务（阿里云、腾讯云或 Turnstile） |
 | `dsh-router` | `dsh-router` | `router/router.sock` | 身份会话 socket、配置服务 socket、实例 socket |
 | `dsh-provisioner` | root | `control/provisioner.sock` | 账号、配额、AppArmor、nftables、system unit |
-| `dsh-quota` | `dsh-quota` | 额度控制 socket 和每实例回环端口 | 模型服务商 |
+| `dsh-quota` | `dsh-quota` | 额度控制 socket、`quota-account/account.sock`（仅身份服务可连）和每实例回环端口 | 模型服务商 |
 
 Caddy 会移除调用方提供的身份和转发标头。它无法访问会话 socket，因此只有路由器能把 cookie 解析为用户。配置服务以 root 运行，但从不运行租户代码：每个实例以自己的账号运行在 `dsh-user-<id>.slice` 下的 `dsh-user-<id>.service` 中。
 

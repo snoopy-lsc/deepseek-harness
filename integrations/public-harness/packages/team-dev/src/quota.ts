@@ -10,6 +10,7 @@ import { createTokenIssuer } from '@public-harness/quota/tokens'
 import { createAdmission } from '@public-harness/quota/admission'
 import { createMessagesForwarder } from '@public-harness/quota/messages'
 import { startQuotaHttpServer } from '@public-harness/quota/server'
+import type { QuotaAccountLedger } from '@public-harness/quota/account'
 import { validateDevUsers } from '@public-harness/dev-runtime'
 import lockfile from 'proper-lockfile'
 
@@ -85,6 +86,8 @@ export interface TeamDevQuota {
   readonly patches: ReadonlyMap<UserId, string>
   /** One user's own read-only usage from the ledger, for the personal center. */
   usage(userId: UserId): Promise<PersonalUsage>
+  /** The ledger's account operations, served on the same account socket production uses (`startQuotaAccountServer`). */
+  readonly account: QuotaAccountLedger
   /** Stop listeners after in-flight credential writes finish; repeated calls join shutdown. */
   close(): Promise<void>
 }
@@ -225,7 +228,7 @@ export async function startTeamDevQuota(options: {
       patches.set(userId, patch)
     }
     let closing: Promise<void> | undefined
-    return { patches, usage: userId => ledger.usage(userId), close() { return closing ??= (async () => {
+    return { patches, usage: userId => ledger.usage(userId), account: ledger, close() { return closing ??= (async () => {
       for (const timer of timers) clearInterval(timer)
       await Promise.all(rotations)
       const outcomes = await Promise.allSettled(listeners.map(listener => listener.close()))

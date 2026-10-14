@@ -130,12 +130,12 @@ describe('strict production configuration files', () => {
   })
 
   it('quota profile may open the identity account socket with one group', async () => {
-    const example = JSON.parse(await readFile(new URL('../../../deploy/production/config/quota.example.json', import.meta.url), 'utf8'))
-    const parsed = parseQuotaProfileConfig(example)
-    expect(parsed.accountSocket).toBe('/var/lib/dsh-public/quota-account/account.sock')
-    expect(parsed.accountSocketGid).toBe(990)
-    const { accountSocket: _a, accountSocketGid: _g, ...without } = example
+    // The native deployment points this at /run/dsh-public/quota-account (group dsh-identity); the authentik profile leaves it unset.
+    const without = JSON.parse(await readFile(new URL('../../../deploy/production/config/quota.example.json', import.meta.url), 'utf8'))
     expect(parseQuotaProfileConfig(without).accountSocket).toBeUndefined()
+    const example = { ...without, accountSocket: '/run/dsh-public/quota-account/account.sock', accountSocketGid: 990 }
+    const parsed = parseQuotaProfileConfig(example)
+    expect([parsed.accountSocket, parsed.accountSocketGid]).toEqual(['/run/dsh-public/quota-account/account.sock', 990])
     expect(() => parseQuotaProfileConfig({ ...example, accountSocket: 'account.sock' })).toThrow(/absolute/)
     expect(() => parseQuotaProfileConfig({ ...without, accountSocketGid: 990 })).toThrow(/accountSocket/)
   })

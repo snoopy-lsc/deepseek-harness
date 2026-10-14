@@ -2,6 +2,7 @@
 import type { Context, Fiber } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { UsageSource } from './me.ts'
+import { createQuotaAccountClient, type QuotaAdmin } from './quota-account.ts'
 import { readFile } from 'node:fs/promises'
 import { readSecret } from './secret.ts'
 import type { Server } from 'node:http'
@@ -28,16 +29,20 @@ export { parseIdentityConfig, parseProviderEnv, type IdentityConfig } from './co
 export { createCaptchaProvider, type CaptchaProvider } from './captcha.ts'
 export { createMailTransport } from './mail.ts'
 export { readSecret } from './secret.ts'
+export { createQuotaAccountClient, type QuotaAdmin, type QuotaLimits } from './quota-account.ts'
 
 /** Start both listeners; signup alone allocates no account, instance or model grant.
  * @param config Validated settings.
  * @param overrides Injected providers, clock and reconciliation interval for tests.
  * @returns Handle that closes listeners and the database.
  */
-export async function startIdentity(config: IdentityConfig, overrides: { mail?: MailTransport; captcha?: CaptchaProvider; sso?: SsoProvider | PasswordSsoProvider; clock?: () => number; reconcileIntervalMs?: number; usage?: UsageSource } = {}): Promise<{ close(): Promise<void> }> {
+export async function startIdentity(config: IdentityConfig, overrides: { mail?: MailTransport; captcha?: CaptchaProvider; sso?: SsoProvider | PasswordSsoProvider; clock?: () => number; reconcileIntervalMs?: number; usage?: UsageSource; quota?: QuotaAdmin } = {}): Promise<{ close(): Promise<void> }> {
   // Better Auth enables telemetry when this variable is set, regardless of options; the service sends nothing outbound.
   if (/^(1|true)$/i.test(process.env.BETTER_AUTH_TELEMETRY ?? '')) throw new Error('BETTER_AUTH_TELEMETRY must not be enabled')
   const database = await openIdentityDatabase(config.databaseFile)
+  // Production path: the quota service's account socket feeds the personal center and the allowance editor; overrides are for tests.
+  const account = config.quotaAccountSocket === undefined ? undefined : createQuotaAccountClient(config.quotaAccountSocket)
+  const usage = overrides.usage ?? account?.usage, quota = overrides.quota ?? account
   const servers: Server[] = []
   const timers: NodeJS.Timeout[] = []
   try {
@@ -50,7 +55,7 @@ export async function startIdentity(config: IdentityConfig, overrides: { mail?: 
     const auth = await createAuth(config, database, serviceSecret, overrides.mail ?? createMailTransport(config.mail), sso, overrides.clock)
     const captcha = overrides.captcha ?? createCaptchaProvider(config.captcha)
     servers.push(await listenUnix(publicHandler({ config, auth, database, captcha, serviceSecret, pages: createAccountPages(config, captcha), ...sso !== undefined && 'metadata' in sso && sso.metadata ? { ssoMetadata: sso.metadata() } : {},
-      ...overrides.clock === undefined ? {} : { clock: overrides.clock }, ...overrides.usage === undefined ? {} : { usage: overrides.usage } }), config.publicSocket, 0o660))
+      ...overrides.clock === undefined ? {} : { clock: overrides.clock }, ...usage === undefined ? {} : { usage }, ...quota === undefined ? {} : { quota } }), config.publicSocket, 0o660))
     servers.push(await listenUnix(sessionHandler(auth, userId => database.sso.disabledAt(userId) !== undefined), config.sessionSocket, 0o660, config.sessionSocketGid))
     // Expired counters, login state and assertion IDs are deleted every ten minutes; a failure here is logged and retried next time.
     const prune = () => { try { database.prune(Date.now(), LDAP_LOCKOUT.window) } catch (error) { console.error('identity: prune failed', error instanceof Error ? error.message : error) } }

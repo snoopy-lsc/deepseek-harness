@@ -39,10 +39,10 @@ The preflight only reads the host. It reports the OS version, cgroup controllers
 | Service | Account | Listens on | Reaches |
 | --- | --- | --- | --- |
 | Caddy | `caddy` | public 443 | identity public socket, router socket |
-| `dsh-identity` | `dsh-identity` | `identity/public.sock`, `identity-session/session.sock` | its SQLite file, sendmail or SMTP relay, CAPTCHA provider (Alibaba Cloud, Tencent Cloud or Turnstile) |
+| `dsh-identity` | `dsh-identity` | `identity/public.sock`, `identity-session/session.sock` | its SQLite file, the quota account socket, sendmail or SMTP relay, CAPTCHA provider (Alibaba Cloud, Tencent Cloud or Turnstile) |
 | `dsh-router` | `dsh-router` | `router/router.sock` | identity session socket, provisioner socket, instance sockets |
 | `dsh-provisioner` | root | `control/provisioner.sock` | accounts, quotas, AppArmor, nftables, system units |
-| `dsh-quota` | `dsh-quota` | quota control socket and per-instance loopback ports | the model provider |
+| `dsh-quota` | `dsh-quota` | quota control socket, `quota-account/account.sock` (identity only) and per-instance loopback ports | the model provider |
 
 Caddy removes caller identity and forwarding headers. It cannot reach the session socket, so only the router can turn a cookie into a user. The provisioner runs as root but never runs tenant code: each instance runs as its own account in `dsh-user-<id>.service` under `dsh-user-<id>.slice`.
 

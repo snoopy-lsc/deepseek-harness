@@ -31,6 +31,7 @@ AmbientCapabilities=
 UMask=0077
 StateDirectory=dsh-public/quota dsh-public/quota-control dsh-public/quota-home
 StateDirectoryMode=0700
+ReadWritePaths=/run/dsh-public/quota-account
 ReadOnlyPaths=/etc/dsh-public /opt/dsh-public
 
 [Install]

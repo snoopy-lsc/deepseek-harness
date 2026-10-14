@@ -54,6 +54,8 @@ export interface IdentityConfig {
   readonly deprovision: DeprovisionConfig
   /** Lower-case addresses granted the administrator role (`DSH_ADMIN_EMAILS`); emergency accounts are administrators too. */
   readonly admins?: readonly string[]
+  /** Quota service account socket (`DSH_QUOTA_ACCOUNT_SOCKET`): personal usage and the admin allowance editor; unset turns both off. */
+  readonly quotaAccountSocket?: string
 }
 
 /** Parse `DSH_ADMIN_EMAILS`: a comma-separated address list; any malformed or empty entry refuses startup.
@@ -171,6 +173,7 @@ export function parseIdentityConfig(value: unknown, env: ProviderEnv = process.e
   const { mail, captcha } = parseProviderEnv(env, mode)
   const { sso, emergency, deprovision } = parseSsoEnv(env, mode)
   const admins = parseAdminEmails(env.DSH_ADMIN_EMAILS)
+  const quotaAccountSocket = env.DSH_QUOTA_ACCOUNT_SOCKET === undefined ? undefined : path(env.DSH_QUOTA_ACCOUNT_SOCKET, 'DSH_QUOTA_ACCOUNT_SOCKET')
   const l = object(r.limits, ['signupPerIpPerHour', 'signupPerDay', 'resetPerEmailPerHour', 'loginPerIpPerMinute'], [], 'limits')
   if (r.enrollmentOpen !== undefined && typeof r.enrollmentOpen !== 'boolean') throw new IdentityConfigError('enrollmentOpen')
   const sessionSocketGid = r.sessionSocketGid
@@ -182,5 +185,6 @@ export function parseIdentityConfig(value: unknown, env: ProviderEnv = process.e
       resetPerEmailPerHour: count(l.resetPerEmailPerHour, 'limits'), loginPerIpPerMinute: count(l.loginPerIpPerMinute, 'limits') },
     sessionTtlSeconds: count(r.sessionTtlSeconds, 'sessionTtlSeconds'), verificationTtlSeconds: count(r.verificationTtlSeconds, 'verificationTtlSeconds'),
     clientIpHeader: text(r.clientIpHeader, 'clientIpHeader', /^[a-z][a-z0-9-]{0,63}$/), enrollmentOpen: r.enrollmentOpen === true, sso, emergency, deprovision, admins,
+    ...quotaAccountSocket === undefined ? {} : { quotaAccountSocket },
   }
 }
