@@ -100,16 +100,22 @@ English | [中文](2026-10-13-unified-ui.zh.md)
 
 ### Task 3.1: Admin API
 
-- [ ] Identity endpoints for users, roles, invites and deprovisioning, each re-checking `admin` server-side and writing an audit row.
+- [x] `/api/admin/*` in the identity service: invites, users (search, role and its source, status, sign-in method, last sign-in), disable through the deprovisioning path (sessions revoked in the same transaction), enable, role grants in `dsh_role_grant`, audit log with filters and a cursor, redacted SSO view with the last reconciliation run, and allowances. Every endpoint checks the role on the server before reading the body; writes need Origin and JSON, are rate limited and audited.
+- [x] Last-admin rule on disable and demotion; configured and emergency administrators cannot be demoted from the console; no self-disable.
+- [x] Re-authentication (decided here): disable, role change and allowance change. Password administrators resend their password; SSO administrators need a session under 10 minutes old, otherwise 401 `reauth-required` with `method: 'sso'` and a fresh SSO sign-in. Enable and invite changes are audited only.
+- [x] `admin.spec.ts` proves a member gets 403, and an anonymous caller 401, on every endpoint in `ADMIN_ENDPOINTS`.
 
-### Task 3.2: Users page
+### Task 3.2: Production usage source
 
-- [ ] Users list with role selector, invite management and disable, built from Harness settings rows.
+- [x] The quota service opens a private account socket (`accountSocket`, `accountSocketGid`; `usage`, `limits`, `set-default`, `set-user`) and the ledger keeps per-user and default daily limits, capped by the site limit.
+- [x] Identity reads `DSH_QUOTA_ACCOUNT_SOCKET`; `startIdentity` uses it for personal usage and the allowance editor when no override is passed. The native units give only `dsh-identity` access (`/run/dsh-public/quota-account`), and Caddy forwards `/api/admin/*`.
 
-### Task 3.3: Audit and quota page
+### Task 3.3: Administration UI
 
-- [ ] Audit log view (filters, CSV export) and quota settings (default allowance, per-user overrides, over-limit behavior) backed by the quota service.
+- [x] While administration is open its submenu shadows the session browser in the same sidebar (`sidebar.workspaces` at a lower priority) with a back row; members never get the entry.
+- [x] Users, invites, audit log, SSO and quota sections built from Harness primitives and settings-row geometry, with a confirmation dialog for disable and a re-authentication dialog.
+- [ ] CSV export of the audit log and an over-limit behaviour switch are deferred.
 
-### Task 3.4: Security settings and end-to-end
+### Task 3.4: Gates and screenshots
 
-- [ ] Sign-in and security overview (SSO provider, emergency path status); e2e across member and admin accounts proving a member cannot call any admin API.
+- [x] Real-service screenshots in light and dark: submenu, every section, disable with SSO re-authentication, last-admin refusal, back to sessions, personal usage through the account socket, and a member without the entry (the member's API calls answer 403).

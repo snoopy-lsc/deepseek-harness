@@ -35,7 +35,7 @@ kind: "package-library"
 
 浏览器入口通过 `ctx.theme.overrideTokens` 注册 `team-enterprise` 层：只修改 `--dsw-*` 的颜色、阴影与菜单滤镜 token，因此 Harness 的按钮、图标、圆角和布局保持原样。一个插件自有的 `<style>` 元素与 ui-theme 自身的样式表一样随插件挂载和移除，提供桌面背景以及毛玻璃侧栏、输入框和对话框。它只选择 slot 名称、data 属性和 role（`[data-slot="sidebar"]`、`[data-composer-card]`、`[data-composer-seat]`、`[role="dialog"]`），从不依赖构建生成的类名。半透明表面读取 `--team-*` 属性，`prefers-reduced-transparency: reduce` 时改为实色。单元测试保证每个文字 token 在最坏桌面颜色上满足 WCAG AA（4.5:1）。
 
-加载后插件从身份服务读取 `/account/api/me`。每位已登录用户都会在 `sidebar.panellist` 中获得个人中心入口及对应的 `main` 页面；只有服务端判定的 `admin` 角色才会增加系统管理入口，管理页面上线前它是占位页。宿主导出的 `identityStylesheet()` 让身份服务的账户页面使用同一套配色。
+加载后插件从身份服务读取 `/account/api/me`。每位已登录用户都会在 `sidebar.panellist` 中获得个人中心入口及对应的 `main` 页面；只有服务端判定的 `admin` 角色才会增加系统管理入口。系统管理打开时，它的子菜单（用户、邀请码、审计日志、单点登录、额度和返回行）以更低优先级注册 `sidebar.workspaces`，在同一侧栏中替换会话浏览区；返回后即移除。各分区通过 `createAdminApi` 调用 `/api/admin/*`，服务端要求时显示重新认证对话框（密码或重新 SSO 登录）。插件注入 `layout` 以跟随当前面板。宿主导出的 `identityStylesheet()` 让身份服务的账户页面使用同一套配色。
 
 <a id="further-exploration"></a>
 ## 延伸阅读
