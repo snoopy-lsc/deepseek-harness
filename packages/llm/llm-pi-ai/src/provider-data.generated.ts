@@ -10,7 +10,7 @@ export const PROVIDER_DATA: Record<BuiltinProvider, ProviderData> & Partial<Reco
   'amazon-bedrock': { env: ['AWS_BEARER_TOKEN_BEDROCK', 'AWS_PROFILE', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_CONTAINER_CREDENTIALS_RELATIVE_URI', 'AWS_CONTAINER_CREDENTIALS_FULL_URI', 'AWS_WEB_IDENTITY_TOKEN_FILE'], baseURLEnv: ['AWS_REGION', 'AWS_DEFAULT_REGION'] },
   'ant-ling': { env: ['ANT_LING_API_KEY'], defaultBaseURL: 'https://api.ant-ling.com/v1' },
   'anthropic': { env: ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_FEDERATION_RULE_ID', 'ANTHROPIC_ORGANIZATION_ID', 'ANTHROPIC_IDENTITY_TOKEN_FILE', 'ANTHROPIC_SERVICE_ACCOUNT_ID', 'ANTHROPIC_WORKSPACE_ID'], defaultBaseURL: 'https://api.anthropic.com' },
-  'azure-openai-responses': { env: ['AZURE_OPENAI_API_KEY'] },
+  'azure': { env: ['AZURE_OPENAI_API_KEY'], baseURLEnv: ['AZURE_OPENAI_BASE_URL', 'AZURE_OPENAI_RESOURCE_NAME'] },
   'baseten': { env: ['BASETEN_API_KEY'], defaultBaseURL: 'https://inference.baseten.co/v1' },
   'cerebras': { env: ['CEREBRAS_API_KEY'], defaultBaseURL: 'https://api.cerebras.ai/v1' },
   'cloudflare-ai-gateway': { env: ['CLOUDFLARE_API_KEY', 'CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_GATEWAY_ID'], baseURLEnv: ['CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_GATEWAY_ID'] },
