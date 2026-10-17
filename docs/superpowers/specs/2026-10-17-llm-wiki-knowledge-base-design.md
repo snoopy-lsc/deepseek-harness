@@ -22,9 +22,10 @@ Every user can own several personal KBs. Each KB is a git repository in the user
 - [API list](#api-list)
 - [UI pages](#ui-pages)
 - [Quota and audit](#quota-and-audit)
+- [Knowledge base limits](#kb-limits)
 - [Security threat analysis](#security-threat-analysis)
 - [Phased implementation plan](#phased-implementation-plan)
-- [Open questions](#open-questions)
+- [Decisions](#decisions)
 - [Sources and credits](#sources-and-credits)
 
 <a id="goals-and-non-goals"></a>
@@ -136,10 +137,20 @@ CREATE TABLE IF NOT EXISTS kb_compile_job (
   op TEXT NOT NULL CHECK (op IN ('ingest', 'lint', 'rebuild')),
   requested_by TEXT NOT NULL, charged_to TEXT NOT NULL,  -- ledger user id that pays the tokens
   base_commit TEXT NOT NULL, result_commit TEXT,
-  state TEXT NOT NULL CHECK (state IN ('queued', 'running', 'succeeded', 'failed', 'conflict', 'cancelled')),
+  state TEXT NOT NULL CHECK (state IN ('queued', 'running', 'succeeded', 'failed', 'conflict', 'over-limit', 'cancelled')),
   input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
   queued_at INTEGER NOT NULL, started_at INTEGER, finished_at INTEGER, error TEXT
 ) STRICT;
+CREATE TABLE IF NOT EXISTS dsh_kb_limit (
+  scope_type TEXT NOT NULL CHECK (scope_type IN ('global', 'group', 'user')),
+  scope_id TEXT NOT NULL,                    -- '*' for global, a dsh_group id, or a user id
+  name TEXT NOT NULL CHECK (name IN ('max_kbs', 'max_bytes', 'max_pages')),
+  value INTEGER CHECK (value IS NULL OR value > 0),  -- NULL means unlimited; a missing row means inherit
+  updated_by TEXT NOT NULL, updated_at INTEGER NOT NULL,
+  PRIMARY KEY (scope_type, scope_id, name),
+  CHECK ((scope_type = 'global') = (scope_id = '*'))
+) STRICT;
+-- seeded once: ('global', '*', 'max_kbs', 10), ('global', '*', 'max_bytes', 209715200), ('global', '*', 'max_pages', 2000)
 CREATE TABLE IF NOT EXISTS kb_view_state (
   user_id TEXT PRIMARY KEY, generation INTEGER NOT NULL, digest TEXT NOT NULL, applied_at INTEGER NOT NULL
 ) STRICT;
@@ -148,6 +159,7 @@ CREATE TABLE IF NOT EXISTS kb_view_state (
 - Group IDs are prefixed by source so an LDAP DN and a WeCom department ID cannot collide; `display_name` is presentation only.
 - The company scope is the row `('company', '*')`; `user` scope exists for exceptions such as a pilot reader list.
 - `kb_one_pending` allows one pending request per KB; a new submission replaces a pending one by withdrawing it first.
+- `dsh_kb_limit` holds the admin-configured KB limits; see [Knowledge base limits](#kb-limits). The one-pending-request rule is fixed and not configurable.
 - Converting a personal KB to admin-maintained creates a new `org` KB seeded from the published snapshot; the author's personal KB is untouched.
 
 <a id="directory-layout"></a>
@@ -207,7 +219,7 @@ Scope changes, group changes, revocations, and new approvals all change which KB
 | C. Unified mount plus hard-link view | Bind one root-owned view directory; the host rebuilds it with hard links to published files, then renames it into place | No restart; the store stays invisible; no link to follow | Same filesystem required; open file descriptors survive revocation; gVisor must see host changes |
 | D. Inject binds at runtime | `systemctl bind --read-only` into the running unit, `nsenter … umount` to revoke | No restart, kernel-enforced | Native only; mount-namespace tooling is fragile and hard to test |
 
-**Recommendation: C, with A as the fallback.** The host builds `views/<account>.next/` with `linkat` from held directory descriptors, writes `kb_view_state`, and swaps it with `renameat2(RENAME_EXCHANGE)` so readers never see a half-built view. Revocation removes the entries immediately. The gVisor path needs a test that the bound directory shows host changes (gofer shared file access); if it does not, container instances fall back to A and restart at their next idle point. Option B is rejected: symbolic links do not carry permissions, so B only works if every KB is also protected by file permissions, which would require per-user ACLs on every published file.
+**Decision: C, with A as the fallback.** The host builds `views/<account>.next/` with `linkat` from held directory descriptors, writes `kb_view_state`, and swaps it with `renameat2(RENAME_EXCHANGE)` so readers never see a half-built view. Revocation removes the entries immediately. The gVisor path needs a test that the bound directory shows host changes (gofer shared file access); if it does not, container instances fall back to A and restart at their next idle point. Option B is rejected: symbolic links do not carry permissions, so B only works if every KB is also protected by file permissions, which would require per-user ACLs on every published file.
 
 ### Personal KB permissions
 
@@ -252,7 +264,7 @@ stateDiagram-v2
 7. **Commit.** The result is committed as the user (or into `org/<kbId>.git` for org KBs) with a message naming the job. If `HEAD` moved since `base_commit`, the job ends in `conflict` and the result is kept as a branch `kb/compile/<jobId>` for the author to merge.
 8. **Report.** Token counts, changed pages, lint findings, and the log are stored with the job and shown in the UI.
 
-The compiler is our own Node module calling the Anthropic-style Messages API that the quota proxy already forwards. Running the `llmwiki` CLI unchanged would need an OpenAI-compatible endpoint on the quota proxy; see the open questions.
+The compiler is our own Node module calling the Anthropic-style Messages API that the quota proxy already forwards. Running the `llmwiki` CLI unchanged would need an OpenAI-compatible endpoint on the quota proxy; see the decisions.
 
 <a id="query-skill"></a>
 ## Query skill
@@ -273,9 +285,9 @@ User endpoints sit under `/account/api/me/kb` and use the existing personal-cent
 | Method | Path | Purpose | Guard |
 | --- | --- | --- | --- |
 | GET | `/account/api/me/kb` | My KBs and KBs shared with me | session |
-| POST | `/account/api/me/kb` | Create a personal KB from the template | session, limit per user |
-| POST | `/account/api/me/kb/sources` | Upload a source into `raw/` (streamed, size-limited) | session |
-| POST | `/account/api/me/kb/compile` | Enqueue ingest, lint, or rebuild | session, quota precheck |
+| POST | `/account/api/me/kb` | Create a personal KB from the template | session, effective `max_kbs` |
+| POST | `/account/api/me/kb/sources` | Upload a source into `raw/` (streamed) | session, effective `max_bytes` |
+| POST | `/account/api/me/kb/compile` | Enqueue ingest, lint, or rebuild | session, quota and KB limit precheck |
 | GET | `/account/api/me/kb/jobs` | Job status, tokens, and log | session |
 | POST | `/account/api/me/kb/share` | Request share of the current commit | session |
 | POST | `/account/api/me/kb/share/withdraw` | Withdraw a pending request | session |
@@ -297,6 +309,12 @@ User endpoints sit under `/account/api/me/kb` and use the existing personal-cent
 | POST | `/api/admin/kb/org/compile` | Compile an org KB | admin |
 | POST | `/api/admin/kb/org/rollback` | Publish an earlier org KB commit | admin, re-auth |
 | GET | `/api/admin/kb/preview` | Effective KB set for one user | admin |
+| GET | `/api/admin/kb/limits` | Global KB limits and every group and user override | admin |
+| PUT | `/api/admin/kb/limits` | Set one limit for the global, a group, or a user scope; `null` means unlimited | admin, re-auth |
+| DELETE | `/api/admin/kb/limits` | Remove a group or user override so it inherits again | admin, re-auth |
+| GET | `/api/admin/kb/limits/effective` | Effective limits, their source, and usage for one user | admin |
+
+`PUT` and `DELETE` are new methods for the admin router; they get the same session, admin, Origin, JSON body, rate limit, and audit checks as `POST`, and `DELETE` carries a JSON body. `GET /account/api/me/kb` also returns the caller's effective limits and usage.
 
 Admin content endpoints return files only for KBs with a pending request, a publication, or the `org` kind; for an unshared personal KB they return metadata only.
 
@@ -305,11 +323,12 @@ Admin content endpoints return files only for KBs with a pending request, a publ
 
 The pages follow the unified UI: the single sidebar, the System Admin submenu swapped into it, the existing button and icon shapes, `--dsw-*` tokens, and the restrained enterprise theme.
 
-- **Personal center, Knowledge bases.** A list of my KBs (title, size, last compile, share state) with create, upload, compile, and request share; a job drawer with progress, tokens, and lint findings; a "Shared with me" list that is read-only.
+- **Personal center, Knowledge bases.** A list of my KBs (title, size, last compile, share state) with create, upload, compile, and request share; a job drawer with progress, tokens, and lint findings; a "Shared with me" list that is read-only; my effective limits and usage, and an over-limit notice naming the limit when one is exceeded.
 - **Harness hint.** The composer shows nothing new; the agent learns about KBs through the skill. An over-limit compile shows the same notice as the existing quota notice.
 - **System Admin, Groups.** Synced departments and groups with alias, member count, and last refresh; local groups and their members; a user's groups in the user detail.
 - **System Admin, KB approvals.** The queue; a detail page with the file tree, a diff against the published version, the compile log, and approve (scope picker plus raw option) or reject.
-- **System Admin, KB inventory.** Every KB with owner, size, share state, and scope; actions to revoke, change scope, convert, and preview a user's effective set; org KBs open an editor with upload, compile, page edit, history, and rollback.
+- **System Admin, Quota, Knowledge base limits.** A card below the existing over-limit editor, built the same way; see [Knowledge base limits](#kb-limits).
+- **System Admin, KB inventory.** Every KB with owner, size, share state, scope, and an over-limit badge with a filter; actions to revoke, change scope, convert, and preview a user's effective set; org KBs open an editor with upload, compile, page edit, history, and rollback.
 
 <a id="quota-and-audit"></a>
 ## Quota and audit
@@ -318,7 +337,7 @@ The pages follow the unified UI: the single sidebar, the System Admin submenu sw
 
 - A compile job opens a quota channel the same way an instance does, with `quota.open(chargedTo, "kb-job:<jobId>")`, and closes it when the job ends. Personal allowances, the site allowance, in-flight limits, and the over-limit policy therefore apply unchanged.
 - Personal KB jobs are charged to the author. The over-limit notice in Harness and the personal center also covers compile jobs.
-- For org KBs the recommended policy is a dedicated, non-login ledger principal per org KB (`org-kb:<kbId>`) with a daily allowance that admins set on the quota page; jobs stop at that allowance instead of draining an admin's personal one.
+- For org KBs the decided policy is a dedicated, non-login ledger principal per org KB (`org-kb:<kbId>`) with a daily allowance that admins set on the quota page; jobs stop at that allowance instead of draining an admin's personal one.
 - Job estimates (source tokens × 2–4 plus the size of `index.md` and linked pages) are shown before a large rebuild.
 
 ### Audit
@@ -334,9 +353,39 @@ New events join the `AuditEvent` union and the existing `dsh_audit` table, so fi
 | `admin-kb-scope-change`, `admin-kb-revoke` | An admin changes scope or revokes |
 | `admin-kb-convert`, `admin-kb-org-edit`, `admin-kb-rollback` | Org KB changes |
 | `admin-group-change` | Local groups or aliases change |
+| `admin-kb-limit-change` | A global, group, or user limit is set, with old and new values |
+| `admin-kb-limit-delete` | A group or user override is removed |
 | `kb-view-apply` | A user's view is rebuilt, with the generation |
 
 Git history in each repository records content changes; the audit row records who asked for them.
+
+<a id="kb-limits"></a>
+## Knowledge base limits
+
+Three limits apply to personal KBs: `max_kbs` (personal KBs per user, archived ones excluded), `max_bytes` (tracked size of one KB), and `max_pages` (Markdown pages under `wiki/` in one KB). Org KBs are not subject to them. Admins configure them in System Admin, inside the existing quota section. The global defaults are 10 KBs, 200 MB, and 2,000 pages; any value, including a global one, may be set to unlimited. The one-pending-request-per-KB rule is fixed.
+
+### Precedence
+
+- Each limit is resolved on its own: a user override wins over department and group overrides, which win over the global value.
+- A group override applies to members of that group and, following the department inheritance decision, to members of its sub-departments.
+- A user in several groups with overrides gets the most permissive value, with unlimited counting as the maximum. Limits are capacity allowances, not access boundaries, so joining another department should never take capacity away; the result does not depend on group order; and an admin who wants a lower value for one person sets a user override, which always wins.
+- A missing row means inherit; a row whose value is `NULL` means unlimited. The global rows always exist and cannot be deleted, only set.
+- The effective preview names the source of each value (`user`, `group:<id>`, or `global`), so an admin can see why a user has a given limit.
+
+### When a limit drops below current usage
+
+- Nothing is deleted or archived automatically. Existing KBs stay readable, editable, compilable for `lint`, and shareable, and existing publications stay in place.
+- Operations that would grow usage beyond the limit are refused with 409 `kb-limit` naming the limit: creating a KB at or above `max_kbs`, uploading a source that would take a KB above `max_bytes`, and `ingest` or `rebuild` on a KB already above `max_bytes` or `max_pages`.
+- A compile whose result would exceed a limit ends in the `over-limit` job state without committing; the result is kept as the `kb/compile/<jobId>` branch.
+- Files written directly through the read-write mount cannot be stopped by the service; the per-user disk quota stays the hard limit, and the service re-measures size and page count at each export and job.
+- The personal center shows an over-limit notice naming the limit and the current and allowed values; the admin inventory shows an over-limit badge with a filter.
+
+### Admin API and UI
+
+- `GET /api/admin/kb/limits` lists the global values and every override. `PUT` takes `{ scope: { type, id }, name, value }`, where `value` is a positive integer or `null` for unlimited. `DELETE` takes `{ scope, name }` for a group or user override. `GET /api/admin/kb/limits/effective?user=<id>` returns the effective values, their source, and usage.
+- `PUT` and `DELETE` need re-authentication. Unknown groups or users, the global scope on `DELETE`, and values outside the allowed range are refused with 400.
+- Every change writes `admin-kb-limit-change` or `admin-kb-limit-delete` with the scope, limit, and old and new values.
+- In the quota section, a "Knowledge base limits" card sits below the over-limit editor and uses the same fields, the same save button, and the same re-authentication dialog. It has the three global values, each with an "Unlimited" checkbox and sizes entered in MB; an overrides table (scope, three values, edit, remove) with a group or user picker for new rows; and an effective-limit preview with user search.
 
 <a id="security-threat-analysis"></a>
 ## Security threat analysis
@@ -367,27 +416,27 @@ Estimates follow the pace of the previous phases and are rough.
 | 1 | `dsh-kb` service skeleton, socket, `kb.sqlite`, personal KB create and archive, `kb/mine` mount on systemd and podman, isolation tests | 4–5 days |
 | 2 | Compile pipeline: export, normalize, two-phase compile, lint, commit as user, quota channel, job UI | 5–7 days |
 | 3 | Share approval: submissions, approval queue with diff, publication, hard-link views, scope change and revoke, audit events | 5–7 days |
-| 4 | Org KBs: create, upload, edit, compile, rollback, conversion, inventory page, org budget principal | 3–4 days |
+| 4 | Org KBs: create, upload, edit, compile, rollback, conversion, inventory page, org budget principal; configurable KB limits with overrides, effective preview, and the quota-page card | 4–5 days |
 | 5 | Query and author skills, gVisor view-refresh test, threat tests, docs, end-to-end tests in Chrome | 3–4 days |
-| **Total** | | **about 4.5–6 weeks** |
+| **Total** | | **about 4.5–6.5 weeks** |
 
-<a id="open-questions"></a>
-## Open questions
+<a id="decisions"></a>
+## Decisions
 
-These need a user decision; each has a recommended default.
+The user decided these on 2026-10-17.
 
-1. **Raw sources in shared snapshots.** Default: excluded; the admin may include them per approval.
-2. **Scope-change mechanism.** Default: hard-link views (option C) without restart; restart (option A) as the fallback where C is not proven.
-3. **Who pays for org KB compiles.** Default: a per-KB org budget principal with an admin-set daily allowance.
-4. **Department inheritance.** Default: a scope on a department also covers its sub-departments, as WeCom and DingTalk recursion already reports ancestors.
-5. **Group freshness for OIDC and SAML.** Default: refresh at sign-in only, plus admin preview and user-scope exceptions.
-6. **Who may approve.** Default: any admin; department approvers come later.
-7. **Compiler.** Default: our own Node compiler on the Messages API with prompts adapted from llm-wiki-compiler; alternative: add an OpenAI-compatible route to the quota proxy and run the CLI.
-8. **Limits.** Default: 10 personal KBs per user, 200 MB and 2,000 pages per KB, one pending request per KB.
-9. **Accepted source types.** Default: Markdown, text, PDF, DOCX, and HTML, converted locally.
-10. **Pending request expiry and rejected content retention.** Default: requests expire after 30 days; rejected submissions are deleted after 30 days, metadata kept.
-11. **Author consent on conversion.** Default: conversion is allowed without consent but notifies the author and is audited.
-12. **Notification of revocation.** Default: readers are not notified; the KB disappears from their view.
+1. **Raw sources in shared snapshots.** Excluded; the admin may include them per approval.
+2. **Scope-change mechanism.** Hard-link views (option C) without restart; restart (option A) as the fallback where C is not proven.
+3. **Who pays for org KB compiles.** A per-KB org budget principal with an admin-set daily allowance.
+4. **Department inheritance.** A scope on a department also covers its sub-departments, as WeCom and DingTalk recursion already reports ancestors.
+5. **Group freshness for OIDC and SAML.** Refresh at sign-in only, plus admin preview and user-scope exceptions.
+6. **Who may approve.** Any admin; department approvers come later.
+7. **Compiler.** Our own Node compiler on the Messages API with prompts adapted from llm-wiki-compiler.
+8. **Limits.** Configurable by admins in the quota section: global defaults of 10 personal KBs per user, 200 MB and 2,000 pages per KB, each overridable per department or user and each allowing unlimited; see [Knowledge base limits](#kb-limits). One pending request per KB stays fixed.
+9. **Accepted source types.** Markdown, text, PDF, DOCX, and HTML, converted locally.
+10. **Pending request expiry and rejected content retention.** Requests expire after 30 days; rejected submissions are deleted after 30 days, metadata kept.
+11. **Author consent on conversion.** Conversion is allowed without consent but notifies the author and is audited.
+12. **Notification of revocation.** Readers are not notified; the KB disappears from their view.
 
 <a id="sources-and-credits"></a>
 ## Sources and credits
