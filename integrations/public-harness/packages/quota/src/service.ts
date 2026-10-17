@@ -84,6 +84,10 @@ export interface QuotaService {
   open(userId: UserId, instanceId: string): Promise<{ readonly port: number }>
   issue(userId: UserId, instanceId: string): IssuedToken
   close(userId: UserId): Promise<void>
+  /** Open a listener for one knowledge base compile job, charged to `principal` (the author, or an org KB budget principal). Job listeners
+   * are keyed by `instanceId` (`kbjob-<jobId>`) and never replace the principal's instance listener. */
+  openJob(principal: UserId, instanceId: string): Promise<{ readonly port: number }>
+  closeJob(instanceId: string): Promise<void>
   shutdown(): Promise<void>
   readonly healthSecret: string
   /** Ledger reads and allowance edits served to the identity service over the account socket. */
@@ -111,7 +115,25 @@ export async function createQuotaService(config: QuotaServiceConfig, options: { 
     maxEventBytes: config.maxEventBytes, ledger, fetcher: options.fetcher })
   const counter = createRejectionCounter()
   const listeners = new Map<UserId, { close(): Promise<void> }>()
+  const jobs = new Map<string, { close(): Promise<void> }>()
   let cursor = 0
+  // Take the first free port of the configured range, starting after the last one handed out.
+  const startListener = async (instanceId: string) => {
+    for (const port of portsFrom(config.listenPorts, cursor)) {
+      let listener: Awaited<ReturnType<typeof startQuotaHttpServer>>
+      try {
+        listener = await startQuotaHttpServer({ host: '127.0.0.1', port, instanceId, issuer, admission, forwardMessages, files,
+          maxBodyBytes: config.maxBodyBytes, maxFileBodyBytes: config.maxFileBodyBytes, rejections: counter,
+          health: { secret: healthSecret, inspect } })
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE') continue
+        throw error
+      }
+      cursor = port - config.listenPorts.min + 1
+      return listener
+    }
+    throw new Error('no free listener port in listenPorts')
+  }
   const inspect = (): Promise<QuotaHealth> => inspectQuotaHealth(ledger, counter)
   const closeListener = async (userId: UserId): Promise<void> => {
     const existing = listeners.get(userId)
@@ -123,27 +145,26 @@ export async function createQuotaService(config: QuotaServiceConfig, options: { 
     async healthy() { return (await inspect()).available },
     async open(userId, instanceId) {
       await closeListener(userId)
-      // Take the first free port of the configured range, starting after the last one handed out.
-      for (const port of portsFrom(config.listenPorts, cursor)) {
-        let listener: Awaited<ReturnType<typeof startQuotaHttpServer>>
-        try {
-          listener = await startQuotaHttpServer({ host: '127.0.0.1', port, instanceId, issuer, admission, forwardMessages, files,
-            maxBodyBytes: config.maxBodyBytes, maxFileBodyBytes: config.maxFileBodyBytes, rejections: counter,
-            health: { secret: healthSecret, inspect } })
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE') continue
-          throw error
-        }
-        cursor = port - config.listenPorts.min + 1
-        listeners.set(userId, listener)
-        return { port: listener.port }
-      }
-      throw new Error('no free listener port in listenPorts')
+      const listener = await startListener(instanceId)
+      listeners.set(userId, listener)
+      return { port: listener.port }
     },
     issue: (userId, instanceId) => issuer.issue(userId, instanceId),
     close: closeListener,
+    async openJob(_principal, instanceId) {
+      if (!/^kbjob-[A-Za-z0-9_-]{1,120}$/.test(instanceId) || jobs.has(instanceId)) throw new Error('invalid job channel')
+      const listener = await startListener(instanceId)
+      jobs.set(instanceId, listener)
+      return { port: listener.port }
+    },
+    async closeJob(instanceId) {
+      const listener = jobs.get(instanceId)
+      jobs.delete(instanceId)
+      await listener?.close()
+    },
     async shutdown() {
       await Promise.allSettled([...listeners.keys()].map(closeListener))
+      await Promise.allSettled([...jobs.values()].map(listener => listener.close()))
       files.close()
       ledger.close()
     },

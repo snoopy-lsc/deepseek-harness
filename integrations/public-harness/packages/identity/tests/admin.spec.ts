@@ -54,7 +54,8 @@ describe('/api/admin', () => {
       expect((await s.get(path, s.member.cookie)).status, `GET ${path}`).toBe(403)
       expect((await s.get(path, 'dsh-account.session_token=forged')).status, `GET ${path}`).toBe(401)
       // 400 only for detail reads that need a query parameter (for example `/groups/members?group=`).
-      expect([200, 400], `admin GET ${path}`).toContain((await s.get(path, s.root.cookie)).status)
+      // Knowledge base endpoints answer 404 here: this site runs without a KB service (kb-gateway.spec covers them).
+      expect(path.startsWith('/kb') ? [404] : [200, 400], `admin GET ${path}`).toContain((await s.get(path, s.root.cookie)).status)
     }
     for (const path of ADMIN_ENDPOINTS.POST) {
       // A body that would succeed for an administrator; members are refused before it is read.

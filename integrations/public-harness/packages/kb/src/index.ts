@@ -6,9 +6,12 @@ import type { HelperRunner, UserTrees } from './runner.ts'
 import { listenKbSocket, kbHandler, type KbRoutes } from './server.ts'
 import { createCore, MAX_SOURCE_BYTES, personalOps, prepareRoot, usageOf, type KbCore } from './service.ts'
 import { openKbStore } from './store.ts'
+import { compileJobs, jobView, type JobOptions } from './jobs.ts'
 
 export { createDirectRunner, createSystemdRunner, devUserTrees, systemdRunArgv, type HelperRunner, type UserTree, type UserTrees } from './runner.ts'
 export { KbError } from './errors.ts'
+export { compileJobs, jobView, quotaModelSource, staticModelSource, type JobOptions, type ModelSource, type QuotaJobBridge } from './jobs.ts'
+export { createMessagesModel, createMockModel, ModelError, type KbModel } from './model.ts'
 
 /** Service settings. */
 export interface KbServiceConfig {
@@ -22,11 +25,14 @@ export interface KbServiceConfig {
   readonly runner: HelperRunner
   readonly clock?: () => number
   readonly log?: (line: string) => void
+  /** Compile settings; without them compile requests answer 503 `compile-unavailable`. */
+  readonly jobs?: JobOptions
 }
 
 /** A running service. */
 export interface KbService {
   readonly core: KbCore
+  readonly jobs: ReturnType<typeof compileJobs> | undefined
   close(): Promise<void>
 }
 
@@ -78,6 +84,22 @@ export function baseRoutes(core: KbCore, hooks: { principalsChanged?: (userIds: 
   }
 }
 
+/** Compile routes for personal KBs.
+ * @param core Service core.
+ * @param jobs Job runner, when compile is configured.
+ * @returns Route table.
+ */
+export function compileRoutes(core: KbCore, jobs: ReturnType<typeof compileJobs> | undefined): KbRoutes {
+  const runner = () => { if (jobs === undefined) throw new KbError(503, 'compile-unavailable'); return jobs }
+  return {
+    'POST /me/kb/compile': async request => {
+      const body = await request.json()
+      return { job: jobView(await runner().request(request.actor, core.ownKb(request.actor.userId, body.kb), body)) }
+    },
+    'GET /me/kb/jobs': async ({ actor, query }) => ({ jobs: core.store.jobs.byKb(core.ownKb(actor.userId, query.get('kb')).id).map(jobView) }),
+  }
+}
+
 /** Share and publication state of one KB as its author sees it. */
 export function personalState(core: KbCore, kbId: string) {
   const pending = core.store.requests.pendingOf(kbId)
@@ -89,7 +111,7 @@ export function personalState(core: KbCore, kbId: string) {
       : publication?.state === 'revoked' ? { state: 'revoked' as const, revokedAt: publication.revokedAt }
         : last?.state === 'rejected' ? { state: 'rejected' as const, reason: last.reason, decidedAt: last.decidedAt }
           : { state: 'private' as const }
-  return { share, lastJob: job === undefined ? null : job }
+  return { share, lastJob: job === undefined ? null : jobView(job) }
 }
 
 /** Start the service.
@@ -101,12 +123,15 @@ export async function startKbService(config: KbServiceConfig, extra: Array<(core
   await prepareRoot(config.root)
   const store = openKbStore(join(config.root, 'kb.sqlite'))
   const core = createCore({ store, root: config.root, users: config.users, runner: config.runner, ...config.clock ? { clock: config.clock } : {}, ...config.log ? { log: config.log } : {} })
-  const routes: KbRoutes = { ...baseRoutes(core) }
+  const jobs = config.jobs === undefined ? undefined : compileJobs(core, config.jobs)
+  const routes: KbRoutes = { ...baseRoutes(core), ...compileRoutes(core, jobs) }
   for (const module of extra) Object.assign(routes, module(core))
   const server = await listenKbSocket(kbHandler(routes, config.log), config.socket, config.socketMode ?? 0o600, config.socketGid)
+  jobs?.recover()
   return {
-    core,
+    core, jobs,
     async close() {
+      await jobs?.settled()
       await new Promise<void>(resolve => server.close(() => resolve()))
       store.close()
     },

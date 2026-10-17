@@ -109,6 +109,8 @@ Harness Web 的个人中心使用 `/account/api/me/*`：`GET /security`（登录
 
 用户组保存在 `dsh_group` 和 `dsh_user_group` 中（ID 带来源前缀，例如 `wecom:42`、`ldap:cn=eng,ou=groups,dc=corp` 或 `local:<uuid>`）。每次 SSO 登录都会替换该用户在这一身份源下的记录；LDAP、企业微信和钉钉的目录同步也会为有效的目录记录刷新它们，而 OIDC 和 SAML 用户组只在登录时变化。`GET /api/admin/groups` 列出同步的和本地的用户组及成员数，`GET /api/admin/groups/members?group=<id>` 列出某个用户组的成员，`POST /api/admin/groups` 接受 `{ op: 'create', name }`、`{ op: 'rename', id, name }`（本地）、`{ op: 'alias', id, name | null }`（同步组；仅用于展示，从不用于授权）或 `{ op: 'delete', id }`（本地，需要重新认证），`POST /api/admin/groups/members` `{ op: 'add' | 'remove', groupId, userId }` 在重新认证后修改本地成员。每次变更都写入 `admin-group-change`，`GET /users` 会返回每个用户的直接 `groups`。`groups.spec.ts` 覆盖存储、登录与目录同步刷新以及这些接口。
 
+`DSH_KB_SOCKET` 指向知识库服务的私有 socket（[`@public-harness/kb`](../kb/README.zh.md)）。设置后，`/account/api/me/kb*` 和 `/api/admin/kb*` 在通过常规检查（会话、管理员角色、Origin、JSON 请求体或最大 25 MB 的 `application/octet-stream` 流式上传、频率限制）后转发到该服务，并通过 `x-dsh-user`、`x-dsh-email` 和 `x-dsh-role` 携带已验证的用户；浏览器发来的同名请求头从不转发。批准、修改范围、撤销、转为管理员维护、创建组织知识库、回滚以及 `PUT` 和 `DELETE` 限额写入都需要重新认证，密码在转发前被移除。身份服务每分钟、每次用户组变更以及新用户首次请求前，把用户及其生效用户组和禁用状态推送给服务，并把服务的审计记录复制到 `dsh_audit`。未设置该变量时这些接口返回 404。`kb-gateway.spec.ts` 针对真实服务覆盖转发、重新认证、用户组同步和审计记录同步。
+
 紧急登录需要允许的来源地址、密码和新的验证器动态码；每个码只能用一次。普通密码表单拒绝已登记的管理员。每次 SSO 与紧急登录尝试都记入审计，超过 365 天的记录会被删除。
 
 <a id="understand-the-implementation"></a>

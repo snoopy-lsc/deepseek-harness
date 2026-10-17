@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { request } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createDirectRunner, devUserTrees, startKbService, type KbService } from '../src/index.ts'
+import { createDirectRunner, devUserTrees, startKbService, type JobOptions, type KbService } from '../src/index.ts'
 import type { KbCore } from '../src/service.ts'
 import type { KbRoutes } from '../src/server.ts'
 
@@ -23,7 +23,7 @@ export interface Site {
 
 export function call(socketPath: string, method: string, path: string, headers: Record<string, string>, payload?: Buffer): Promise<Reply> {
   return new Promise((resolve, reject) => {
-    const req = request({ socketPath, method, path, headers }, res => {
+    const req = request({ socketPath, method, path, headers: payload === undefined ? headers : { ...headers, 'content-length': String(payload.length) } }, res => {
       const chunks: Buffer[] = []
       res.on('data', chunk => chunks.push(chunk)); res.on('end', () => {
         const text = Buffer.concat(chunks).toString('utf8')
@@ -36,10 +36,10 @@ export function call(socketPath: string, method: string, path: string, headers: 
   })
 }
 
-export async function site(options: { clock?: () => number; extra?: Array<(core: KbCore) => KbRoutes> } = {}): Promise<Site> {
+export async function site(options: { clock?: () => number; extra?: Array<(core: KbCore) => KbRoutes>; jobs?: JobOptions } = {}): Promise<Site> {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-kb-'))
   const root = join(dir, 'kb'), storage = join(dir, 'storage'), socket = join(dir, 'kb.sock')
-  const service = await startKbService({ root, socket, users: devUserTrees(storage), runner: createDirectRunner(), ...options.clock ? { clock: options.clock } : {} }, options.extra ?? [])
+  const service = await startKbService({ root, socket, users: devUserTrees(storage), runner: createDirectRunner(), ...options.clock ? { clock: options.clock } : {}, ...options.jobs ? { jobs: options.jobs } : {} }, options.extra ?? [])
   const json = (body: unknown) => body === undefined ? undefined : Buffer.from(JSON.stringify(body))
   return {
     dir, root, storage, socket, service,

@@ -45,6 +45,7 @@ export async function startIdentity(config: IdentityConfig, overrides: { mail?: 
   const usage = overrides.usage ?? account?.usage, quota = overrides.quota ?? account
   const servers: Server[] = []
   const timers: NodeJS.Timeout[] = []
+  const stops: Array<() => void> = []
   try {
     const sso = overrides.sso ?? (config.sso.kind === 'oidc' ? createOidcProvider(config.sso) : config.sso.kind === 'wecom' ? createWecomProvider(config.sso)
       : config.sso.kind === 'dingtalk' ? createDingtalkProvider(config.sso)
@@ -54,8 +55,12 @@ export async function startIdentity(config: IdentityConfig, overrides: { mail?: 
     const serviceSecret = await readSecret(config.secretFile)
     const auth = await createAuth(config, database, serviceSecret, overrides.mail ?? createMailTransport(config.mail), sso, overrides.clock)
     const captcha = overrides.captcha ?? createCaptchaProvider(config.captcha)
-    servers.push(await listenUnix(publicHandler({ config, auth, database, captcha, serviceSecret, pages: createAccountPages(config, captcha), ...sso !== undefined && 'metadata' in sso && sso.metadata ? { ssoMetadata: sso.metadata() } : {},
-      ...overrides.clock === undefined ? {} : { clock: overrides.clock }, ...usage === undefined ? {} : { usage }, ...quota === undefined ? {} : { quota } }), config.publicSocket, 0o660))
+    const handler = publicHandler({ config, auth, database, captcha, serviceSecret, pages: createAccountPages(config, captcha), ...sso !== undefined && 'metadata' in sso && sso.metadata ? { ssoMetadata: sso.metadata() } : {},
+      ...overrides.clock === undefined ? {} : { clock: overrides.clock }, ...usage === undefined ? {} : { usage }, ...quota === undefined ? {} : { quota },
+      ...config.kbSocket === undefined ? {} : { kbSocket: config.kbSocket } })
+    servers.push(await listenUnix(handler, config.publicSocket, 0o660))
+    // Knowledge base gateway: principals and the audit outbox are synced every minute and on every group change.
+    if (handler.kb !== undefined) stops.push(handler.kb.start())
     servers.push(await listenUnix(sessionHandler(auth, userId => database.sso.disabledAt(userId) !== undefined), config.sessionSocket, 0o660, config.sessionSocketGid))
     // Expired counters, login state and assertion IDs are deleted every ten minutes; a failure here is logged and retried next time.
     const prune = () => { try { database.prune(Date.now(), LDAP_LOCKOUT.window) } catch (error) { console.error('identity: prune failed', error instanceof Error ? error.message : error) } }
@@ -77,6 +82,7 @@ export async function startIdentity(config: IdentityConfig, overrides: { mail?: 
       timers.push(setInterval(() => { void reconcile() }, reconcileEvery).unref())
     }
   } catch (error) {
+    for (const stop of stops) stop()
     for (const timer of timers) clearInterval(timer)
     for (const server of servers) server.close()
     database.close()
@@ -84,6 +90,7 @@ export async function startIdentity(config: IdentityConfig, overrides: { mail?: 
   }
   return {
     async close() {
+      for (const stop of stops) stop()
       for (const timer of timers) clearInterval(timer)
       await Promise.all(servers.map(server => new Promise<void>(resolve => { server.closeAllConnections(); server.close(() => resolve()) })))
       database.close()

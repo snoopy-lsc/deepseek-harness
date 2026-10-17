@@ -2,7 +2,7 @@
 import { parseUserId, requestLine, startLineServer, type SocketAccess } from '@public-harness/contracts'
 import type { QuotaService } from './service.ts'
 
-const OPS = ['health', 'open', 'issue', 'close'] as const
+const OPS = ['health', 'open', 'issue', 'close', 'open-job', 'close-job'] as const
 
 function parse(raw: unknown): { op: typeof OPS[number]; userId?: ReturnType<typeof parseUserId>; instanceId?: string } {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new Error('invalid request')
@@ -10,7 +10,10 @@ function parse(raw: unknown): { op: typeof OPS[number]; userId?: ReturnType<type
   const keys = Object.keys(record).sort().join(',')
   if (record.op === 'health' && keys === 'op') return { op: 'health' }
   if (record.op === 'close' && keys === 'op,userId' && typeof record.userId === 'string') return { op: 'close', userId: parseUserId(record.userId) }
-  if ((record.op === 'open' || record.op === 'issue') && keys === 'instanceId,op,userId' && typeof record.userId === 'string'
+  if (record.op === 'close-job' && keys === 'instanceId,op' && typeof record.instanceId === 'string' && /^kbjob-[A-Za-z0-9_-]{1,120}$/.test(record.instanceId)) {
+    return { op: 'close-job', instanceId: record.instanceId }
+  }
+  if ((record.op === 'open' || record.op === 'issue' || record.op === 'open-job') && keys === 'instanceId,op,userId' && typeof record.userId === 'string'
     && typeof record.instanceId === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(record.instanceId)) {
     return { op: record.op, userId: parseUserId(record.userId), instanceId: record.instanceId }
   }
@@ -18,7 +21,7 @@ function parse(raw: unknown): { op: typeof OPS[number]; userId?: ReturnType<type
 }
 
 /** Serve `health`, `open`, `issue`, and `close` on an owner-only Unix socket. */
-export function startQuotaControlServer(path: string, service: Pick<QuotaService, 'healthy' | 'open' | 'issue' | 'close'>,
+export function startQuotaControlServer(path: string, service: Pick<QuotaService, 'healthy' | 'open' | 'issue' | 'close'> & Partial<Pick<QuotaService, 'openJob' | 'closeJob'>>,
   access?: SocketAccess): ReturnType<typeof startLineServer> {
   return startLineServer(path, async raw => {
     const request = parse(raw)
@@ -27,6 +30,10 @@ export function startQuotaControlServer(path: string, service: Pick<QuotaService
       case 'open': return service.open(request.userId!, request.instanceId!)
       case 'issue': return service.issue(request.userId!, request.instanceId!)
       case 'close': await service.close(request.userId!); return null
+      case 'open-job':
+        if (service.openJob === undefined || !request.instanceId!.startsWith('kbjob-')) throw new Error('invalid request')
+        return service.openJob(request.userId!, request.instanceId!)
+      case 'close-job': if (service.closeJob === undefined) throw new Error('invalid request'); await service.closeJob(request.instanceId!); return null
     }
   }, access)
 }
@@ -37,6 +44,8 @@ export function createQuotaControlClient(path: string): {
   open(userId: ReturnType<typeof parseUserId>, instanceId: string): Promise<{ readonly port: number }>
   issue(userId: ReturnType<typeof parseUserId>, instanceId: string): Promise<{ readonly token: string; readonly expiresAt: number }>
   close(userId: ReturnType<typeof parseUserId>): Promise<void>
+  openJob(principal: ReturnType<typeof parseUserId>, instanceId: string): Promise<{ readonly port: number }>
+  closeJob(instanceId: string): Promise<void>
 } {
   return {
     async healthy() { return await requestLine(path, { op: 'health' }) === true },
@@ -51,5 +60,11 @@ export function createQuotaControlClient(path: string): {
       return { token: result.token, expiresAt: result.expiresAt }
     },
     async close(userId) { await requestLine(path, { op: 'close', userId }) },
+    async openJob(userId, instanceId) {
+      const result = await requestLine(path, { op: 'open-job', userId, instanceId }) as { port?: unknown }
+      if (typeof result?.port !== 'number' || !Number.isInteger(result.port) || result.port < 1 || result.port > 65535) throw new Error('invalid quota response')
+      return { port: result.port }
+    },
+    async closeJob(instanceId) { await requestLine(path, { op: 'close-job', instanceId }) },
   }
 }

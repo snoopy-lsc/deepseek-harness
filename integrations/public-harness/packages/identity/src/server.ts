@@ -16,6 +16,7 @@ import { MeError, meRoutes, type UsageSource } from './me.ts'
 import { AdminError, adminRoutes } from './admin.ts'
 import { groupAdminRoutes } from './admin-groups.ts'
 import type { QuotaAdmin } from './quota-account.ts'
+import { createKbGateway, type KbGateway } from './kb-gateway.ts'
 
 const MAX_BODY = 64 * 1024
 /** SAML responses with many groups exceed the JSON body limit. */
@@ -109,13 +110,15 @@ export interface PublicDeps {
   readonly usage?: UsageSource
   /** Daily allowance editor for `/api/admin/quota*`; without it those endpoints answer 404. */
   readonly quota?: QuotaAdmin
+  /** Knowledge base service socket; without it `/account/api/me/kb*` and `/api/admin/kb*` answer 404. */
+  readonly kbSocket?: string
 }
 
 /** Handle one public request: origin checks, admission gates, then Better Auth.
  * @param deps Collaborators.
  * @returns Node request listener.
  */
-export function publicHandler(deps: PublicDeps): (req: IncomingMessage, res: ServerResponse) => void {
+export function publicHandler(deps: PublicDeps): ((req: IncomingMessage, res: ServerResponse) => void) & { readonly kb?: KbGateway } {
   const { config, auth, database } = deps, clock = deps.clock ?? Date.now
   const limit = (key: string, windowMs: number, max: number) => {
     let ok: boolean
@@ -141,9 +144,10 @@ export function publicHandler(deps: PublicDeps): (req: IncomingMessage, res: Ser
     return id === undefined ? undefined : database.sso.origin(id)
   }
   const me = meRoutes({ config, auth, database, clock, limit, ip: req => clientIp(req, config.clientIpHeader), ...deps.usage === undefined ? {} : { usage: deps.usage } })
+  const kb = deps.kbSocket === undefined ? undefined : createKbGateway({ socket: deps.kbSocket, config, auth, database, clock, limit, log: line => console.error(line) })
   const admin = adminRoutes({ config, auth, database, clock, limit, ip: req => clientIp(req, config.clientIpHeader), ...deps.quota === undefined ? {} : { quota: deps.quota },
-    modules: [groupAdminRoutes(database, clock)] })
-  return (req, res) => {
+    modules: [groupAdminRoutes(database, clock), ...kb === undefined ? [] : [kb.admin]] })
+  const handler = (req: IncomingMessage, res: ServerResponse) => {
     void (async () => {
       const path = (req.url ?? '/').split('?')[0]
       const acs = config.sso.kind === 'saml' && path === SAML_ACS_PATH && req.method === 'POST'
@@ -170,6 +174,7 @@ export function publicHandler(deps: PublicDeps): (req: IncomingMessage, res: Ser
         res.end(deps.ssoMetadata)
         return
       }
+      if (kb !== undefined && await kb.me(req, res, path)) return
       if (await me(req, res, path)) return
       if (await admin(req, res, path)) return
       if (deps.pages !== undefined && await deps.pages(req, res, url)) return
@@ -303,6 +308,7 @@ export function publicHandler(deps: PublicDeps): (req: IncomingMessage, res: Ser
       else send(res, 500, { code: 'internal' })
     })
   }
+  return Object.assign(handler, kb === undefined ? {} : { kb })
 }
 
 /** Handle private session lookups: `POST /internal/session` with `{ cookie }`, answering the live session or 401.

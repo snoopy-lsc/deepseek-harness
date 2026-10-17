@@ -24,7 +24,7 @@ export function call(socketPath: string, method: string, path: string, body?: un
     // A string body is sent as-is (form posts); anything else as JSON.
     const payload = body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body)
     const req = request({ socketPath, method, path, headers: { host: '127.0.0.1:18443', ...method === 'GET' ? {} : { origin: ORIGIN },
-      ...payload === undefined ? {} : { 'content-type': 'application/json' }, ...headers } }, res => {
+      ...payload === undefined ? {} : { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(payload)) }, ...headers } }, res => {
       let text = ''; res.setEncoding('utf8'); res.on('data', chunk => { text += chunk }); res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body: text }))
     })
     req.once('error', reject); req.end(payload)

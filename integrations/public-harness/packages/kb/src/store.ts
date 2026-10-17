@@ -26,7 +26,7 @@ export interface JobRow {
   readonly error: string | null; readonly report: JobReport | null
 }
 /** What a finished job reports to the UI. */
-export interface JobReport { readonly changed: string[]; readonly lint: string[]; readonly log: string[]; readonly branch?: string; readonly limit?: { name: LimitName; value: number; allowed: number } }
+export interface JobReport { readonly changed: string[]; readonly lint: string[]; readonly log: string[]; readonly branch?: string; readonly sources?: Record<string, string>; readonly limit?: { name: LimitName; value: number; allowed: number } }
 export type LimitName = 'max_kbs' | 'max_bytes' | 'max_pages'
 export const LIMIT_NAMES: readonly LimitName[] = ['max_kbs', 'max_bytes', 'max_pages']
 export interface LimitRow { readonly scopeType: 'global' | 'group' | 'user'; readonly scopeId: string; readonly name: LimitName; readonly value: number | null; readonly updatedBy: string; readonly updatedAt: number }
@@ -165,6 +165,7 @@ export function openKbStore(file: string) {
       active: one("SELECT * FROM kb_compile_job WHERE kb_id = ? AND state IN ('queued', 'running') ORDER BY queued_at LIMIT 1", jobView),
       queued: all("SELECT * FROM kb_compile_job WHERE state = 'queued' ORDER BY queued_at", jobView),
       running: all("SELECT * FROM kb_compile_job WHERE state = 'running'", jobView),
+      lastSucceeded: one("SELECT * FROM kb_compile_job WHERE kb_id = ? AND state = 'succeeded' ORDER BY finished_at DESC LIMIT 1", jobView),
       start: exec("UPDATE kb_compile_job SET state = 'running', started_at = ? WHERE id = ? AND state = 'queued'"),
       finish: (id: string, state: JobState, fields: { resultCommit?: string | null; inputTokens?: number; outputTokens?: number; error?: string | null; report?: JobReport | null }, now: number) =>
         exec('UPDATE kb_compile_job SET state = ?, result_commit = ?, input_tokens = ?, output_tokens = ?, error = ?, report = ?, finished_at = ? WHERE id = ?')(
