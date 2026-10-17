@@ -13,6 +13,9 @@ for package in web-token quota-provider ui; do
   mkdir -p "$dest/packages/$package"
   cp -R "$root/packages/$package/lib" "$root/packages/$package/package.json" "$dest/packages/$package/"
 done
+# Read-only knowledge base skills (kb-query, kb-author), added to instances through customSkillDirs when knowledge bases are enabled.
+mkdir -p "$dest/packages/kb"
+cp -R "$root/packages/kb/skills" "$dest/packages/kb/"
 # Resolved inside the container (the target exists only in the image), so plugins find their dependencies.
 ln -s /opt/dsh/node_modules "$dest/node_modules"
 chmod -R a-w,a+rX "$dest"

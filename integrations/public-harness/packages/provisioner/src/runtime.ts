@@ -4,7 +4,7 @@ import { createServer } from 'node:net'
 import { chmod, chown, rename, writeFile } from 'node:fs/promises'
 import { request as httpRequest } from 'node:http'
 import { join } from 'node:path'
-import { parseInstanceId, platformModelRows, portsFrom, type InstanceEndpoint, type InstanceId, type RuntimeInstance, type UserId } from '@public-harness/contracts'
+import { kbSkillRows, parseInstanceId, platformModelRows, portsFrom, type InstanceEndpoint, type InstanceId, type RuntimeInstance, type UserId } from '@public-harness/contracts'
 import type { ContainerConfig } from './config.ts'
 import { startUnixForwarder, type Forwarder } from './forwarder.ts'
 import { enforceLimits, LimitsError, networkArgument, type EnforcementProbe } from './limits.ts'
@@ -193,13 +193,16 @@ export function httpHealthProbe(port: number): Promise<boolean> {
   })
 }
 
-function webPatch(config: ContainerConfig, publicHost: string, proxyPort: number, modelId: string): string {
+/** The Harness Web patch a container instance starts with (exported for tests). */
+export function webPatch(config: ContainerConfig, publicHost: string, proxyPort: number, modelId: string): string {
   const bundle = (name: string): string => `file://${CONTAINER.assets}/packages/${name}/lib/index.js`
   return `${JSON.stringify([
     { id: 'web-runtime', config: { openBrowser: false, printUrl: false, publicUrl: null, surfaceContext: true, trustedHosts: [publicHost] } },
     { id: 'ui-brand-official', disabled: true },
     // Containers receive no official model key: fresh agents start on the platform model and the keyless official route is hidden.
     ...platformModelRows({ provider: 'platform', model: modelId }),
+    // With knowledge bases enabled, the read-only kb-query and kb-author skills come from the release assets.
+    ...config.paths.kbRoot === undefined ? [] : kbSkillRows(`${CONTAINER.assets}/packages/kb/skills`),
     { insert: [{ id: 'public-harness-web-token', name: bundle('web-token') },
       { id: 'public-harness-quota-provider', name: bundle('quota-provider'), config: {
         proxyBaseUrl: `http://${config.quota.hostAddress}:${proxyPort}/v1`, credentialFile: `${CONTAINER.home}/quota-credential.json`,

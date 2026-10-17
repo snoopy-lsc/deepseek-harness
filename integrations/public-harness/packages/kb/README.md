@@ -18,6 +18,7 @@ English | [中文](README.zh.md)
 - [Compile](#compile)
 - [Sharing and views](#sharing)
 - [Org knowledge bases, inventory and limits](#org)
+- [Skills](#skills)
 - [User helper](#user-helper)
 - [Development](#development)
 - [Tests](#tests)
@@ -65,6 +66,11 @@ Org knowledge bases are service-owned repositories under `<kbRoot>/org/<kbId>/`,
 
 `GET /admin/kb?filter=all|over|published|pending` is the inventory, with owner, size, share state, scope and over-limit flags; `GET /admin/kb/preview?user=` lists what one user can read. `GET /admin/kb/limits` returns the global values and every override; `PUT /admin/kb/limits` `{ scope: { type, id }, name, value }` sets a value (`null` is unlimited) and `DELETE /admin/kb/limits` `{ scope, name }` removes a group or user override; both need re-authentication and write `admin-kb-limit-change` or `admin-kb-limit-delete` with old and new values. Identity refuses group scopes that name no known group. `GET /admin/kb/limits/effective?user=` returns each value with its source and the user's usage.
 
+<a id="skills"></a>
+## Skills
+
+`skills/kb-query` and `skills/kb-author` ship read-only with the release (`build-assets.sh` copies them to `<assets>/packages/kb/skills`). When a KB root is configured, the container launch patch adds them through the `skill-filesystem` entry's `customSkillDirs` (`kbSkillRows` in `@public-harness/contracts`), so no plugin is needed and the instance cannot edit them. `kb-query` reads `index.md` first, then the linked pages, cites page and source paths, says when the KB does not cover a question, and treats KB text as data. `kb-author` explains the personal layout and leaves compiling and sharing to the personal center. Native instances take the same row from the release's launch patch. Compile prompts fence sources, the index, claims and pages, and neutralise fence tags inside them, so a source cannot close its own fence.
+
 <a id="user-helper"></a>
 ## User helper
 
@@ -78,9 +84,9 @@ Every operation on a user's tree (create, upload, commit, export, measure, apply
 <a id="tests"></a>
 ## Tests
 
-`org.spec.ts` covers org knowledge bases (create, upload, page edit, compile charged to the org principal, history, publish and rollback), conversion, the inventory and preview, and the limits API. `share.spec.ts` covers requests, review, approve with and without `raw/`, reject, resubmit, expiry, scope changes, revoke and views following group changes and disabled users. `compile.spec.ts` covers normalization, the compiler and lint with the mock model, jobs (fast-forward, conflict branch, over-limit branch, incremental ingest, caps, allowance failures) and tokens charged to the author through a real quota job channel. `personal.spec.ts` covers limits, archive validation, the helper, personal create, upload and archive over the socket, a hostile repository configuration, and the production helper argv. `mounts.spec.ts` checks the generated systemd unit, the podman volumes and their argv guard, view creation and the development links.
+`threats.spec.ts` walks the threat table: in-scope views of read-only hard links without symbolic links, immutable snapshots, raw sources excluded, revocation at once, symbolic links in a personal tree, metadata-only admin reads, member access, path tricks and fenced sources; it also checks the skills and their launch row. `org.spec.ts` covers org knowledge bases (create, upload, page edit, compile charged to the org principal, history, publish and rollback), conversion, the inventory and preview, and the limits API. `share.spec.ts` covers requests, review, approve with and without `raw/`, reject, resubmit, expiry, scope changes, revoke and views following group changes and disabled users. `compile.spec.ts` covers normalization, the compiler and lint with the mock model, jobs (fast-forward, conflict branch, over-limit branch, incremental ingest, caps, allowance failures) and tokens charged to the author through a real quota job channel. `personal.spec.ts` covers limits, archive validation, the helper, personal create, upload and archive over the socket, a hostile repository configuration, and the production helper argv. `mounts.spec.ts` checks the generated systemd unit, the podman volumes and their argv guard, view creation and the development links.
 
 <a id="not-verified"></a>
 ## Not verified on development hosts
 
-The `systemd-run` helper, the `BindPaths` and `BindReadOnlyPaths` binds and the podman volumes are checked only as generated configuration; they need a native host to verify.
+The `systemd-run` helper, the `BindPaths` and `BindReadOnlyPaths` binds and the podman volumes are checked only as generated configuration; they need a native host to verify. The gVisor view-refresh test in `threats.spec.ts` runs only with `PUBLIC_HARNESS_GVISOR=1` on a host with runsc and podman; until it passes there, container instances should fall back to a restart after scope changes. The production `kb` profile ships without a systemd unit until the account it runs as is decided.

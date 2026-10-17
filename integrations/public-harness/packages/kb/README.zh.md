@@ -18,6 +18,7 @@ kind: "package-library"
 - [编译](#compile)
 - [共享与视图](#sharing)
 - [组织知识库、清单与限额](#org)
+- [技能](#skills)
 - [用户助手](#user-helper)
 - [开发环境](#development)
 - [测试](#tests)
@@ -65,6 +66,11 @@ token 通过配额服务计费：每个任务用控制调用 `open-job` 打开�
 
 `GET /admin/kb?filter=all|over|published|pending` 是清单，包含所有者、大小、共享状态、可见范围和超限标记；`GET /admin/kb/preview?user=` 列出某个用户能阅读的内容。`GET /admin/kb/limits` 返回全局值和所有覆盖；`PUT /admin/kb/limits` `{ scope: { type, id }, name, value }` 设置数值（`null` 表示不限），`DELETE /admin/kb/limits` `{ scope, name }` 删除用户组或用户覆盖；两者都需要重新验证身份，并写入带新旧值的 `admin-kb-limit-change` 或 `admin-kb-limit-delete`。身份服务会拒绝指向未知用户组的范围。`GET /admin/kb/limits/effective?user=` 返回每个数值及其来源，以及该用户的用量。
 
+<a id="skills"></a>
+## 技能
+
+`skills/kb-query` 和 `skills/kb-author` 随发布版本以只读方式提供（`build-assets.sh` 把它们复制到 `<assets>/packages/kb/skills`）。配置了 KB 根目录时，容器启动补丁通过 `skill-filesystem` 条目的 `customSkillDirs` 加入它们（`@public-harness/contracts` 中的 `kbSkillRows`），因此不需要插件，实例也无法修改它们。`kb-query` 先读 `index.md`，再读链接的页面，引用页面和资料路径，在知识库没有覆盖问题时明确说明，并把知识库文本视为数据。`kb-author` 说明个人知识库的结构，编译和共享留给个人中心。原生实例从发布版本的启动补丁中获得同一行。编译提示词把资料、索引、要点和页面放在围栏中，并中和其中的围栏标签，资料无法闭合自己的围栏。
+
 <a id="user-helper"></a>
 ## 用户助手
 
@@ -78,9 +84,9 @@ token 通过配额服务计费：每个任务用控制调用 `open-job` 打开�
 <a id="tests"></a>
 ## 测试
 
-`org.spec.ts` 覆盖组织知识库（创建、上传、页面编辑、计入组织账户的编译、历史、发布与回滚）、转换、清单与预览以及限额接口。`share.spec.ts` 覆盖申请、审核、带或不带 `raw/` 的批准、驳回、重新提交、过期、范围变更、撤销，以及视图随用户组变化和用户停用而更新。`compile.spec.ts` 覆盖资料转换、使用模拟模型的编译与检查、任务（快进、冲突分支、超限分支、增量编译、上限、额度失败），以及通过真实配额任务通道计入作者的 token。`personal.spec.ts` 覆盖限额、归档校验、助手、通过 socket 的个人创建、上传与归档、恶意仓库配置以及生产助手参数。`mounts.spec.ts` 检查生成的 systemd unit、podman 卷及其参数校验、视图目录创建和开发环境链接。
+`threats.spec.ts` 逐项检查威胁表：只含只读硬链接、没有符号链接的范围内视图，不可变快照，默认排除原始资料，立即生效的撤销，个人树中的符号链接，管理员只读元数据，成员访问，路径技巧以及资料围栏；它还检查技能及其启动补丁行。`org.spec.ts` 覆盖组织知识库（创建、上传、页面编辑、计入组织账户的编译、历史、发布与回滚）、转换、清单与预览以及限额接口。`share.spec.ts` 覆盖申请、审核、带或不带 `raw/` 的批准、驳回、重新提交、过期、范围变更、撤销，以及视图随用户组变化和用户停用而更新。`compile.spec.ts` 覆盖资料转换、使用模拟模型的编译与检查、任务（快进、冲突分支、超限分支、增量编译、上限、额度失败），以及通过真实配额任务通道计入作者的 token。`personal.spec.ts` 覆盖限额、归档校验、助手、通过 socket 的个人创建、上传与归档、恶意仓库配置以及生产助手参数。`mounts.spec.ts` 检查生成的 systemd unit、podman 卷及其参数校验、视图目录创建和开发环境链接。
 
 <a id="not-verified"></a>
 ## 开发主机上未验证的部分
 
-`systemd-run` 助手、`BindPaths` 与 `BindReadOnlyPaths` 绑定以及 podman 卷只按生成的配置检查；需要在原生主机上验证。
+`systemd-run` 助手、`BindPaths` 与 `BindReadOnlyPaths` 绑定以及 podman 卷只按生成的配置检查；需要在原生主机上验证。`threats.spec.ts` 中的 gVisor 视图刷新测试只在装有 runsc 和 podman 的主机上以 `PUBLIC_HARNESS_GVISOR=1` 运行；在那里通过之前，容器实例在范围变化后应回退为重启。生产环境的 `kb` 配置在确定其运行账号之前不附带 systemd 单元。
