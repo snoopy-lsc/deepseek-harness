@@ -82,7 +82,7 @@ export function parseSystemdConfig(value: unknown): SystemdConfig {
   // The unit's ProtectHome=yes empties these trees and InaccessiblePaths hides /run/systemd, so data or launch assets
   // placed there would vanish inside the confined service.
   const hidden = ['/home', '/root', '/run/user', '/run/systemd', '/run/dbus']
-  if ([paths.storageRoot, paths.release, paths.toolchain, paths.browserRoot].some(p => hidden.some(h => inside(p, h)))) throw new NativeHostError('invalid-config', 'hidden-path')
+  if ([paths.storageRoot, paths.release, paths.toolchain, paths.browserRoot, ...paths.kbRoot === undefined ? [] : [paths.kbRoot]].some(p => hidden.some(h => inside(p, h)))) throw new NativeHostError('invalid-config', 'hidden-path')
   const isolated = [paths.storageRoot, paths.stateDir, paths.socketDir, paths.release, paths.toolchain, paths.browserRoot]
   if (isolated.some((a, i) => isolated.some((b, j) => i !== j && inside(a, b)))) throw new NativeHostError('invalid-config', 'overlapping-paths')
   let web: PortRange

@@ -16,6 +16,9 @@ export interface DevRuntimeConfig {
   maxActive?: number
   startupTimeoutMs: number
   stopTimeoutMs: number
+  /** Knowledge base root of a local `dsh-kb`; when set, `<home>/kb/mine` and `<home>/kb/shared` link to the user's KB tree and view.
+   * Development has no mount isolation: these are plain symbolic links and nothing is enforced. */
+  kbRoot?: string
 }
 
 /** Validate a complete local runtime configuration before any filesystem or process work. */
@@ -23,7 +26,7 @@ export function validateDevRuntimeConfig(config: DevRuntimeConfig): void {
   if (config.mode !== 'development') throw new Error('development runtime requires development mode')
   if (config.host !== '127.0.0.1') throw new Error('development runtime requires a loopback bind')
   if (!isAbsolute(config.storageRoot) || !isAbsolute(config.command)
-    || (typeof config.webPatch === 'string' && !isAbsolute(config.webPatch))) {
+    || (typeof config.webPatch === 'string' && !isAbsolute(config.webPatch)) || (config.kbRoot !== undefined && !isAbsolute(config.kbRoot))) {
     throw new Error('development runtime paths must be absolute')
   }
   validateDevUsers(config.users)

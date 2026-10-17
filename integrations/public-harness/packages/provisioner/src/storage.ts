@@ -19,6 +19,8 @@ export interface StorageLayout {
   readonly podman: string
   /** The router-facing socket for this account. */
   readonly socketPath: string
+  /** Personal knowledge bases, mounted read-write at `<home>/kb/mine` when a KB root is configured. */
+  readonly kb: string
 }
 
 /** An existing path is owned by someone else or is not a real directory. */
@@ -32,7 +34,7 @@ export function layoutFor(paths: { readonly storageRoot: string; readonly socket
   if (!isDerivedAccountName(account)) throw new Error('layout requires a derived account name')
   const root = join(paths.storageRoot, 'users', account)
   return { root, home: join(root, 'home'), workspace: join(root, 'workspace'), cache: join(root, 'cache'), tmp: join(root, 'tmp'), ctl: join(root, 'ctl'),
-    podman: join(root, 'podman'), socketPath: join(paths.socketDir, `${account}.sock`) }
+    podman: join(root, 'podman'), socketPath: join(paths.socketDir, `${account}.sock`), kb: join(root, 'kb') }
 }
 
 /** Select native root control storage while retaining the shared private data layout.
@@ -70,7 +72,7 @@ async function ensureOwnedDirectory(path: string, identity: AccountIdentity, own
 }
 
 /** Create the account's private tree, refusing pre-existing paths with the wrong owner or type. */
-export async function ensureStorage(paths: { readonly storageRoot: string }, layout: StorageLayout,
+export async function ensureStorage(paths: { readonly storageRoot: string; readonly kbRoot?: string }, layout: StorageLayout,
   identity: AccountIdentity, ownership: Ownership, kind: 'systemd' | 'podman-gvisor'): Promise<void> {
   if (kind === 'systemd') throw new StorageOwnershipError('native storage requires descriptor-based provider preparation')
   const users = join(paths.storageRoot, 'users')
@@ -79,9 +81,34 @@ export async function ensureStorage(paths: { readonly storageRoot: string }, lay
   if (!parent.isDirectory() || parent.isSymbolicLink() || (parent.mode & 0o022) !== 0) {
     throw new StorageOwnershipError('users directory is unsafe')
   }
-  for (const path of [layout.root, layout.home, layout.workspace, layout.cache, layout.tmp, layout.ctl, ...(kind === 'podman-gvisor' ? [layout.podman] : [])]) {
+  for (const path of [layout.root, layout.home, layout.workspace, layout.cache, layout.tmp, layout.ctl, ...(kind === 'podman-gvisor' ? [layout.podman] : []),
+    ...(paths.kbRoot === undefined ? [] : [layout.kb])]) {
     await ensureOwnedDirectory(path, identity, ownership)
   }
+  if (paths.kbRoot !== undefined) await ensureKbView(paths.kbRoot, layout.root.slice(layout.root.lastIndexOf('/') + 1), ownership)
+}
+
+/** Make sure `<kbRoot>/views/<account>` exists before an instance binds it. A missing view is created empty with the owner and group of
+ * `<kbRoot>/views` (the `dsh-kb` service account), mode 0755; the service fills it with hard links. Anything other than a real directory
+ * owned by that account is refused.
+ * @param kbRoot Knowledge base root.
+ * @param account Derived account name.
+ * @param ownership Ownership adapter (tests run unprivileged).
+ * @returns The view path.
+ */
+export async function ensureKbView(kbRoot: string, account: string, ownership: Ownership = hostOwnership): Promise<string> {
+  if (!isDerivedAccountName(account) && !/^[A-Za-z0-9_-]{1,128}$/.test(account)) throw new StorageOwnershipError('view account')
+  const views = join(kbRoot, 'views')
+  const parent = await lstat(views)
+  if (!parent.isDirectory() || parent.isSymbolicLink() || (parent.mode & 0o002) !== 0) throw new StorageOwnershipError('views directory is unsafe')
+  const view = join(views, account)
+  const existing = await lstat(view).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return undefined; throw error })
+  if (existing === undefined) {
+    await mkdir(view, { mode: 0o755 })
+    await ownership.chown(view, parent.uid, parent.gid)
+    await chmod(view, 0o755)
+  } else if (!existing.isDirectory() || existing.isSymbolicLink() || existing.uid !== parent.uid) throw new StorageOwnershipError('view is not a service-owned directory')
+  return view
 }
 
 /** Remove an account's whole tree. Only a derived layout beneath the storage root is accepted. */

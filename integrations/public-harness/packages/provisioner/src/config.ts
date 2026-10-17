@@ -5,7 +5,11 @@ import type { AccountToolchain } from './accounts.ts'
 import { validateLimits, type LimitTools, type Limits } from './limits.ts'
 
 /** Deployment-owned data and private socket directories. */
-export interface HostPaths { readonly storageRoot: string; readonly stateDir: string; readonly socketDir: string; readonly quotaMount: string }
+export interface HostPaths {
+  readonly storageRoot: string; readonly stateDir: string; readonly socketDir: string; readonly quotaMount: string
+  /** Knowledge base root of the `dsh-kb` service; when set, instances get `<home>/kb/mine` (read-write) and `<home>/kb/shared` (read-only). */
+  readonly kbRoot?: string
+}
 /** Account commands shared by both runtimes. */
 export type HostTools = Pick<AccountToolchain, 'getent' | 'useradd' | 'userdel' | 'nologin'>
 /** Container-only settings; native selection requires none of these programs or assets. */
@@ -71,10 +75,13 @@ function integer(value: unknown, name: string, minimum = 1): number {
 export function validateProvisionerConfig(value: unknown): ProvisionerConfig {
   const c = record(value, ['paths', 'tools', 'runtime', 'socketGid', 'maxActiveInstances', 'idleStopMs', 'deletionRecoveryMs',
     'limits', 'readyTimeoutMs', 'stopTimeoutMs', 'ports'])
-  const p = record(c.paths, ['storageRoot', 'stateDir', 'socketDir', 'quotaMount'])
+  const p = record(c.paths, ['storageRoot', 'stateDir', 'socketDir', 'quotaMount'], ['kbRoot'])
   const paths: HostPaths = { storageRoot: path(p.storageRoot, 'storageRoot'), stateDir: path(p.stateDir, 'stateDir'),
-    socketDir: path(p.socketDir, 'socketDir'), quotaMount: path(p.quotaMount, 'quotaMount') }
-  if (new Set(Object.values(paths)).size !== 4) throw new Error('provisioner paths must be distinct')
+    socketDir: path(p.socketDir, 'socketDir'), quotaMount: path(p.quotaMount, 'quotaMount'), ...p.kbRoot === undefined ? {} : { kbRoot: path(p.kbRoot, 'kbRoot') } }
+  if (new Set(Object.values(paths)).size !== Object.keys(paths).length) throw new Error('provisioner paths must be distinct')
+  if (paths.kbRoot !== undefined && [paths.storageRoot, paths.stateDir, paths.socketDir].some(other => paths.kbRoot!.startsWith(`${other}/`) || other.startsWith(`${paths.kbRoot}/`))) {
+    throw new Error('kbRoot must not overlap other provisioner paths')
+  }
   const t = record(c.tools, ['getent', 'useradd', 'userdel', 'nologin'])
   const tools: HostTools = { getent: path(t.getent, 'getent'), useradd: path(t.useradd, 'useradd'), userdel: path(t.userdel, 'userdel'), nologin: path(t.nologin, 'nologin') }
   const maxActiveInstances = integer(c.maxActiveInstances, 'maxActiveInstances')

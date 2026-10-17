@@ -1,0 +1,114 @@
+/** `dsh-kb`: the knowledge base host service. Start it with `startKbService`; identity reaches it with `createKbClient`-style HTTP
+ * requests over the private socket. */
+import { join } from 'node:path'
+import { KbError } from './errors.ts'
+import type { HelperRunner, UserTrees } from './runner.ts'
+import { listenKbSocket, kbHandler, type KbRoutes } from './server.ts'
+import { createCore, MAX_SOURCE_BYTES, personalOps, prepareRoot, usageOf, type KbCore } from './service.ts'
+import { openKbStore } from './store.ts'
+
+export { createDirectRunner, createSystemdRunner, devUserTrees, systemdRunArgv, type HelperRunner, type UserTree, type UserTrees } from './runner.ts'
+export { KbError } from './errors.ts'
+
+/** Service settings. */
+export interface KbServiceConfig {
+  /** `<kbRoot>`, for example /srv/dsh-public/kb. */
+  readonly root: string
+  /** Private Unix socket identity connects to. */
+  readonly socket: string
+  readonly socketMode?: number
+  readonly socketGid?: number
+  readonly users: UserTrees
+  readonly runner: HelperRunner
+  readonly clock?: () => number
+  readonly log?: (line: string) => void
+}
+
+/** A running service. */
+export interface KbService {
+  readonly core: KbCore
+  close(): Promise<void>
+}
+
+const principalsBody = (body: Record<string, unknown>) => {
+  if (!Array.isArray(body.users) || body.users.length > 100_000) throw new KbError(400, 'body')
+  return body.users.map(raw => {
+    const user = raw as Record<string, unknown>
+    if (typeof user.userId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(user.userId) || !Array.isArray(user.groups)
+      || user.groups.some(group => typeof group !== 'string' || group.length > 600)) throw new KbError(400, 'body')
+    return { userId: user.userId, groups: user.groups as string[], disabled: user.disabled === true, email: typeof user.email === 'string' ? user.email.slice(0, 320) : null }
+  })
+}
+
+/** Personal and internal routes; later modules add their own.
+ * @param core Service core.
+ * @returns Route table.
+ */
+export function baseRoutes(core: KbCore, hooks: { principalsChanged?: (userIds: readonly string[]) => Promise<void> } = {}): KbRoutes {
+  const personal = personalOps(core)
+  const { store } = core
+  return {
+    'GET /me/kb': async ({ actor }) => {
+      const kbs = store.kb.byOwner(actor.userId).map(kb => ({ ...kb, ...personalState(core, kb.id) }))
+      return { kbs, ...usageOf(core, actor.userId) }
+    },
+    'POST /me/kb': async request => ({ kb: await personal.create(request.actor, await request.json()) }),
+    'POST /me/kb/archive': async request => ({ kb: await personal.archive(request.actor, await request.json()) }),
+    'POST /me/kb/sources': async request => personal.upload(request.actor, request.query.get('kb'), request.query.get('name'), await request.bytes(MAX_SOURCE_BYTES)),
+    'POST /internal/principals': async request => {
+      const users = principalsBody(await request.json())
+      const changed: string[] = []
+      store.tx(() => {
+        for (const user of users) {
+          const before = store.principals.get(user.userId)
+          const same = before !== undefined && before.disabled === user.disabled && JSON.stringify(before.groups) === JSON.stringify([...user.groups].sort())
+          store.principals.upsert(user, core.clock())
+          if (!same) changed.push(user.userId)
+        }
+      })
+      if (changed.length > 0) await hooks.principalsChanged?.(changed)
+      return { changed: changed.length }
+    },
+    'POST /internal/audit/drain': async () => ({ events: store.audit.pending() }),
+    'POST /internal/audit/ack': async request => {
+      const upTo = (await request.json()).upTo
+      if (typeof upTo !== 'number' || !Number.isSafeInteger(upTo) || upTo < 0) throw new KbError(400, 'body')
+      return { removed: store.audit.ack(upTo) }
+    },
+  }
+}
+
+/** Share and publication state of one KB as its author sees it. */
+export function personalState(core: KbCore, kbId: string) {
+  const pending = core.store.requests.pendingOf(kbId)
+  const publication = core.store.publications.get(kbId)
+  const last = core.store.requests.byKb(kbId)[0]
+  const job = core.store.jobs.byKb(kbId)[0]
+  const share = pending !== undefined ? { state: 'pending' as const, requestId: pending.id, submittedAt: pending.submittedAt }
+    : publication?.state === 'active' ? { state: 'published' as const, publishedAt: publication.publishedAt, scope: core.store.scopes.get(kbId) }
+      : publication?.state === 'revoked' ? { state: 'revoked' as const, revokedAt: publication.revokedAt }
+        : last?.state === 'rejected' ? { state: 'rejected' as const, reason: last.reason, decidedAt: last.decidedAt }
+          : { state: 'private' as const }
+  return { share, lastJob: job === undefined ? null : job }
+}
+
+/** Start the service.
+ * @param config Settings.
+ * @param extra Route modules added by later phases.
+ * @returns Handle.
+ */
+export async function startKbService(config: KbServiceConfig, extra: Array<(core: KbCore) => KbRoutes> = []): Promise<KbService> {
+  await prepareRoot(config.root)
+  const store = openKbStore(join(config.root, 'kb.sqlite'))
+  const core = createCore({ store, root: config.root, users: config.users, runner: config.runner, ...config.clock ? { clock: config.clock } : {}, ...config.log ? { log: config.log } : {} })
+  const routes: KbRoutes = { ...baseRoutes(core) }
+  for (const module of extra) Object.assign(routes, module(core))
+  const server = await listenKbSocket(kbHandler(routes, config.log), config.socket, config.socketMode ?? 0o600, config.socketGid)
+  return {
+    core,
+    async close() {
+      await new Promise<void>(resolve => server.close(() => resolve()))
+      store.close()
+    },
+  }
+}

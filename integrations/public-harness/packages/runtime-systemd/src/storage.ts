@@ -6,6 +6,7 @@ import { dirname, join, relative } from 'node:path'
 import type { RuntimeInstance } from '@public-harness/contracts'
 import type { AccountIdentity } from '@public-harness/provisioner/accounts'
 import type { CommandRunner } from '@public-harness/provisioner/system'
+import { ensureKbView } from '@public-harness/provisioner/storage'
 import { NativeHostError, type SystemdConfig } from './config.ts'
 import { ensureNativeAccount } from './accounts.ts'
 import { applyDiskLimits } from './limits.ts'
@@ -202,7 +203,8 @@ export async function prepareNativeStorage(instance: RuntimeInstance, config: Sy
     try {
       const root = await ensureDirectoryAt(users, instance.account, { uid: 0, gid: 0 }, 0o711)
       try {
-        for (const path of [instance.home, instance.workspace, instance.cache, instance.tmp]) {
+        const kbDir = config.paths.kbRoot === undefined ? [] : [`${config.paths.storageRoot}/users/${instance.account}/kb`]
+        for (const path of [instance.home, instance.workspace, instance.cache, instance.tmp, ...kbDir]) {
           const name = relative(`${config.paths.storageRoot}/users/${instance.account}`, path)
           let child: FileHandle
           try { child = await ensureDirectoryAt(root, name, instance, 0o700) }
@@ -214,6 +216,7 @@ export async function prepareNativeStorage(instance: RuntimeInstance, config: Sy
         }
       } finally { await root.close() }
     } finally { await users.close() }
+    if (config.paths.kbRoot !== undefined) await ensureKbView(config.paths.kbRoot, instance.account)
     const runtime = await ensureDirectoryAt(state, 'runtime', { uid: 0, gid: 0 }, 0o700)
     try { const control = await ensureDirectoryAt(runtime, instance.account, { uid: 0, gid: 0 }, 0o700); await control.close() }
     finally { await runtime.close() }

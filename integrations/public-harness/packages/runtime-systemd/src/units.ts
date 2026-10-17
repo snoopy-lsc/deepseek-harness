@@ -15,6 +15,20 @@ export function renderResolvConf(config: SystemdConfig): string {
 /** Control-directory file name of the generated resolver configuration. */
 export const RESOLV_CONF = 'resolv.conf'
 
+/** Knowledge base binds when a KB root is configured: the account's personal KB tree read-write at `<home>/kb/mine` and its root-built
+ * view read-only at `<home>/kb/shared`. Both sources sit outside the instance's writable paths, and the KB root itself is inaccessible,
+ * so the binds are the only way in (the resolver bind shows a bind lands inside an inaccessible tree).
+ * @param instance Allocated instance.
+ * @param config Native configuration.
+ * @returns Unit lines (none without a KB root).
+ */
+export function kbUnitLines(instance: RuntimeInstance, config: SystemdConfig): string[] {
+  const kbRoot = config.paths.kbRoot
+  if (kbRoot === undefined) return []
+  return [`BindPaths=${config.paths.storageRoot}/users/${instance.account}/kb:${instance.home}/kb/mine`,
+    `BindReadOnlyPaths=${kbRoot}/views/${instance.account}:${instance.home}/kb/shared`]
+}
+
 /** Render a root-owned service without starting it or initializing a workspace.
  * @param instance Fully allocated native instance.
  * @param config Resolved immutable launch assets and resource limits.
@@ -38,8 +52,9 @@ export function renderUnit(instance: RuntimeInstance, config: SystemdConfig): st
     `ReadWritePaths=${home} ${workspace} ${cache} ${tmp}`, `BindPaths=${tmp}:/tmp ${tmp}:/var/tmp`,
     // The source sits in the state tree that InaccessiblePaths hides; the dedicated-host check must show the bind still lands.
     `BindReadOnlyPaths=${instance.controlDir}/${RESOLV_CONF}:/etc/resolv.conf`,
+    ...kbUnitLines(instance, config),
     `TemporaryFileSystem=/dev/shm:rw,nosuid,nodev,size=${limits.shmBytes},nr_inodes=${limits.shmInodes},mode=1777`,
-    `InaccessiblePaths=${paths.stateDir} ${paths.socketDir} /run/dbus /run/systemd /run/user`,
+    `InaccessiblePaths=${paths.stateDir} ${paths.socketDir}${paths.kbRoot === undefined ? '' : ` ${paths.kbRoot}`} /run/dbus /run/systemd /run/user`,
     `CPUQuota=${limits.cpus * 100}%`, `MemoryMax=${limits.memoryBytes}`, 'MemorySwapMax=0',
     `TasksMax=${limits.pids}`, `LimitNOFILE=${limits.openFiles}`, 'LimitCORE=0', 'OOMPolicy=kill',
     'KillMode=control-group', 'SendSIGKILL=yes', `TimeoutStartSec=${config.readyTimeoutMs}ms`, `TimeoutStopSec=${config.stopTimeoutMs}ms`,

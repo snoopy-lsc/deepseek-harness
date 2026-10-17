@@ -121,12 +121,21 @@ export function buildRunArgv(config: ContainerConfig, record: UserRecord, sideca
     '--label', 'public-harness=1', '--workdir', CONTAINER.workspace,
     ...volume(record.layout.home, CONTAINER.home, 'rw'), ...volume(record.layout.workspace, CONTAINER.workspace, 'rw'),
     ...volume(record.layout.ctl, CONTAINER.ctl, 'rw'), ...volume(config.paths.runtimeAssets, CONTAINER.assets, 'ro'),
+    ...kbVolumes(config, record).flatMap(value => ['--volume', value]),
     ...env('HOME', CONTAINER.home), ...env('DSH_HOME', CONTAINER.home), ...env('DSH_AGENTS_HOME', `${CONTAINER.home}/agents`),
     ...env('DSH_TELEMETRY_DISABLED', '1'), ...env('PUBLIC_HARNESS_READY_FILE', `${CONTAINER.ctl}/ready.json`),
     ...env('PUBLIC_HARNESS_WEB_PORT', String(WEB_PORT)), ...env('PUBLIC_HARNESS_SIDECAR_PORT', String(SIDECAR_PORT)),
     ...env('PUBLIC_HARNESS_WEB_PATCH', `${CONTAINER.home}/public-harness-web.patch.yml`),
     config.image, 'node', `${CONTAINER.assets}/container-entry.js`,
   ]
+}
+
+/** Knowledge base volumes when a KB root is configured: the personal tree read-write and the per-account view read-only. The view uses
+ * the shared `z` label because its files are hard links shared with other accounts' views; a private `Z` relabel would cut them off. */
+export function kbVolumes(config: ContainerConfig, record: UserRecord): string[] {
+  const kbRoot = config.paths.kbRoot
+  if (kbRoot === undefined) return []
+  return [`${record.layout.kb}:${CONTAINER.home}/kb/mine:rw,Z`, `${kbRoot}/views/${record.account}:${CONTAINER.home}/kb/shared:ro,z`]
 }
 
 const FORBIDDEN_FLAGS = /^--(privileged|cap-add|device|pid|ipc|userns|uts|cgroupns|security-opt=(?!no-new-privileges)|add-host|dns|mount|volumes-from|group-add|env-file|net|network=host|pod)\b/
@@ -152,7 +161,7 @@ function loopbackPortFree(port: number): Promise<boolean> {
 export function assertSafeRunArgv(argv: readonly string[], config: ContainerConfig, record: UserRecord): void {
   const allowedVolumes = new Set([
     `${record.layout.home}:${CONTAINER.home}:rw,Z`, `${record.layout.workspace}:${CONTAINER.workspace}:rw,Z`,
-    `${record.layout.ctl}:${CONTAINER.ctl}:rw,Z`, `${config.paths.runtimeAssets}:${CONTAINER.assets}:ro,Z`])
+    `${record.layout.ctl}:${CONTAINER.ctl}:rw,Z`, `${config.paths.runtimeAssets}:${CONTAINER.assets}:ro,Z`, ...kbVolumes(config, record)])
   const seen = new Set<string>()
   let userns = 0
   for (let index = 0; index < argv.length; index += 1) {

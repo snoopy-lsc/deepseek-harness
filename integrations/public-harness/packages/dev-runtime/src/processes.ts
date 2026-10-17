@@ -1,6 +1,6 @@
 /** One real Web child per development test user. */
 import { spawn, type ChildProcess } from 'node:child_process'
-import { chmod, lstat, mkdir } from 'node:fs/promises'
+import { chmod, lstat, mkdir, readlink, rm, symlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { InstanceEndpoint, UserId } from '@public-harness/contracts'
 import { ensureGitWorkspace } from '@public-harness/contracts'
@@ -41,6 +41,22 @@ function readyValues(message: unknown): { port: number; token: string } | undefi
   return { port: record.port, token: record.token }
 }
 
+/** Development stand-in for the native binds: `<home>/kb/mine` -> `<root>/kb`, `<home>/kb/shared` -> `<kbRoot>/views/<userId>`.
+ * Not enforcing: the child runs as the developer's own account and could read any path. */
+export async function linkKnowledgeBases(kbRoot: string, root: string, home: string, userId: string): Promise<void> {
+  const mine = join(root, 'kb'), view = join(kbRoot, 'views', userId)
+  await privateDirectory(mine)
+  await mkdir(view, { recursive: true, mode: 0o755 })
+  await privateDirectory(join(home, 'kb'))
+  for (const [name, target] of [['mine', mine], ['shared', view]] as const) {
+    const link = join(home, 'kb', name)
+    const existing = await lstat(link).catch(() => undefined)
+    if (existing?.isSymbolicLink() && await readlink(link) === target) continue
+    if (existing !== undefined) await rm(link, { recursive: false, force: true })
+    await symlink(target, link, 'dir')
+  }
+}
+
 /** Start a dsh Web profile, await its private IPC readiness, and retain its stop handle. */
 export async function startWebProcess(config: DevRuntimeConfig, userId: UserId): Promise<RunningWeb> {
   const root = join(config.storageRoot, 'users', userId)
@@ -51,6 +67,7 @@ export async function startWebProcess(config: DevRuntimeConfig, userId: UserId):
     await privateDirectory(path)
   }
   await ensureGitWorkspace(workspace)
+  if (config.kbRoot !== undefined) await linkKnowledgeBases(config.kbRoot, root, home, userId)
   const args = [...config.args, '--profile', 'web', '--patch', webPatchFor(config, userId),
     '--host', '127.0.0.1', '--port', '0', '--no-open']
   const child: ChildProcess = spawn(config.command, args, {
