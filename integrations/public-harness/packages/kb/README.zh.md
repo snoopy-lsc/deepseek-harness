@@ -17,6 +17,7 @@ kind: "package-library"
 - [服务](#service)
 - [编译](#compile)
 - [共享与视图](#sharing)
+- [组织知识库、清单与限额](#org)
 - [用户助手](#user-helper)
 - [开发环境](#development)
 - [测试](#tests)
@@ -57,6 +58,13 @@ token 通过配额服务计费：每个任务用控制调用 `open-job` 打开�
 
 每个用户的视图 `views/<account>/` 为每个范围匹配该用户所在公司、有效用户组或账号的发布保存一份硬链接的只读副本，以知识库名称命名（重名时加短 ID 后缀）。在主体或用户组变化、发布或范围变化，以及用户打开知识库页面时重建视图；条目通过重命名替换，已停用用户的视图为空。每次视图变化都记为 `kb-view-apply` 审计。
 
+<a id="org"></a>
+## 组织知识库、清单与限额
+
+组织知识库是服务自有的仓库，位于 `<kbRoot>/org/<kbId>/`，由助手以服务账号运行（`orgRunner`）。`POST /admin/kb/org` `{ title, description? }` 创建（需重新验证身份）；`POST /admin/kb/org/sources?kb=&name=` 上传资料；`POST /admin/kb/org/edit` `{ kb, path, text, message? }` 提交 `wiki/<page>.md`、`index.md` 或 `schema.md`；`POST /admin/kb/org/compile` `{ kb, op }` 排入编译任务，费用计入该知识库自己的账户 `org-kb-<kbId>`；`POST /admin/kb/org/rollback` `{ kb, commit?, scope?, includeRaw? }` 发布 HEAD 或更早的提交（需重新验证身份）。`GET /admin/kb/content?kb=[&path=&rev=]` 列出组织知识库的文件和历史；对个人知识库只从其有效发布中返回文件（每次读取文件都会审计），否则只返回元数据。`POST /admin/kb/convert` `{ kb }` 用已发布的树把已发布的个人知识库转为组织知识库，转移可见范围，作者的知识库恢复为私有，并在个人中心显示 `converted` 状态。
+
+`GET /admin/kb?filter=all|over|published|pending` 是清单，包含所有者、大小、共享状态、可见范围和超限标记；`GET /admin/kb/preview?user=` 列出某个用户能阅读的内容。`GET /admin/kb/limits` 返回全局值和所有覆盖；`PUT /admin/kb/limits` `{ scope: { type, id }, name, value }` 设置数值（`null` 表示不限），`DELETE /admin/kb/limits` `{ scope, name }` 删除用户组或用户覆盖；两者都需要重新验证身份，并写入带新旧值的 `admin-kb-limit-change` 或 `admin-kb-limit-delete`。身份服务会拒绝指向未知用户组的范围。`GET /admin/kb/limits/effective?user=` 返回每个数值及其来源，以及该用户的用量。
+
 <a id="user-helper"></a>
 ## 用户助手
 
@@ -70,7 +78,7 @@ token 通过配额服务计费：每个任务用控制调用 `open-job` 打开�
 <a id="tests"></a>
 ## 测试
 
-`share.spec.ts` 覆盖申请、审核、带或不带 `raw/` 的批准、驳回、重新提交、过期、范围变更、撤销，以及视图随用户组变化和用户停用而更新。`compile.spec.ts` 覆盖资料转换、使用模拟模型的编译与检查、任务（快进、冲突分支、超限分支、增量编译、上限、额度失败），以及通过真实配额任务通道计入作者的 token。`personal.spec.ts` 覆盖限额、归档校验、助手、通过 socket 的个人创建、上传与归档、恶意仓库配置以及生产助手参数。`mounts.spec.ts` 检查生成的 systemd unit、podman 卷及其参数校验、视图目录创建和开发环境链接。
+`org.spec.ts` 覆盖组织知识库（创建、上传、页面编辑、计入组织账户的编译、历史、发布与回滚）、转换、清单与预览以及限额接口。`share.spec.ts` 覆盖申请、审核、带或不带 `raw/` 的批准、驳回、重新提交、过期、范围变更、撤销，以及视图随用户组变化和用户停用而更新。`compile.spec.ts` 覆盖资料转换、使用模拟模型的编译与检查、任务（快进、冲突分支、超限分支、增量编译、上限、额度失败），以及通过真实配额任务通道计入作者的 token。`personal.spec.ts` 覆盖限额、归档校验、助手、通过 socket 的个人创建、上传与归档、恶意仓库配置以及生产助手参数。`mounts.spec.ts` 检查生成的 systemd unit、podman 卷及其参数校验、视图目录创建和开发环境链接。
 
 <a id="not-verified"></a>
 ## 开发主机上未验证的部分

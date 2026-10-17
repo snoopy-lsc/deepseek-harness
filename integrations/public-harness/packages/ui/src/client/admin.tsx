@@ -3,12 +3,14 @@
  * SSO configuration (read-only) and daily allowances. Built from Harness primitives and the settings-row geometry; only colours come from the theme.
  * Every refusal comes from the server; disable, role changes and allowance changes may ask the administrator to re-authenticate. */
 import { Button, IconChecklistOutlineRegular, IconChevronLeftOutlineRegular, IconGaugeOutlineRegular, IconLinkOutlineRegular, IconPlusOutlineRegular,
-  IconSearchOutlineRegular, IconShareOutlineRegular, IconUsersOutlineRegular, IconWorkspaceTreeOutlineRegular, Input, Modal, SegmentedControl, Tag, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
+  IconDatabaseOutlineRegular, IconSearchOutlineRegular, IconShareOutlineRegular, IconUsersOutlineRegular, IconWorkspaceTreeOutlineRegular, Input, Modal, SegmentedControl, Tag, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import { useCallback, useEffect, useState, useSyncExternalStore, type CSSProperties, type FormEvent, type ReactNode } from 'react'
 import { groupAdminCopy } from './admin-kb-copy.ts'
 import { groupName, Groups } from './admin-groups.tsx'
 import { KbRequests } from './admin-kb.tsx'
+import { KbInventory } from './admin-kb-inventory.tsx'
+import { KbLimitsCard } from './admin-kb-limits.tsx'
 import { card, column, date, errorText, field, fill, hint, label, Note, page, Row, Card, select, type T, useReauth } from './admin-kit.tsx'
 import { type AdminApi, type AdminAuditPage, type AdminInvite, type AdminQuota, type AdminSso, type AdminUser, type AdminUserPage, type OverLimitMode, type Proof } from './admin-api.ts'
 
@@ -85,7 +87,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 }
 
 /** Administration sections, in menu order. */
-export const ADMIN_SECTIONS = ['users', 'groups', 'kbRequests', 'invites', 'audit', 'sso', 'quota'] as const
+export const ADMIN_SECTIONS = ['users', 'groups', 'kb', 'kbRequests', 'invites', 'audit', 'sso', 'quota'] as const
 export type AdminSection = typeof ADMIN_SECTIONS[number]
 
 /** The selected section, shared by the sidebar submenu and the main panel. */
@@ -101,7 +103,7 @@ const PROVIDERS: Record<string, string> = { oidc: 'OIDC', saml: 'SAML', ldap: 'L
 const ICONS: Record<AdminSection, (size: number) => ReactNode> = {
   users: size => <IconUsersOutlineRegular size={size} />, invites: size => <IconPlusOutlineRegular size={size} />, audit: size => <IconChecklistOutlineRegular size={size} />,
   sso: size => <IconLinkOutlineRegular size={size} />, quota: size => <IconGaugeOutlineRegular size={size} />, groups: size => <IconWorkspaceTreeOutlineRegular size={size} />,
-  kbRequests: size => <IconShareOutlineRegular size={size} />,
+  kbRequests: size => <IconShareOutlineRegular size={size} />, kb: size => <IconDatabaseOutlineRegular size={size} />,
 }
 /* Sidebar submenu: rows share the sidebar's panel-row geometry (36px, 12px radius, hover surface). */
 function MenuRow({ icon, label, active, onClick, wide, testId }: { icon: ReactNode; label: string; active?: boolean; onClick: () => void; wide: boolean; testId: string }) {
@@ -301,7 +303,8 @@ function Quota({ api, t }: { api: AdminApi; t: T }) {
   const parse = (text: string) => /^[1-9][0-9]{0,14}$/.test(text) ? Number(text) : undefined
   const save = (run: (proof: Proof) => Promise<AdminQuota>) => { setNote(undefined); attempt(async proof => { apply(await run(proof)); setNote({ ok: true, text: t('done') }) }) }
   if (quota === undefined) return <Card><Row title={t('loading')} end /></Card>
-  if (quota === null) return <Card><Row title={t('noQuota')} end /></Card>
+  const kbLimits = <KbLimitsCard api={api} t={t} attempt={attempt} note={(ok, text) => setNote({ ok, text })} />
+  if (quota === null) return <><Note note={note} /><Card><Row title={t('noQuota')} end /></Card>{kbLimits}{dialog}</>
   const email = (id: string) => users.find(user => user.id === id)?.email ?? id
   const tokens = (n: number) => fill(t('tokens'), { n: n.toLocaleString() })
   return <>
@@ -310,6 +313,7 @@ function Quota({ api, t }: { api: AdminApi; t: T }) {
       if (mode === 'grace' && !(/^[1-9][0-9]?$|^100$/.test(grace))) { setNote({ ok: false, text: t('invalidGrace') }); return }
       save(proof => api.setOverLimit(mode, mode === 'grace' ? Number(grace) : quota.overLimit?.gracePercent ?? 10, proof))
     }} />
+    {kbLimits}
     <Card testId="quota-default">
       <Row title={t('configured')}><span style={label}>{tokens(quota.configuredDailyTokens)}</span></Row>
       <form style={{ padding: '14px 0' }} onSubmit={event => { event.preventDefault(); const n = parse(defaultValue); if (n === undefined) { setNote({ ok: false, text: t('invalidTokens') }); return } save(proof => api.setDefaultQuota(n, proof)) }}>
@@ -374,7 +378,7 @@ export function AdminPage({ api, section, t }: { api: AdminApi; section: Section
         <h1 style={{ margin: 0, fontSize: 20, lineHeight: '28px', fontWeight: 600 }}>{t(current)}</h1>
         <span style={{ ...hint, marginTop: 0 }}>· {t('title')}</span>
       </header>
-      {current === 'groups' ? <Groups api={api} t={t} /> : current === 'kbRequests' ? <KbRequests api={api} t={t} /> : current === 'invites' ? <Invites api={api} t={t} /> : current === 'users' ? <Users api={api} t={t} /> : current === 'audit' ? <Audit api={api} t={t} />
+      {current === 'groups' ? <Groups api={api} t={t} /> : current === 'kbRequests' ? <KbRequests api={api} t={t} /> : current === 'kb' ? <KbInventory api={api} t={t} /> : current === 'invites' ? <Invites api={api} t={t} /> : current === 'users' ? <Users api={api} t={t} /> : current === 'audit' ? <Audit api={api} t={t} />
         : current === 'sso' ? <Sso api={api} t={t} /> : <Quota api={api} t={t} />}
     </div>
   </div>

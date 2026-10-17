@@ -47,6 +47,36 @@ export interface AdminKbRequestContent {
   readonly jobs: ReadonlyArray<{ readonly id: string; readonly op: string; readonly state: string; readonly finishedAt: number | null; readonly lint: number }>
 }
 export interface AdminKbFile { readonly path: string; readonly bytes: number; readonly text: string | null; readonly previous: string | null; readonly binary: boolean }
+export type KbLimitName = 'max_kbs' | 'max_bytes' | 'max_pages'
+export interface KbLimitScope { readonly type: 'global' | 'group' | 'user'; readonly id: string }
+export interface AdminKbLimits {
+  readonly global: Record<KbLimitName, number | null>
+  readonly overrides: ReadonlyArray<{ readonly scope: { readonly type: 'group' | 'user'; readonly id: string; readonly email?: string | null }; readonly values: Partial<Record<KbLimitName, number | null>>; readonly updatedAt: number }>
+  readonly ranges: Record<KbLimitName, readonly [number, number]>
+}
+export interface AdminKbEffective {
+  readonly user: { readonly id: string; readonly email: string | null; readonly groups: readonly string[] }
+  readonly limits: Record<KbLimitName, { readonly value: number | null; readonly source: string }>
+  readonly usage: { readonly kbs: number; readonly maxBytes: number; readonly maxPages: number }
+  readonly over: ReadonlyArray<{ readonly limit: KbLimitName; readonly kbId?: string; readonly value: number; readonly allowed: number }>
+}
+/** One knowledge base in the inventory. */
+export interface AdminKb {
+  readonly id: string; readonly kind: 'personal' | 'org'; readonly title: string; readonly description: string; readonly ownerUserId: string | null; readonly ownerEmail: string | null
+  readonly bytes: number; readonly pages: number; readonly sources: number; readonly createdAt: number; readonly updatedAt: number; readonly archivedAt: number | null
+  readonly share: { readonly state: 'private' | 'pending' | 'published' | 'revoked'; readonly publishedAt: number | null; readonly scope: readonly KbScopeEntry[]; readonly pendingRequest: string | null
+    readonly snapshot: { readonly id: string; readonly commitSha: string; readonly includesRaw: boolean } | null }
+  readonly over: ReadonlyArray<{ readonly limit: KbLimitName; readonly value: number; readonly allowed: number }>
+  readonly convertedTo: string | null; readonly convertedFrom: string | null; readonly chargedTo: string | null
+  readonly lastJob: { readonly id: string; readonly op: string; readonly state: string; readonly finishedAt: number | null } | null
+}
+export interface AdminKbContent {
+  readonly kb: AdminKb; readonly head?: string
+  readonly files: ReadonlyArray<{ readonly path: string; readonly bytes: number }> | null
+  readonly history: ReadonlyArray<{ readonly sha: string; readonly at: number; readonly subject: string; readonly published: boolean }> | null
+}
+export interface AdminKbPreview { readonly user: { readonly id: string; readonly email: string | null; readonly groups: readonly string[]; readonly disabled: boolean }
+  readonly kbs: ReadonlyArray<{ readonly id: string; readonly title: string; readonly kind: 'personal' | 'org'; readonly name: string; readonly path: string }> }
 /** What the quota proxy does when a user reaches the personal daily limit. */
 export type OverLimitMode = 'block' | 'grace' | 'warn'
 
@@ -90,6 +120,20 @@ export interface AdminApi {
   rejectKb(id: string, reason: string): Promise<void>
   setKbScope(kbId: string, scope: readonly KbScopeEntry[], proof?: Proof): Promise<void>
   revokeKb(kbId: string, proof?: Proof): Promise<void>
+  kbInventory(filter: 'all' | 'over' | 'published' | 'pending'): Promise<{ kbs: readonly AdminKb[]; totals: { all: number; over: number } }>
+  kbPreview(userId: string): Promise<AdminKbPreview>
+  kbContent(kb: string, path?: string, rev?: string): Promise<AdminKbContent & AdminKbFile>
+  createOrgKb(title: string, description: string, proof?: Proof): Promise<AdminKb>
+  uploadOrgSource(kb: string, file: { name: string; data: Blob }): Promise<void>
+  editOrgPage(kb: string, path: string, text: string, message: string): Promise<void>
+  compileOrgKb(kb: string, op: 'ingest' | 'lint' | 'rebuild'): Promise<void>
+  /** Publish HEAD, or an earlier commit (rollback). */
+  publishOrgKb(kb: string, commit: string | undefined, scope: readonly KbScopeEntry[] | undefined, proof?: Proof): Promise<void>
+  convertKb(kb: string, proof?: Proof): Promise<AdminKb>
+  kbLimits(): Promise<AdminKbLimits>
+  setKbLimit(scope: KbLimitScope, name: KbLimitName, value: number | null, proof?: Proof): Promise<AdminKbLimits>
+  deleteKbLimit(scope: KbLimitScope, name: KbLimitName, proof?: Proof): Promise<AdminKbLimits>
+  kbEffective(userId: string): Promise<AdminKbEffective>
   /** Raw JSON call for the knowledge-base client (same error handling). */
   call(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown): Promise<unknown>
 }
@@ -149,6 +193,23 @@ export function createAdminApi(fetcher?: typeof fetch): AdminApi {
     rejectKb: async (id, reason) => { await request('/kb/requests/reject', { id, reason }) },
     setKbScope: async (kb, scope, p) => { await request('/kb/scope', { kb, scope, ...proof(p) }) },
     revokeKb: async (kb, p) => { await request('/kb/revoke', { kb, ...proof(p) }) },
+    kbInventory: async filter => await request(`/kb${qs({ filter })}`) as { kbs: AdminKb[]; totals: { all: number; over: number } },
+    kbPreview: async user => await request(`/kb/preview${qs({ user })}`) as AdminKbPreview,
+    kbContent: async (kb, path, rev) => await request(`/kb/content${qs({ kb, path, rev })}`) as AdminKbContent & AdminKbFile,
+    createOrgKb: async (title, description, p) => (await request('/kb/org', { title, description, ...proof(p) }) as { kb: AdminKb }).kb,
+    uploadOrgSource: async (kb, file) => {
+      const reply = await (fetcher ?? globalThis.fetch)(`${ADMIN_PATH}/kb/org/sources${qs({ kb, name: file.name })}`,
+        { method: 'POST', credentials: 'same-origin', headers: { accept: 'application/json', 'content-type': 'application/octet-stream' }, body: file.data })
+      if (!reply.ok) { const parsed = await reply.json().catch(() => ({})) as { code?: unknown }; throw new AdminApiError(reply.status, typeof parsed.code === 'string' ? parsed.code : String(reply.status)) }
+    },
+    editOrgPage: async (kb, path, text, message) => { await request('/kb/org/edit', { kb, path, text, ...message ? { message } : {} }) },
+    compileOrgKb: async (kb, op) => { await request('/kb/org/compile', { kb, op }) },
+    publishOrgKb: async (kb, commit, scope, p) => { await request('/kb/org/rollback', { kb, ...commit ? { commit } : {}, ...scope ? { scope } : {}, ...proof(p) }) },
+    convertKb: async (kb, p) => (await request('/kb/convert', { kb, ...proof(p) }) as { kb: AdminKb }).kb,
+    kbLimits: async () => await request('/kb/limits') as AdminKbLimits,
+    setKbLimit: async (scope, name, value, p) => await request('/kb/limits', { scope, name, value, ...proof(p) }, 'PUT') as AdminKbLimits,
+    deleteKbLimit: async (scope, name, p) => await request('/kb/limits', { scope, name, ...proof(p) }, 'DELETE') as AdminKbLimits,
+    kbEffective: async user => await request(`/kb/limits/effective${qs({ user })}`) as AdminKbEffective,
     call: (method, path, body) => request(path, body, method),
   }
 }

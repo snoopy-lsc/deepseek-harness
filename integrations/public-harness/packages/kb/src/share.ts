@@ -31,7 +31,7 @@ export function parseScope(core: KbCore, raw: unknown): ScopeEntry[] {
   }
   return [...out.values()]
 }
-const scopeDetail = (scope: readonly ScopeEntry[]) => scope.some(s => s.kind === 'company') ? 'scope=company'
+export const scopeDetail = (scope: readonly ScopeEntry[]) => scope.some(s => s.kind === 'company') ? 'scope=company'
   : `scope=groups:${scope.filter(s => s.kind === 'group').length},users:${scope.filter(s => s.kind === 'user').length}`
 
 /** Write a snapshot and make it the KB's active publication. Used by approvals and by org KBs.

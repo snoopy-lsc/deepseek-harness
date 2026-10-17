@@ -101,6 +101,9 @@ importers:
       '@public-harness/identity':
         specifier: workspace:*
         version: link:../identity
+      '@public-harness/kb':
+        specifier: workspace:*
+        version: link:../kb
       '@public-harness/provisioner':
         specifier: workspace:*
         version: link:../provisioner

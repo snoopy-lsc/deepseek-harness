@@ -8,11 +8,11 @@ import { lstat, mkdir, open, readdir, rename, rm, writeFile } from 'node:fs/prom
 import { constants } from 'node:fs'
 import { join } from 'node:path'
 import { commitTree, openGit, treeStats } from './git.ts'
-import { readTar, safeRelativePath } from './tar.ts'
+import { readTar, safeRelativePath, SOURCE_EXTENSIONS } from './tar.ts'
 import { templateFiles } from './templates.ts'
 
 /** Operations the helper accepts. */
-export const HELPER_OPS = ['init', 'put', 'commit', 'head', 'archive', 'stats', 'apply'] as const
+export const HELPER_OPS = ['init', 'put', 'commit', 'head', 'archive', 'stats', 'apply', 'log', 'show'] as const
 export type HelperOp = typeof HELPER_OPS[number]
 
 const KB_ID = /^kb_[a-z2-7]{16}$/
@@ -54,16 +54,30 @@ export async function runHelper(root: string, op: HelperOp, args: Record<string,
       await mkdir(join(target, '..'), { recursive: true, mode: 0o700 })
       await writeFile(target, file.data, { mode: 0o600, flag: 'wx' })
     }
+    // `from` (org conversion): the tree of a published snapshot arrives as a validated tar and replaces the template.
+    if (args.from === 'tar') {
+      const { files } = readTar(input, { maxFiles: 5000, maxFileBytes: 50 * 1024 * 1024, maxTotalBytes: 512 * 1024 * 1024, extensions: SOURCE_EXTENSIONS })
+      for (const file of files) {
+        const target = join(dir, safeRelativePath(file.path))
+        await mkdir(join(target, '..'), { recursive: true, mode: 0o700 })
+        await writeFile(target, file.data, { mode: 0o600 })
+      }
+    }
     await git.run(['add', '-A'])
-    await git.run(['commit', '-q', '-m', 'Create knowledge base'])
+    await git.run(['commit', '-q', '-m', String(args.message ?? 'Create knowledge base')])
     return { head: await head() }
   }
   await realDirectory(dir)
   if (op === 'put') {
     const path = safeRelativePath(String(args.path ?? ''))
-    if (!/^raw\/[^/]+$/.test(path)) throw new Error('path')
-    await mkdir(join(dir, 'raw'), { recursive: true, mode: 0o700 })
-    await realDirectory(join(dir, 'raw'))
+    // Sources always; pages and the index only when the caller edits pages (org knowledge bases).
+    const page = args.pages === true && /^(wiki\/[^/]+\.md|index\.md|schema\.md)$/.test(path)
+    if (!/^raw\/[^/]+$/.test(path) && !page) throw new Error('path')
+    const parent = path.includes('/') ? path.slice(0, path.indexOf('/')) : ''
+    if (parent !== '') {
+      await mkdir(join(dir, parent), { recursive: true, mode: 0o700 })
+      await realDirectory(join(dir, parent))
+    }
     const target = join(dir, path), temp = `${target}.dsh-upload-${process.pid}`
     const existing = await lstat(target).catch(() => undefined)
     if (existing !== undefined && !existing.isFile()) throw new Error('target is not a regular file')
@@ -82,8 +96,17 @@ export async function runHelper(root: string, op: HelperOp, args: Record<string,
     return { head: await head(), committed: staged }
   }
   if (op === 'head') {
-    const commit = await head()
+    const commit = args.rev === undefined ? await head() : SHA.test(String(args.rev)) ? await git.text(['rev-parse', '--verify', `${String(args.rev)}^{commit}`]) : (() => { throw new Error('rev') })()
     return { head: commit, tree: await git.text(['rev-parse', `${commit}^{tree}`]), clean: await clean() }
+  }
+  if (op === 'log') {
+    const out = await git.text(['log', '-n', String(Math.min(100, Math.max(1, Number(args.limit ?? 50)))), '--format=%H%x09%ct%x09%s', 'HEAD'])
+    return { commits: out === '' ? [] : out.split('\n').map(line => { const [sha, at, ...subject] = line.split('\t'); return { sha, at: Number(at) * 1000, subject: subject.join('\t') } }) }
+  }
+  if (op === 'show') {
+    const rev = String(args.rev ?? 'HEAD'), path = safeRelativePath(String(args.path ?? ''))
+    if (rev !== 'HEAD' && !SHA.test(rev)) throw new Error('rev')
+    return git.run(['show', `${rev}:${path}`])
   }
   if (op === 'stats') return { head: await head(), ...await treeStats(git, 'HEAD') }
   if (op === 'archive') {

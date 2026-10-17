@@ -23,7 +23,7 @@ This package provides Cordis plugins for the three Linux service profiles: `team
 <a id="use-this-package"></a>
 ## Use this package
 
-Generate a dsh profile for each service with `writeProductionProfile` from `deploy/production-profile.ts`, then start `dsh --profile team-router`, `--profile provisioner`, or `--profile quota` from its systemd unit. The example files under `deploy/production/config/` show every field. Configuration files must be regular files that are not group- or world-writable, and secrets are referenced by file path only.
+Generate a dsh profile for each service with `writeProductionProfile` from `deploy/production-profile.ts`, then start `dsh --profile team-router`, `--profile provisioner`, or `--profile quota` from its systemd unit. Native deployments can also start `--profile kb`, the knowledge base service (`kb-service.ts`, example `deploy/production/config/kb.example.json`): user helpers run through `systemd-run` as each native account, org knowledge bases through a direct helper as the service account, and compiles through the quota control socket. No systemd unit ships for it yet, because the account it runs as (root, or a dedicated account allowed to start helper units) is still to be decided. The example files under `deploy/production/config/` show every field. Configuration files must be regular files that are not group- or world-writable, and secrets are referenced by file path only.
 
 <a id="understand-the-implementation"></a>
 ## Understand the implementation

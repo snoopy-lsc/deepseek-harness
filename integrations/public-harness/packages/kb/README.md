@@ -17,6 +17,7 @@ English | [中文](README.zh.md)
 - [Service](#service)
 - [Compile](#compile)
 - [Sharing and views](#sharing)
+- [Org knowledge bases, inventory and limits](#org)
 - [User helper](#user-helper)
 - [Development](#development)
 - [Tests](#tests)
@@ -57,6 +58,13 @@ System Admin reviews the queue: `GET /admin/kb/requests?state=pending|all`, `GET
 
 Each user's view `views/<account>/` holds one hard-linked, read-only copy per publication whose scope matches the user's company, effective groups or account, named after the knowledge base (with a short ID suffix on collision). Views are rebuilt when principals or groups change, when a publication or scope changes, and when the user opens the knowledge base page; entries are replaced by rename, and a disabled user's view is empty. Every view change is audited as `kb-view-apply`.
 
+<a id="org"></a>
+## Org knowledge bases, inventory and limits
+
+Org knowledge bases are service-owned repositories under `<kbRoot>/org/<kbId>/`, run through the helper as the service account (`orgRunner`). `POST /admin/kb/org` `{ title, description? }` creates one (re-authentication); `POST /admin/kb/org/sources?kb=&name=` uploads a source; `POST /admin/kb/org/edit` `{ kb, path, text, message? }` commits `wiki/<page>.md`, `index.md` or `schema.md`; `POST /admin/kb/org/compile` `{ kb, op }` queues a job charged to the KB's own ledger principal `org-kb-<kbId>`; `POST /admin/kb/org/rollback` `{ kb, commit?, scope?, includeRaw? }` publishes HEAD or an earlier commit (re-authentication). `GET /admin/kb/content?kb=[&path=&rev=]` lists files and history of an org KB; for a personal KB it returns files only from its active publication (each file read is audited) and metadata otherwise. `POST /admin/kb/convert` `{ kb }` turns a published personal KB into an org KB from the published tree, moves the scope, and leaves the author's KB private with a `converted` state in the personal center.
+
+`GET /admin/kb?filter=all|over|published|pending` is the inventory, with owner, size, share state, scope and over-limit flags; `GET /admin/kb/preview?user=` lists what one user can read. `GET /admin/kb/limits` returns the global values and every override; `PUT /admin/kb/limits` `{ scope: { type, id }, name, value }` sets a value (`null` is unlimited) and `DELETE /admin/kb/limits` `{ scope, name }` removes a group or user override; both need re-authentication and write `admin-kb-limit-change` or `admin-kb-limit-delete` with old and new values. Identity refuses group scopes that name no known group. `GET /admin/kb/limits/effective?user=` returns each value with its source and the user's usage.
+
 <a id="user-helper"></a>
 ## User helper
 
@@ -70,7 +78,7 @@ Every operation on a user's tree (create, upload, commit, export, measure, apply
 <a id="tests"></a>
 ## Tests
 
-`share.spec.ts` covers requests, review, approve with and without `raw/`, reject, resubmit, expiry, scope changes, revoke and views following group changes and disabled users. `compile.spec.ts` covers normalization, the compiler and lint with the mock model, jobs (fast-forward, conflict branch, over-limit branch, incremental ingest, caps, allowance failures) and tokens charged to the author through a real quota job channel. `personal.spec.ts` covers limits, archive validation, the helper, personal create, upload and archive over the socket, a hostile repository configuration, and the production helper argv. `mounts.spec.ts` checks the generated systemd unit, the podman volumes and their argv guard, view creation and the development links.
+`org.spec.ts` covers org knowledge bases (create, upload, page edit, compile charged to the org principal, history, publish and rollback), conversion, the inventory and preview, and the limits API. `share.spec.ts` covers requests, review, approve with and without `raw/`, reject, resubmit, expiry, scope changes, revoke and views following group changes and disabled users. `compile.spec.ts` covers normalization, the compiler and lint with the mock model, jobs (fast-forward, conflict branch, over-limit branch, incremental ingest, caps, allowance failures) and tokens charged to the author through a real quota job channel. `personal.spec.ts` covers limits, archive validation, the helper, personal create, upload and archive over the socket, a hostile repository configuration, and the production helper argv. `mounts.spec.ts` checks the generated systemd unit, the podman volumes and their argv guard, view creation and the development links.
 
 <a id="not-verified"></a>
 ## Not verified on development hosts

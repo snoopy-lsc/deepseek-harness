@@ -1,4 +1,4 @@
-/** Generate the production dsh profiles (team-router, provisioner, quota, and identity for native deployments); each points at one root-owned JSON file. */
+/** Generate the production dsh profiles (team-router, provisioner, quota, and identity and kb for native deployments); each points at one root-owned JSON file. */
 import { mkdir } from 'node:fs/promises'
 import { isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -11,6 +11,7 @@ export const PRODUCTION_PROFILES = {
   provisioner: { plugin: 'provisioner-service', id: 'public-harness-provisioner' },
   quota: { plugin: 'quota-service', id: 'public-harness-quota-service' },
   identity: { plugin: 'identity-service', id: 'public-harness-identity' },
+  kb: { plugin: 'kb-service', id: 'public-harness-kb-service' },
 } as const
 
 export type ProductionProfile = keyof typeof PRODUCTION_PROFILES
@@ -29,7 +30,7 @@ export const RUNTIME_PROVIDERS = {
  */
 export async function writeProductionProfile(home: string, name: ProductionProfile,
   options: { configFile: string; installRoot?: string; runtime?: keyof typeof RUNTIME_PROVIDERS }): Promise<string> {
-  if (name === 'identity' && options.runtime !== undefined && options.runtime !== 'systemd') throw new Error('the identity profile belongs to native deployments')
+  if ((name === 'identity' || name === 'kb') && options.runtime !== undefined && options.runtime !== 'systemd') throw new Error(`the ${name} profile belongs to native deployments`)
   if (!isAbsolute(options.configFile) || options.configFile.includes('\0')) throw new Error('configFile must be an absolute path')
   if (!(name in PRODUCTION_PROFILES)) throw new Error('unknown production profile')
   const { plugin, id } = PRODUCTION_PROFILES[name]

@@ -23,7 +23,7 @@ kind: "package-library"
 <a id="use-this-package"></a>
 ## 使用此包
 
-用 `deploy/production-profile.ts` 中的 `writeProductionProfile` 为每个服务生成 dsh 配置，再由其 systemd 单元启动 `dsh --profile team-router`、`--profile provisioner` 或 `--profile quota`。`deploy/production/config/` 下的示例文件列出了每个字段。配置文件必须是普通文件，且组和其他用户不可写；密钥只以文件路径引用。
+用 `deploy/production-profile.ts` 中的 `writeProductionProfile` 为每个服务生成 dsh 配置，再由其 systemd 单元启动 `dsh --profile team-router`、`--profile provisioner` 或 `--profile quota`。原生部署还可以启动 `--profile kb`，即知识库服务（`kb-service.ts`，示例 `deploy/production/config/kb.example.json`）：用户助手通过 `systemd-run` 以各自的原生账号运行，组织知识库通过直接助手以服务账号运行，编译通过配额控制 socket 计费。它暂未附带 systemd 单元，因为其运行账号（root，或允许启动助手单元的专用账号）尚待决定。`deploy/production/config/` 下的示例文件列出了每个字段。配置文件必须是普通文件，且组和其他用户不可写；密钥只以文件路径引用。
 
 <a id="understand-the-implementation"></a>
 ## 了解实现

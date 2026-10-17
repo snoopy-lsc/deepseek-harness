@@ -74,6 +74,7 @@ export function openKbStore(file: string) {
       CHECK ((scope_type = 'global') = (scope_id = '*'))) STRICT;
     CREATE TABLE IF NOT EXISTS kb_view_state (user_id TEXT PRIMARY KEY, generation INTEGER NOT NULL, digest TEXT NOT NULL, applied_at INTEGER NOT NULL) STRICT;
     CREATE TABLE IF NOT EXISTS kb_audit_outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, event TEXT NOT NULL, outcome TEXT NOT NULL, user_id TEXT, actor TEXT NOT NULL, detail TEXT NOT NULL) STRICT;
+    CREATE TABLE IF NOT EXISTS kb_conversion (from_kb TEXT NOT NULL REFERENCES kb(id), to_kb TEXT NOT NULL REFERENCES kb(id), by TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (from_kb, to_kb)) STRICT;
     CREATE TABLE IF NOT EXISTS kb_principal (user_id TEXT PRIMARY KEY, groups TEXT NOT NULL DEFAULT '[]', disabled INTEGER NOT NULL DEFAULT 0, email TEXT, updated_at INTEGER NOT NULL) STRICT;`)
   const seed = db.prepare("INSERT OR IGNORE INTO dsh_kb_limit (scope_type, scope_id, name, value, updated_by, updated_at) VALUES ('global', '*', ?, ?, 'seed', ?)")
   for (const name of LIMIT_NAMES) seed.run(name, DEFAULT_LIMITS[name], Date.now())
@@ -151,6 +152,7 @@ export function openKbStore(file: string) {
       revoke: exec("UPDATE kb_publication SET state = 'revoked', revoked_by = ?, revoked_at = ? WHERE kb_id = ? AND state = 'active'"),
       active: all("SELECT * FROM kb_publication WHERE state = 'active'", pubView),
       move: exec('UPDATE kb_publication SET kb_id = ? WHERE kb_id = ?'),
+      remove: exec('DELETE FROM kb_publication WHERE kb_id = ?'),
     },
     scopes: {
       get: all('SELECT kind, target FROM kb_scope WHERE kb_id = ? ORDER BY kind, target', r => ({ kind: r.kind as ScopeEntry['kind'], target: String(r.target) })),
@@ -178,6 +180,11 @@ export function openKbStore(file: string) {
       set: exec(`INSERT INTO dsh_kb_limit (scope_type, scope_id, name, value, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(scope_type, scope_id, name) DO UPDATE SET value = excluded.value, updated_by = excluded.updated_by, updated_at = excluded.updated_at`),
       delete: exec("DELETE FROM dsh_kb_limit WHERE scope_type = ? AND scope_id = ? AND name = ? AND scope_type != 'global'"),
+    },
+    conversions: {
+      add: exec('INSERT INTO kb_conversion (from_kb, to_kb, by, at) VALUES (?, ?, ?, ?)'),
+      from: one('SELECT * FROM kb_conversion WHERE from_kb = ? ORDER BY at DESC LIMIT 1', r => ({ fromKb: String(r.from_kb), toKb: String(r.to_kb), by: String(r.by), at: Number(r.at) })),
+      to: one('SELECT * FROM kb_conversion WHERE to_kb = ? LIMIT 1', r => ({ fromKb: String(r.from_kb), toKb: String(r.to_kb), by: String(r.by), at: Number(r.at) })),
     },
     principals: {
       upsert: (row: { userId: string; groups: readonly string[]; disabled: boolean; email?: string | null }, now: number) => upsertPrincipal(row.userId, JSON.stringify([...row.groups].sort()), row.disabled ? 1 : 0, row.email ?? null, now),

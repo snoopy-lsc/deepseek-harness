@@ -1,0 +1,11 @@
+{
+  "socket": "/run/dsh-public/kb/kb.sock",
+  "socketGid": 990,
+  "root": "/srv/dsh-public/kb",
+  "storageRoot": "/srv/dsh-public",
+  "systemdRun": "/usr/bin/systemd-run",
+  "node": "/opt/dsh-public/node/bin/node",
+  "getent": "/usr/bin/getent",
+  "inaccessible": ["/srv/dsh-public/kb", "/etc/dsh-public"],
+  "compile": { "quotaSocket": "/run/dsh-public/quota/control.sock", "modelId": "deepseek-chat", "siteWorkers": 2, "perUserPerHour": 20 }
+}

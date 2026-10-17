@@ -127,6 +127,7 @@ function KbRow({ kb, t, end, onUpload, onCompile, onShare, onWithdraw }: { kb: K
   const detail = [fill(t('kb_stats'), { pages: kb.pages, sources: kb.sources, size: size(kb.bytes) }),
     job === null ? t('kb_never') : fill(t('kb_lastJob'), { state: jobState(t, job.state), date: date(job.finishedAt ?? job.queuedAt) })]
   if (kb.share.state === 'rejected' && kb.share.reason) detail.push(fill(t('kb_rejected'), { reason: kb.share.reason }))
+  if (kb.share.state === 'converted') detail.push(fill(t('kb_converted'), { date: new Date(kb.share.convertedAt).toLocaleDateString() }))
   if (kb.share.state === 'published') detail.push(fill(t('kb_publishedTo'), { scope: kb.share.scope.map(s => s.kind === 'company' ? t('kb_company') : s.target.replace(/^[a-z]+:/, '')).join(', ') }))
   return <Line end={end} title={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>{kb.title}
     {kb.archivedAt !== null ? <Tag tone="quiet">{t('kb_archived')}</Tag> : <Tag tone={shareTone(kb.share.state)}>{t(`kb_state_${kb.share.state}`)}</Tag>}</span>} detail={detail.join(' · ')}>

@@ -11,6 +11,7 @@
     "@public-harness/contracts": "0.1.0",
     "@public-harness/dev-runtime": "0.1.0",
     "@public-harness/identity": "0.1.0",
+    "@public-harness/kb": "0.1.0",
     "@public-harness/production": "0.1.0",
     "@public-harness/provisioner": "0.1.0",
     "@public-harness/provisioner-client": "0.1.0",

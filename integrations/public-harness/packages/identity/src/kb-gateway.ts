@@ -176,6 +176,14 @@ export function createKbGateway(deps: KbGatewayDeps): KbGateway {
     return { headers: { 'content-type': 'application/json' }, body: Buffer.from(JSON.stringify(rest)) }
   }
 
+  // The KB service checks group IDs by shape only; identity owns the group list, so unknown groups stop here.
+  const assertKnownGroups = (body: Record<string, unknown>) => {
+    const ids: unknown[] = []
+    const scope = body.scope as Record<string, unknown> | unknown[] | undefined
+    if (Array.isArray(scope)) for (const entry of scope) { const e = entry as Record<string, unknown> | null; if (e?.kind === 'group') ids.push(e.target) }
+    else if (scope !== null && typeof scope === 'object' && scope.type === 'group') ids.push(scope.id)
+    for (const id of ids) if (typeof id !== 'string' || database.groups.get(id) === undefined) throw new MeError(400, 'unknown-group')
+  }
   return {
     async me(req, res, path) {
       if (path !== `${ME_PATH}/kb` && !path.startsWith(`${ME_PATH}/kb/`)) return false
@@ -204,6 +212,7 @@ export function createKbGateway(deps: KbGatewayDeps): KbGateway {
       if (KB_REAUTH.has(`${ctx.verb} ${ctx.sub}`)) {
         prepared = await readJson(ctx.req)
         await ctx.reauth(prepared, `kb${ctx.sub.slice(3)}`)
+        assertKnownGroups(prepared)
       }
       const { headers, body } = await forwardBody(ctx.req, ctx.sub, write, prepared)
       const reply = await call(ctx.verb, `/admin${ctx.sub}${ctx.query.size > 0 ? `?${ctx.query}` : ''}`, { ...actorHeaders({ id: ctx.session.user.id, email: ctx.session.email }, 'admin'), ...headers }, body)

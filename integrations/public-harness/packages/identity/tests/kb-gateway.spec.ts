@@ -81,6 +81,11 @@ describe('knowledge base gateway', () => {
     const group = json(await admin('POST', '/groups', { op: 'create', name: 'Ops' })).group
     await admin('POST', '/groups/members', { op: 'add', groupId: group.id, userId: s.member.id, password: PASSWORD })
     await until(() => (s.kb.core.store.principals.get(s.member.id)?.groups ?? []).includes(group.id))
+    // Group scopes must name a group identity knows.
+    const seen = s.seen.length
+    expect(json(await admin('PUT', '/kb/limits', { scope: { type: 'group', id: 'local:missing' }, name: 'max_kbs', value: 2, password: PASSWORD }))).toEqual({ code: 'unknown-group' })
+    expect(s.seen.length).toBe(seen)
+    expect((await admin('PUT', '/kb/limits', { scope: { type: 'group', id: group.id }, name: 'max_kbs', value: 2, password: PASSWORD })).status).toBe(200)
     expect(s.kb.core.store.principals.get(s.member.id)).toMatchObject({ disabled: false, email: 'member@example.test' })
   })
 })

@@ -9,12 +9,16 @@ import { openKbStore } from './store.ts'
 import { compileJobs, jobView, type JobOptions } from './jobs.ts'
 import { shareModule } from './share.ts'
 import { reconcileViews } from './views.ts'
+import { orgModule } from './org.ts'
+import { limitsModule } from './limits-admin.ts'
 
 export { createDirectRunner, createSystemdRunner, devUserTrees, systemdRunArgv, type HelperRunner, type UserTree, type UserTrees } from './runner.ts'
 export { KbError } from './errors.ts'
 export { compileJobs, jobView, quotaModelSource, staticModelSource, type JobOptions, type ModelSource, type QuotaJobBridge } from './jobs.ts'
 export { parseScope, publishSnapshot, REQUEST_TTL_MS, shareModule } from './share.ts'
 export { applyView, reconcileViews, visibleEntries, type ViewEntry } from './views.ts'
+export { orgModule, orgPrincipal } from './org.ts'
+export { limitsModule, LIMIT_RANGE } from './limits-admin.ts'
 export { createMessagesModel, createMockModel, ModelError, type KbModel } from './model.ts'
 
 /** Service settings. */
@@ -27,6 +31,8 @@ export interface KbServiceConfig {
   readonly socketGid?: number
   readonly users: UserTrees
   readonly runner: HelperRunner
+  /** Runner for the service-owned org tree (default `runner`; production passes a direct runner as the service account). */
+  readonly orgRunner?: HelperRunner
   readonly clock?: () => number
   readonly log?: (line: string) => void
   /** Compile settings; without them compile requests answer 503 `compile-unavailable`. */
@@ -115,11 +121,13 @@ export function personalState(core: KbCore, kbId: string) {
   const publication = core.store.publications.get(kbId)
   const last = core.store.requests.byKb(kbId)[0]
   const job = core.store.jobs.byKb(kbId)[0]
+  const conversion = core.store.conversions.from(kbId)
   const share = pending !== undefined ? { state: 'pending' as const, requestId: pending.id, submittedAt: pending.submittedAt }
     : publication?.state === 'active' ? { state: 'published' as const, publishedAt: publication.publishedAt, scope: core.store.scopes.get(kbId) }
       : publication?.state === 'revoked' ? { state: 'revoked' as const, revokedAt: publication.revokedAt }
-        : last?.state === 'rejected' ? { state: 'rejected' as const, reason: last.reason, decidedAt: last.decidedAt }
-          : { state: 'private' as const }
+        : conversion !== undefined && (last === undefined || last.submittedAt <= conversion.at) ? { state: 'converted' as const, convertedAt: conversion.at }
+          : last?.state === 'rejected' ? { state: 'rejected' as const, reason: last.reason, decidedAt: last.decidedAt }
+            : { state: 'private' as const }
   return { share, lastJob: job === undefined ? null : jobView(job) }
 }
 
@@ -131,10 +139,10 @@ export function personalState(core: KbCore, kbId: string) {
 export async function startKbService(config: KbServiceConfig, extra: Array<(core: KbCore) => KbRoutes> = []): Promise<KbService> {
   await prepareRoot(config.root)
   const store = openKbStore(join(config.root, 'kb.sqlite'))
-  const core = createCore({ store, root: config.root, users: config.users, runner: config.runner, ...config.clock ? { clock: config.clock } : {}, ...config.log ? { log: config.log } : {} })
+  const core = createCore({ store, root: config.root, users: config.users, runner: config.runner, ...config.orgRunner ? { orgRunner: config.orgRunner } : {}, ...config.clock ? { clock: config.clock } : {}, ...config.log ? { log: config.log } : {} })
   const jobs = config.jobs === undefined ? undefined : compileJobs(core, config.jobs)
   const share = shareModule(core, config.requestTtlMs === undefined ? {} : { requestTtlMs: config.requestTtlMs })
-  const routes: KbRoutes = { ...baseRoutes(core, { principalsChanged: async ids => { await reconcileViews(core, ids) } }), ...compileRoutes(core, jobs), ...share.routes }
+  const routes: KbRoutes = { ...baseRoutes(core, { principalsChanged: async ids => { await reconcileViews(core, ids) } }), ...compileRoutes(core, jobs), ...share.routes, ...orgModule(core, jobs), ...limitsModule(core) }
   for (const module of extra) Object.assign(routes, module(core))
   const server = await listenKbSocket(kbHandler(routes, config.log), config.socket, config.socketMode ?? 0o600, config.socketGid)
   jobs?.recover()

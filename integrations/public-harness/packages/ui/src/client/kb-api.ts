@@ -15,6 +15,7 @@ export type KbShare =
   | { readonly state: 'pending'; readonly requestId: string; readonly submittedAt: number }
   | { readonly state: 'published'; readonly publishedAt: number; readonly scope: ReadonlyArray<{ readonly kind: 'company' | 'group' | 'user'; readonly target: string }> }
   | { readonly state: 'revoked'; readonly revokedAt: number | null }
+  | { readonly state: 'converted'; readonly convertedAt: number }
   | { readonly state: 'rejected'; readonly reason: string | null; readonly decidedAt: number | null }
 export interface KbItem {
   readonly id: string; readonly kind: 'personal' | 'org'; readonly title: string; readonly description: string; readonly slug: string

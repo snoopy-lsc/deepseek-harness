@@ -23,12 +23,14 @@ export interface KbCore {
   /** Queue an audit row for identity; `detail` carries IDs and counts only. */
   audit(event: string, actor: string, detail: string, options?: { userId?: string | null; outcome?: 'ok' | 'denied' | 'error' }): void
   tree(userId: string): Promise<UserTree>
+  /** Where a KB lives: the author's tree for personal KBs, the service-owned `<kbRoot>/org` tree for org KBs. */
+  kbTree(kb: KbRow): Promise<UserTree>
   helper(tree: UserTree, op: Parameters<HelperRunner['run']>[1], args: Record<string, unknown>, input?: Buffer): Promise<Buffer>
   helperJson<T>(tree: UserTree, op: Parameters<HelperRunner['run']>[1], args: Record<string, unknown>, input?: Buffer): Promise<T>
   limitsOf(userId: string): EffectiveLimits
   /** The personal KB `id` owned by `userId` (404 otherwise, including other users' KBs). */
   ownKb(userId: string, id: unknown): KbRow
-  /** Re-measure a personal KB from its HEAD and store the numbers. */
+  /** Re-measure a KB from its HEAD and store the numbers. */
   refreshStats(kb: KbRow): Promise<KbRow>
   /** 409 `kb-limit` when growing this KB is not allowed (already above max_bytes or max_pages). */
   assertGrowth(kb: KbRow, extraBytes?: number): void
@@ -61,8 +63,14 @@ export function sourceName(raw: unknown): string {
  * @param options Store, KB root, user trees, helper runner and clock.
  * @returns Core.
  */
-export function createCore(options: { store: KbStore; root: string; users: UserTrees; runner: HelperRunner; clock?: () => number; log?: (line: string) => void }): KbCore {
+/** Account name of the service-owned org tree (never a user account: user IDs cannot start with a dot). */
+export const ORG_ACCOUNT = '.org'
+
+export function createCore(options: { store: KbStore; root: string; users: UserTrees; runner: HelperRunner; orgRunner?: HelperRunner; clock?: () => number; log?: (line: string) => void }): KbCore {
   const { store, root, users, runner } = options
+  // Org KBs belong to the service account, so their helper runs without switching users.
+  const orgRunner = options.orgRunner ?? runner
+  const orgTree: UserTree = { userId: ORG_ACCOUNT, account: ORG_ACCOUNT, kbDir: join(root, 'org') }
   const clock = options.clock ?? Date.now
   const log = options.log ?? (() => {})
   const core: KbCore = {
@@ -73,8 +81,9 @@ export function createCore(options: { store: KbStore; root: string; users: UserT
       if (tree === undefined) throw new KbError(409, 'no-account')
       return tree
     },
+    async kbTree(kb) { return kb.kind === 'org' ? orgTree : core.tree(kb.ownerUserId!) },
     helper: async (tree, op, args, input) => {
-      try { return await runner.run(tree, op, args, input) } catch (error) {
+      try { return await (tree.account === ORG_ACCOUNT ? orgRunner : runner).run(tree, op, args, input) } catch (error) {
         log(`kb: helper ${op} failed for ${tree.account}: ${(error as { detail?: string }).detail ?? (error as Error).message}`)
         throw new KbError(502, 'helper-failed')
       }
@@ -87,8 +96,7 @@ export function createCore(options: { store: KbStore; root: string; users: UserT
       return kb
     },
     async refreshStats(kb) {
-      if (kb.kind !== 'personal') return kb
-      const stats = await core.helperJson<{ bytes: number; pages: number; sources: number }>(await core.tree(kb.ownerUserId!), 'stats', { kb: kb.id })
+      const stats = await core.helperJson<{ bytes: number; pages: number; sources: number }>(await core.kbTree(kb), 'stats', { kb: kb.id })
       store.kb.setStats(stats.bytes, stats.pages, stats.sources, clock(), kb.id)
       return store.kb.get(kb.id)!
     },

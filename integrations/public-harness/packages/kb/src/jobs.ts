@@ -52,7 +52,7 @@ export interface JobOptions {
   readonly siteWorkers?: number
   /** Jobs a user may queue per hour (default 20). */
   readonly perUserPerHour?: number
-  /** Where a KB lives; personal KBs by default, org KBs are added by the org module. */
+  /** Where a KB lives (default `core.kbTree`). */
   readonly locate?: (kb: KbRow) => Promise<UserTree>
 }
 
@@ -72,7 +72,7 @@ export const jobView = (job: JobRow) => ({ id: job.id, kbId: job.kbId, op: job.o
 export function compileJobs(core: KbCore, options: JobOptions) {
   const { store, clock } = core
   const siteWorkers = options.siteWorkers ?? 2, perUserPerHour = options.perUserPerHour ?? 20
-  const locate = options.locate ?? (async (kb: KbRow) => core.tree(kb.ownerUserId!))
+  const locate = options.locate ?? ((kb: KbRow) => core.kbTree(kb))
   const running = new Set<string>()
   let idle: Array<() => void> = []
 
