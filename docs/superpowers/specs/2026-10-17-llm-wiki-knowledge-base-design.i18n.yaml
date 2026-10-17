@@ -1,0 +1,82 @@
+# Bilingual-pair consistency record for 2026-10-17-llm-wiki-knowledge-base-design.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/superpowers/specs/2026-10-17-llm-wiki-knowledge-base-design.md
+/llm-wiki-knowledge-base-design:
+  en: 2b85fbe2245c3a15
+  zh: 05eb649d837ddd52
+/llm-wiki-knowledge-base-design/summary:
+  en: 8db49ced254a764f
+  zh: d1b09b79fdee15eb
+/llm-wiki-knowledge-base-design/contents:
+  en: aceb51cf7f718bf5
+  zh: af1d3871dcacb878
+/llm-wiki-knowledge-base-design/goals-and-non-goals:
+  en: 2a4a824d5e2ebfd8
+  zh: 2b2a2e49e5b87c60
+/llm-wiki-knowledge-base-design/goals-and-non-goals/goals:
+  en: f7be69f4246cb0d6
+  zh: 8b41af45a690da5e
+/llm-wiki-knowledge-base-design/goals-and-non-goals/non-goals:
+  en: 36d83a6dea55b435
+  zh: 9f0b3aa5339b3fac
+/llm-wiki-knowledge-base-design/current-system-facts:
+  en: f161cbd9429de743
+  zh: d9db30eeaf685bda
+/llm-wiki-knowledge-base-design/architecture-overview:
+  en: 77ac4b1ba39e758e
+  zh: 9defec54db32ac1a
+/llm-wiki-knowledge-base-design/data-model:
+  en: ae45bb0052d9f28b
+  zh: 8a1e5516e3b76fd0
+/llm-wiki-knowledge-base-design/directory-layout:
+  en: bfafc03c076c0356
+  zh: 1b0a6c7786f5cbad
+/llm-wiki-knowledge-base-design/mount-and-permission-model:
+  en: 7ccc0c9ae44cdfe8
+  zh: 00c6fdc5371f89c9
+/llm-wiki-knowledge-base-design/mount-and-permission-model/rules:
+  en: aa7ffbc88621426e
+  zh: f4a4a1f0d111fb5d
+/llm-wiki-knowledge-base-design/mount-and-permission-model/applying-scope-changes-without-restarting:
+  en: c3b8613347677ca0
+  zh: 24dec48d3436cb8d
+/llm-wiki-knowledge-base-design/mount-and-permission-model/personal-kb-permissions:
+  en: d84541684465883b
+  zh: 6e7353df5d6b15ff
+/llm-wiki-knowledge-base-design/share-approval-state-machine:
+  en: 73f6aa6b833240c2
+  zh: 251b04f2ee574661
+/llm-wiki-knowledge-base-design/compile-pipeline:
+  en: 986b22ba0da09256
+  zh: ed8b507ab7aa9d55
+/llm-wiki-knowledge-base-design/query-skill:
+  en: f890d06e703ae301
+  zh: 927e5756012ca696
+/llm-wiki-knowledge-base-design/api-list:
+  en: a1b99a92999523ec
+  zh: 0d29ff9529540217
+/llm-wiki-knowledge-base-design/ui-pages:
+  en: 6ef1a096185bb5d8
+  zh: a1f163d57b894fa9
+/llm-wiki-knowledge-base-design/quota-and-audit:
+  en: 69c4aecffb6a9bb4
+  zh: 5875333c0c00901b
+/llm-wiki-knowledge-base-design/quota-and-audit/quota:
+  en: a1a8e45a423bf3a9
+  zh: 85d1107811d247de
+/llm-wiki-knowledge-base-design/quota-and-audit/audit:
+  en: a8821a48fcb57910
+  zh: 9f8ef7f843694ae7
+/llm-wiki-knowledge-base-design/security-threat-analysis:
+  en: 3a905a58caa3b328
+  zh: 0ab7b0ca3ae7c15b
+/llm-wiki-knowledge-base-design/phased-implementation-plan:
+  en: a89514588c53e886
+  zh: aa39e944fde67de6
+/llm-wiki-knowledge-base-design/open-questions:
+  en: 1a8591c8002309a0
+  zh: e686d56b5f73fb93
+/llm-wiki-knowledge-base-design/sources-and-credits:
+  en: 01d071cd847f9d85
+  zh: a66053a4eb215a8a
