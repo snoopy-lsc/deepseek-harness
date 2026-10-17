@@ -3,7 +3,7 @@
  * PUBLIC_HARNESS_KB_STACK names the stack origin (a 127.0.0.1 address); the stack compiles on the deterministic mock model.
  * Expects the demo data the stack was seeded with: a private personal KB titled "Demo · Release checklist", pending share requests,
  * and a limit override that puts one KB over its page limit. With PUBLIC_HARNESS_KB_SHOTS set, light and dark screenshots are written
- * there. The request-share dialog is submitted in the last colour scheme only, so the run leaves one more pending request behind. */
+ * there. The request-share dialog is submitted in the dark pass only, so the run leaves that KB pending; withdraw it before running again. */
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { chromium, type Browser, type Page } from 'playwright-core'
@@ -53,7 +53,9 @@ describe.skipIf(executable === undefined || origin === undefined)('knowledge bas
         // Request share on the private demo KB: the dialog, then (dark pass only) the pending state.
         const row = section.locator('div', { hasText: DEMO }).filter({ has: page.locator('[data-team-kb-share-open],[data-team-kb-withdraw]') }).last()
         const open = row.locator('[data-team-kb-share-open]')
-        if (await open.count() > 0) {
+        // The demo KB must be private at the start of each pass (the dark pass leaves it pending; withdraw it before a rerun).
+        expect(await open.count()).toBe(1)
+        {
           await open.click()
           const form = page.locator('form[data-team-kb-share]')
           await form.locator('input').fill('Demo: release checklist for engineering')
