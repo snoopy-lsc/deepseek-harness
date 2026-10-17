@@ -24,7 +24,7 @@ function Manage({ api, t, kb, attempt, onClose, onDone }: { api: AdminApi; t: T;
   const [scope, setScope] = useState<KbScopeEntry[]>(kb.share.scope.slice()), [confirm, setConfirm] = useState<'revoke' | 'convert'>()
   const { groups, users } = useDirectory(api)
   return <Modal open onClose={onClose} title={kb.title} closeLabel={t('cancel')} description={scopeSummary(t, kb.share.scope)}>
-    <div data-team-admin-kb-manage style={{ display: 'grid', gap: 14, minWidth: 'min(560px, 86vw)' }}>
+    <div data-team-admin-kb-manage data-team-wide="m" style={{ display: 'grid', gap: 14, minWidth: 0 }}>
       <ScopePicker t={t} value={scope} onChange={setScope} groups={groups} users={users} />
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <Button variant="primary" disabled={scope.length === 0} onClick={() => attempt(async proof => { await api.setKbScope(kb.id, scope, proof); onDone(t('kbDone')) })}>{t('kbSaveScope')}</Button>
@@ -61,7 +61,7 @@ function OrgEditor({ api, t, kb, attempt, onClose, onChanged }: { api: AdminApi;
   const pages = content?.files?.filter(f => /^(wiki\/.+\.md|index\.md|schema\.md)$/.test(f.path)) ?? []
   const sources = content?.files?.filter(f => f.path.startsWith('raw/')) ?? []
   return <Modal open onClose={onClose} title={fill(t('kbEditorTitle'), { title: kb.title })} closeLabel={t('cancel')} description={fill(t('kbOrgHint'), { principal: kb.chargedTo ?? '' })}>
-    <div data-team-admin-kb-editor style={{ display: 'grid', gap: 14, minWidth: 'min(760px, 88vw)' }}>
+    <div data-team-admin-kb-editor data-team-wide="l" style={{ display: 'grid', gap: 14, minWidth: 0 }}>
       <Note note={note} />
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <input ref={file} type="file" hidden accept=".md,.markdown,.txt,.pdf,.docx,.html,.htm" onChange={e => {

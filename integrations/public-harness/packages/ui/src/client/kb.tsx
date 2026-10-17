@@ -73,7 +73,7 @@ export function JobDrawer({ api, kb, t, onClose, onChanged }: { api: KbApi; kb: 
   const archive = () => { api.archive(kb.id).then(() => { onChanged(); onClose() }, error => setNote({ ok: false, text: errorText(t, error) })) }
   const shown = open ?? jobs?.[0]?.id
   return <Modal open onClose={onClose} title={fill(t('kb_drawer'), { title: kb.title })} closeLabel={t('kb_close')}>
-    <div data-team-kb-drawer style={{ display: 'grid', gap: 4, minWidth: 'min(560px, 80vw)' }}>
+    <div data-team-kb-drawer data-team-wide="m" style={{ display: 'grid', gap: 4, minWidth: 0 }}>
       {(['ingest', 'lint', 'rebuild'] as const).map(op => <Line key={op} title={t(`kb_op_${op}`)} detail={t(`kb_opHint_${op}`)}>
         <Button variant={op === 'ingest' ? 'primary' : 'outline'} size="sm" disabled={active || kb.archivedAt !== null} onClick={() => run(op)} data-team-kb-op={op}>{t(`kb_op_${op}`)}</Button>
       </Line>)}

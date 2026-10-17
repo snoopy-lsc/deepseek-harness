@@ -13,12 +13,13 @@ const MB = 1024 * 1024
 const rangeText = (name: KbLimitName, range: readonly [number, number]) => name === 'max_bytes' ? { min: range[0] / MB, max: range[1] / MB } : { min: range[0], max: range[1] }
 
 function LimitField({ t, name, value, unlimited, onValue, onUnlimited }: { t: T; name: KbLimitName; value: string; unlimited: boolean; onValue: (v: string) => void; onUnlimited: (v: boolean) => void }) {
-  return <label style={field}>{t(`kbLimit_${name}`)}
+  // A div, not a label: the checkbox carries its own label, and labels must not nest.
+  return <div style={field}>{t(`kbLimit_${name}`)}
     <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
       <Input style={{ width: 140 }} inputMode="numeric" aria-label={t(`kbLimit_${name}`)} disabled={unlimited} value={unlimited ? '' : value} onChange={e => onValue(e.target.value.replace(/\D/g, ''))} />
-      <Checkbox checked={unlimited} onChange={onUnlimited} label={t('kbUnlimited')} />
+      <span style={{ flexShrink: 0, whiteSpace: 'nowrap' }}><Checkbox checked={unlimited} onChange={onUnlimited} label={t('kbUnlimited')} /></span>
     </div>
-  </label>
+  </div>
 }
 
 /** The card. `attempt` and `note` are the quota section's re-authentication and status line. */
@@ -69,11 +70,11 @@ export function KbLimitsCard({ api, t, attempt, note }: { api: AdminApi; t: T; a
     </form>
     <form style={{ padding: '14px 0', borderBottom: '0.5px solid var(--dsw-alias-border-l2)' }} onSubmit={addOverride}>
       <div style={label}>{t('kbAddLimitOverride')}</div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1.4fr) minmax(0, 1.6fr) auto', gap: 12, alignItems: 'end', marginTop: 10 }}>
-        <label style={field}>{t('kbOverrideFor')}<select style={select} value={target} onChange={e => setTarget(e.target.value)}><option value="">—</option>{targets.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select></label>
-        <label style={field}>{t('kbLimitName')}<select style={select} value={name} onChange={e => setName(e.target.value as KbLimitName)}>{KB_LIMIT_NAMES.map(n => <option key={n} value={n}>{t(`kbLimit_${n}`)}</option>)}</select></label>
-        <label style={field}>{t('kbLimitValue')}<div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          <Input inputMode="numeric" disabled={none} value={none ? '' : value} onChange={e => setValue(e.target.value.replace(/\D/g, ''))} /><Checkbox checked={none} onChange={setNone} label={t('kbUnlimited')} /></div></label>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end', marginTop: 10 }}>
+        <label style={{ ...field, flex: '2 1 260px', minWidth: 0 }}>{t('kbOverrideFor')}<select style={select} value={target} onChange={e => setTarget(e.target.value)}><option value="">—</option>{targets.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select></label>
+        <label style={{ ...field, flex: '1 1 220px', minWidth: 0 }}>{t('kbLimitName')}<select style={select} value={name} onChange={e => setName(e.target.value as KbLimitName)}>{KB_LIMIT_NAMES.map(n => <option key={n} value={n}>{t(`kbLimit_${n}`)}</option>)}</select></label>
+        <label style={{ ...field, flex: '1 1 220px', minWidth: 0 }}>{t('kbLimitValue')}<Input inputMode="numeric" disabled={none} value={none ? '' : value} onChange={e => setValue(e.target.value.replace(/\D/g, ''))} /></label>
+        <span style={{ whiteSpace: 'nowrap', paddingBottom: 8 }}><Checkbox checked={none} onChange={setNone} label={t('kbUnlimited')} /></span>
         <Button type="submit" variant="primary">{t('save')}</Button>
       </div>
     </form>

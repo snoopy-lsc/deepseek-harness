@@ -45,6 +45,13 @@ describe('team-enterprise theme', () => {
     expect(css).not.toMatch(/https?:|url\(/)
   })
 
+  it('widens_only_dialogs_that_mark_their_body_wide_and_lets_them_scroll', () => {
+    const css = glassStylesheet()
+    // Same mechanism as upstream's wider dialogs (a width on the dialog box), keyed on a data attribute in the body.
+    expect(css).toContain('[role="dialog"][aria-modal="true"]:has([data-team-wide="m"]){width:min(560px,100%);max-height:calc(100% - 48px);overflow-y:auto}')
+    expect(css).toContain('[role="dialog"][aria-modal="true"]:has([data-team-wide="l"]){width:min(760px,100%);max-height:calc(100% - 48px);overflow-y:auto}')
+  })
+
   it('registers the token layer and mounts the stylesheet for exactly the plugin lifetime', () => {
     const disposers: Array<() => void> = [], calls: string[] = []
     const theme: ThemeOverrides = { overrideTokens(source) { calls.push(source); return () => { calls.push('released') } } }

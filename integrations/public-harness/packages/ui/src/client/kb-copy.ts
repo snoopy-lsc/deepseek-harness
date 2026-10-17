@@ -6,7 +6,7 @@ export const kbCopy = {
     kb_unlimited: 'unlimited', kb_create: 'New knowledge base', kb_createTitle: 'New knowledge base', kb_name: 'Title', kb_description: 'Description (optional)',
     kb_createHint: 'Starts from the team template: schema.md, index.md, log.md, raw/ for sources and wiki/ for compiled pages.', kb_cancel: 'Cancel', kb_save: 'Create',
     kb_none: 'No knowledge bases yet. Create one, add sources, then compile it into wiki pages.',
-    kb_stats: '{pages} pages · {sources} sources · {size}', kb_lastJob: 'Last compile: {state}, {date}', kb_never: 'Not compiled yet',
+    kb_stats: 'Pages: {pages} · Sources: {sources} · {size}', kb_lastJob: 'Last compile: {state}, {date}', kb_never: 'Not compiled yet',
     kb_upload: 'Add source', kb_uploaded: 'Added {name}.', kb_compile: 'Compile', kb_share: 'Request share', kb_withdraw: 'Withdraw request',
     kb_state_private: 'Private', kb_state_pending: 'Awaiting review', kb_state_published: 'Shared', kb_state_revoked: 'Revoked', kb_state_rejected: 'Rejected', kb_state_converted: 'Converted', kb_converted: 'An administrator turned the shared version into a company knowledge base on {date}; this copy is private again.',
     kb_rejected: 'Rejected: {reason}', kb_publishedTo: 'Shared with {scope}', kb_company: 'the whole company', kb_archived: 'Archived',

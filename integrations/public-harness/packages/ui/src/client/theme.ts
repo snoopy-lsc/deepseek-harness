@@ -52,6 +52,9 @@ export function glassStylesheet(): string {
     `[data-composer-card]{${glass}}`,
     `[data-composer-seat]{background:transparent}`,
     `[role="dialog"][aria-modal="true"]{${glass}}`,
+    // Review and editor dialogs need more than the default 380px column; like upstream's wider dialogs they set the dialog width,
+    // keyed here on a data attribute in their body, and scroll when taller than the window.
+    ...([['m', 560], ['l', 760]] as const).map(([size, px]) => `[role="dialog"][aria-modal="true"]:has([data-team-wide="${size}"]){width:min(${px}px,100%);max-height:calc(100% - 48px);overflow-y:auto}`),
     `@media (prefers-reduced-transparency: reduce){body{--team-blur:none;${materials('light', 'solid')}background:${COLORS['--dsh-boot-bg']!.light}}`
       + `body[data-ds-dark-theme]{${materials('dark', 'solid')}background:${COLORS['--dsh-boot-bg']!.dark}}}`,
   ].join('\n')

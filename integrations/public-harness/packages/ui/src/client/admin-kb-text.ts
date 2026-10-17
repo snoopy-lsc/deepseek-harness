@@ -2,7 +2,7 @@
 export const kbAdminCopy = {
   en: {
     kbRequests: 'Share requests', kbPending: 'Pending', kbAllRequests: 'All', kbNoRequests: 'No share requests are waiting.', kbNoHistory: 'No share requests yet.',
-    kbFrom: 'From {email}', kbSubmitted: 'Submitted {date}', kbFiles: '{n} files · {size}', kbNote: 'Note: {note}', kbCurrent: 'Currently shared since {date}',
+    kbFrom: 'From {email}', kbSubmitted: 'Submitted {date}', kbFiles: 'Files: {n} · {size}', kbNote: 'Note: {note}', kbCurrent: 'Currently shared since {date}',
     kbReview: 'Review', kbReviewTitle: 'Review {title}', kbReviewHint: 'The pinned commit {commit}. Readers keep copies of what they open, even after a revoke.',
     kbFilesTitle: 'Files', kbRemoved: 'Removed since the current publication: {paths}', kbStatus_added: 'New', kbStatus_changed: 'Changed', kbStatus_same: 'Unchanged',
     kbOpenFile: 'Opening a file is recorded in the audit log.', kbBinary: 'Binary file; no preview.', kbCompileLog: 'Compile log', kbRecentJobs: 'Recent compiles: {jobs}',
@@ -12,9 +12,9 @@ export const kbAdminCopy = {
     kbReqState_withdrawn: 'Withdrawn', kbReqState_expired: 'Expired', kbKind_personal: 'Personal', kbKind_org: 'Company', kbSearchPeople: 'Add a group or user', kbAdd: 'Add',
     diffCopy: 'Copy', diffCopied: 'Copied', diffCollapse: 'Collapse', diffExpand: 'Show {n} more lines', diffCode: 'Text', diffWrap: 'Wrap lines', diffUnwrap: 'Do not wrap',
     kb: 'Knowledge bases', kbFilterAll: 'All ({n})', kbFilterOver: 'Over limit ({n})', kbFilterPublished: 'Shared', kbFilterPending: 'Pending', kbEmpty: 'No knowledge bases match.',
-    kbOwner: 'Owner {email}', kbOrgOwner: 'Maintained by administrators', kbSize: '{size} · {pages} pages · {sources} sources', kbShare_private: 'Private', kbShare_pending: 'Pending review',
+    kbOwner: 'Owner {email}', kbOrgOwner: 'Maintained by administrators', kbSize: '{size} · Pages: {pages} · Sources: {sources}', kbShare_private: 'Private', kbShare_pending: 'Pending review',
     kbShare_published: 'Shared', kbShare_revoked: 'Revoked', kbOverBadge: 'Over limit', kbOverDetail: '{limit}: {value} of {allowed}', kbScopeSummary: 'Visible to {scope}', kbScopeCompanyShort: 'everyone',
-    kbScopeCount: '{groups} groups, {users} users', kbConvertedTo: 'Converted to a company knowledge base', kbActions: 'Manage', kbChangeScope: 'Change scope', kbRevoke: 'Revoke',
+    kbScopeCount: '{groups} group(s), {users} user(s)', kbConvertedTo: 'Converted to a company knowledge base', kbActions: 'Manage', kbChangeScope: 'Change scope', kbRevoke: 'Revoke',
     kbRevokeConfirm: 'Revoke {title}? It disappears from every reader’s ~/kb/shared at once; readers keep copies of what they already opened.', kbConvert: 'Convert to company knowledge base',
     kbConvertConfirm: 'Convert {title} into a knowledge base maintained by administrators? The author’s copy becomes private again and the author is notified.', kbSaveScope: 'Save scope',
     kbPreview: 'Preview a user’s set', kbPreviewUser: 'User', kbPreviewNone: 'This user cannot read any shared knowledge base.', kbPreviewDisabled: 'Disabled users see nothing.',
@@ -27,7 +27,7 @@ export const kbAdminCopy = {
     kbLimit_max_kbs: 'Knowledge bases per user', kbLimit_max_bytes: 'Size per knowledge base (MB)', kbLimit_max_pages: 'Pages per knowledge base', kbUnlimited: 'Unlimited',
     kbLimitInvalid: 'Enter a whole number in the allowed range ({min}–{max}).', kbOverrides: 'Group and user overrides', kbNoLimitOverrides: 'No overrides; everyone uses the global values.',
     kbAddLimitOverride: 'Add an override', kbOverrideFor: 'Group or user', kbLimitName: 'Limit', kbLimitValue: 'Value', kbInherit: 'inherits', kbEffective: 'Effective limits for a user',
-    kbEffectiveSource: 'from {source}', kbSource_global: 'global', kbSource_user: 'user override', kbUsage: 'Uses {kbs} knowledge bases; largest {size}, {pages} pages',
+    kbEffectiveSource: 'from {source}', kbSource_global: 'global', kbSource_user: 'user override', kbUsage: 'Knowledge bases: {kbs}; largest {size}, pages: {pages}',
   },
   zh: {
     kbRequests: '共享申请', kbPending: '待审核', kbAllRequests: '全部', kbNoRequests: '没有待审核的共享申请。', kbNoHistory: '还没有共享申请。',

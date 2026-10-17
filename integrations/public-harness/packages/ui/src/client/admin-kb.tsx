@@ -59,7 +59,7 @@ function Review({ api, t, request, attempt, onClose, onDone }: { api: AdminApi; 
   const approve = () => attempt(async proof => { await api.approveKb(request.id, scope, raw, proof); onDone(t('kbApproved')) })
   const reject = (event: FormEvent) => { event.preventDefault(); if (reason.trim()) api.rejectKb(request.id, reason.trim()).then(() => onDone(t('kbRejected')), e => setError(errorText(t, e))) }
   return <Modal open onClose={onClose} title={fill(t('kbReviewTitle'), { title: request.kb.title })} closeLabel={t('cancel')} description={fill(t('kbReviewHint'), { commit: request.commitSha.slice(0, 12) })}>
-    <div data-team-admin-kb-review style={{ display: 'grid', gap: 14, minWidth: 'min(720px, 86vw)' }}>
+    <div data-team-admin-kb-review data-team-wide="l" style={{ display: 'grid', gap: 14, minWidth: 0 }}>
       <div style={{ ...hint, marginTop: 0 }}>{[request.kb.ownerEmail ? fill(t('kbFrom'), { email: request.kb.ownerEmail }) : t('kbKind_org'), fill(t('kbSubmitted'), { date: date(request.submittedAt) }),
         request.note ? fill(t('kbNote'), { note: request.note }) : undefined].filter(Boolean).join(' · ')}</div>
       <div>
