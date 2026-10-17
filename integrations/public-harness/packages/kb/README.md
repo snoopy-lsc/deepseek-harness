@@ -16,6 +16,7 @@ English | [中文](README.zh.md)
 - [Layout](#layout)
 - [Service](#service)
 - [Compile](#compile)
+- [Sharing and views](#sharing)
 - [User helper](#user-helper)
 - [Development](#development)
 - [Tests](#tests)
@@ -47,6 +48,15 @@ The result is committed as the tree's owner. It fast-forwards `HEAD` when `HEAD`
 
 Tokens are charged through the quota service: each job opens its own loopback listener with the control call `open-job` (instance `kbjob-<jobId>`), gets a credential for the job's principal (the author for personal knowledge bases) and calls `/v1/messages` there, so personal allowances, the site allowance and the over-limit policy apply unchanged; `close-job` releases the listener. A refused call (402 or 429) fails the job with `allowance`. Without compile settings the routes answer 503 `compile-unavailable`. Tests use `createMockModel()`, which writes deterministic pages and, with `demo: true`, labels them as demo content.
 
+<a id="sharing"></a>
+## Sharing and views
+
+`POST /me/kb/share` `{ kb, note? }` commits any uncommitted changes, pins `HEAD` and copies that tree read-only to `submissions/<request>/`; submitting again replaces a pending request, and `POST /me/kb/share/withdraw` `{ kb }` withdraws it. Requests expire after 30 days; expired, withdrawn and rejected submissions are deleted. `GET /me/kb/shared` lists what the user can read under `~/kb/shared`.
+
+System Admin reviews the queue: `GET /admin/kb/requests?state=pending|all`, `GET /admin/kb/requests/content?id=` (files marked new, changed or unchanged against the current publication, removed paths, the compile log and recent jobs) and `GET /admin/kb/requests/content?id=&path=` (one file with its previous version, text only, at most 256 KB; each read is audited as `admin-kb-content-read`). `POST /admin/kb/requests/approve` `{ id, scope, includeRaw }` publishes an immutable snapshot under `published/<kb>/<snapshot>/` (without `raw/` unless `includeRaw`), sets the scope and updates views; it requires re-authentication. `POST /admin/kb/requests/reject` `{ id, reason }`, `POST /admin/kb/scope` `{ kb, scope }` and `POST /admin/kb/revoke` `{ kb }` complete the set. A scope is `company`, or a list of group IDs and user IDs.
+
+Each user's view `views/<account>/` holds one hard-linked, read-only copy per publication whose scope matches the user's company, effective groups or account, named after the knowledge base (with a short ID suffix on collision). Views are rebuilt when principals or groups change, when a publication or scope changes, and when the user opens the knowledge base page; entries are replaced by rename, and a disabled user's view is empty. Every view change is audited as `kb-view-apply`.
+
 <a id="user-helper"></a>
 ## User helper
 
@@ -60,7 +70,7 @@ Every operation on a user's tree (create, upload, commit, export, measure, apply
 <a id="tests"></a>
 ## Tests
 
-`compile.spec.ts` covers normalization, the compiler and lint with the mock model, jobs (fast-forward, conflict branch, over-limit branch, incremental ingest, caps, allowance failures) and tokens charged to the author through a real quota job channel. `personal.spec.ts` covers limits, archive validation, the helper, personal create, upload and archive over the socket, a hostile repository configuration, and the production helper argv. `mounts.spec.ts` checks the generated systemd unit, the podman volumes and their argv guard, view creation and the development links.
+`share.spec.ts` covers requests, review, approve with and without `raw/`, reject, resubmit, expiry, scope changes, revoke and views following group changes and disabled users. `compile.spec.ts` covers normalization, the compiler and lint with the mock model, jobs (fast-forward, conflict branch, over-limit branch, incremental ingest, caps, allowance failures) and tokens charged to the author through a real quota job channel. `personal.spec.ts` covers limits, archive validation, the helper, personal create, upload and archive over the socket, a hostile repository configuration, and the production helper argv. `mounts.spec.ts` checks the generated systemd unit, the podman volumes and their argv guard, view creation and the development links.
 
 <a id="not-verified"></a>
 ## Not verified on development hosts

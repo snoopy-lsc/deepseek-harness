@@ -133,7 +133,7 @@ export function openKbStore(file: string) {
       }),
       get: one('SELECT * FROM kb_share_request WHERE id = ?', reqView),
       pendingOf: one("SELECT * FROM kb_share_request WHERE kb_id = ? AND state = 'pending'", reqView),
-      byKb: all('SELECT * FROM kb_share_request WHERE kb_id = ? ORDER BY submitted_at DESC', reqView),
+      byKb: all('SELECT * FROM kb_share_request WHERE kb_id = ? ORDER BY submitted_at DESC, rowid DESC', reqView),
       list: all("SELECT * FROM kb_share_request WHERE (? = '' OR state = ?) ORDER BY submitted_at DESC LIMIT 500", reqView),
       decide: exec("UPDATE kb_share_request SET state = ?, decided_by = ?, decided_at = ?, reason = ? WHERE id = ? AND state = 'pending'"),
       expire: exec("UPDATE kb_share_request SET state = 'expired', decided_by = 'system', decided_at = ? WHERE state = 'pending' AND submitted_at <= ?"),

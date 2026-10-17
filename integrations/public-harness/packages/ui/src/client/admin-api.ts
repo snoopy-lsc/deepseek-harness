@@ -30,6 +30,23 @@ export interface AdminQuota { readonly configuredDailyTokens: number; readonly d
 export interface AdminGroup { readonly id: string; readonly source: 'oidc' | 'saml' | 'ldap' | 'wecom' | 'dingtalk' | 'local'; readonly externalId: string
   readonly displayName: string | null; readonly parentId: string | null; readonly members: number; readonly updatedAt: number }
 export interface AdminGroupMember { readonly userId: string; readonly email: string | null; readonly name: string | null }
+/** A knowledge base scope entry: the whole company, a group ID, or a user ID. */
+export interface KbScopeEntry { readonly kind: 'company' | 'group' | 'user'; readonly target: string }
+/** One share request in the approval queue. */
+export interface AdminKbRequest {
+  readonly id: string; readonly kbId: string; readonly commitSha: string; readonly submittedBy: string; readonly submittedByEmail: string | null; readonly submittedAt: number
+  readonly note: string; readonly state: 'pending' | 'approved' | 'rejected' | 'withdrawn' | 'expired'; readonly decidedAt: number | null; readonly reason: string | null
+  readonly kb: { readonly id: string; readonly title: string; readonly kind: 'personal' | 'org'; readonly ownerUserId: string | null; readonly ownerEmail: string | null }
+  readonly current: { readonly snapshotId: string; readonly publishedAt: number; readonly scope: readonly KbScopeEntry[] } | null
+  readonly files?: number; readonly bytes?: number
+}
+export interface AdminKbRequestContent {
+  readonly request: AdminKbRequest
+  readonly files: ReadonlyArray<{ readonly path: string; readonly bytes: number; readonly status: 'added' | 'changed' | 'same' }>
+  readonly removed: readonly string[]; readonly log: string
+  readonly jobs: ReadonlyArray<{ readonly id: string; readonly op: string; readonly state: string; readonly finishedAt: number | null; readonly lint: number }>
+}
+export interface AdminKbFile { readonly path: string; readonly bytes: number; readonly text: string | null; readonly previous: string | null; readonly binary: boolean }
 /** What the quota proxy does when a user reaches the personal daily limit. */
 export type OverLimitMode = 'block' | 'grace' | 'warn'
 
@@ -65,6 +82,14 @@ export interface AdminApi {
   nameGroup(id: string, op: 'rename' | 'alias', name: string | null): Promise<AdminGroup>
   deleteGroup(id: string, proof?: Proof): Promise<void>
   setGroupMember(groupId: string, userId: string, op: 'add' | 'remove', proof?: Proof): Promise<void>
+  kbRequests(state: 'pending' | 'all'): Promise<readonly AdminKbRequest[]>
+  kbRequestContent(id: string): Promise<AdminKbRequestContent>
+  /** Reading a file is audited (`admin-kb-content-read`). */
+  kbRequestFile(id: string, path: string): Promise<AdminKbFile>
+  approveKb(id: string, scope: readonly KbScopeEntry[], includeRaw: boolean, proof?: Proof): Promise<void>
+  rejectKb(id: string, reason: string): Promise<void>
+  setKbScope(kbId: string, scope: readonly KbScopeEntry[], proof?: Proof): Promise<void>
+  revokeKb(kbId: string, proof?: Proof): Promise<void>
   /** Raw JSON call for the knowledge-base client (same error handling). */
   call(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown): Promise<unknown>
 }
@@ -117,6 +142,13 @@ export function createAdminApi(fetcher?: typeof fetch): AdminApi {
     nameGroup: async (id, op, name) => (await request('/groups', { op, id, name }) as { group: AdminGroup }).group,
     deleteGroup: async (id, p) => { await request('/groups', { op: 'delete', id, ...proof(p) }) },
     setGroupMember: async (groupId, userId, op, p) => { await request('/groups/members', { op, groupId, userId, ...proof(p) }) },
+    kbRequests: async state => (await request(`/kb/requests${qs({ state })}`) as { requests: AdminKbRequest[] }).requests,
+    kbRequestContent: async id => await request(`/kb/requests/content${qs({ id })}`) as AdminKbRequestContent,
+    kbRequestFile: async (id, path) => await request(`/kb/requests/content${qs({ id, path })}`) as AdminKbFile,
+    approveKb: async (id, scope, includeRaw, p) => { await request('/kb/requests/approve', { id, scope, includeRaw, ...proof(p) }) },
+    rejectKb: async (id, reason) => { await request('/kb/requests/reject', { id, reason }) },
+    setKbScope: async (kb, scope, p) => { await request('/kb/scope', { kb, scope, ...proof(p) }) },
+    revokeKb: async (kb, p) => { await request('/kb/revoke', { kb, ...proof(p) }) },
     call: (method, path, body) => request(path, body, method),
   }
 }

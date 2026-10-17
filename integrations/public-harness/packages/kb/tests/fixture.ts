@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createDirectRunner, devUserTrees, startKbService, type JobOptions, type KbService } from '../src/index.ts'
 import type { KbCore } from '../src/service.ts'
+import { removeTree } from '../src/files.ts'
 import type { KbRoutes } from '../src/server.ts'
 
 export interface Reply { status: number; body: any }
@@ -50,6 +51,6 @@ export async function site(options: { clock?: () => number; extra?: Array<(core:
         upload: (path, data) => call(socket, 'POST', path, { ...headers, 'content-type': 'application/octet-stream' }, data) }
     },
     internal: (path, body) => call(socket, 'POST', path, { 'content-type': 'application/json' }, json(body)),
-    async close() { await service.close(); await rm(dir, { recursive: true, force: true }) },
+    async close() { await service.close(); await removeTree(dir); await rm(dir, { recursive: true, force: true }) },
   }
 }

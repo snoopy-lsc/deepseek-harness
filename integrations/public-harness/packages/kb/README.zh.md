@@ -16,6 +16,7 @@ kind: "package-library"
 - [目录结构](#layout)
 - [服务](#service)
 - [编译](#compile)
+- [共享与视图](#sharing)
 - [用户助手](#user-helper)
 - [开发环境](#development)
 - [测试](#tests)
@@ -47,6 +48,15 @@ kind: "package-library"
 
 token 通过配额服务计费：每个任务用控制调用 `open-job` 打开自己的回环监听（实例为 `kbjob-<jobId>`），为任务的计费主体（个人知识库为作者）取得凭据并在那里调用 `/v1/messages`，因此个人额度、全站额度和超额策略都照常生效；`close-job` 释放监听。被拒绝的调用（402 或 429）会让任务以 `allowance` 失败。没有编译配置时这些接口返回 503 `compile-unavailable`。测试使用 `createMockModel()`，它生成确定性的页面，设置 `demo: true` 时会把页面标注为演示内容。
 
+<a id="sharing"></a>
+## 共享与视图
+
+`POST /me/kb/share` `{ kb, note? }` 先提交所有未提交的修改，再固定 `HEAD`，并把这棵树只读复制到 `submissions/<request>/`；再次提交会替换待审核的申请，`POST /me/kb/share/withdraw` `{ kb }` 撤回申请。申请 30 天后过期；过期、撤回和驳回的提交内容都会删除。`GET /me/kb/shared` 列出用户在 `~/kb/shared` 下能阅读的内容。
+
+系统管理员审核队列：`GET /admin/kb/requests?state=pending|all`、`GET /admin/kb/requests/content?id=`（相对当前发布标记为新增、已修改或未变的文件、已删除的路径、编译日志和最近的任务）以及 `GET /admin/kb/requests/content?id=&path=`（单个文件及其上一版本，仅限文本，最多 256 KB；每次读取都记为 `admin-kb-content-read` 审计）。`POST /admin/kb/requests/approve` `{ id, scope, includeRaw }` 在 `published/<kb>/<snapshot>/` 下发布一份不可变快照（除非 `includeRaw`，否则不含 `raw/`），设置可见范围并更新视图；需要重新验证身份。另有 `POST /admin/kb/requests/reject` `{ id, reason }`、`POST /admin/kb/scope` `{ kb, scope }` 和 `POST /admin/kb/revoke` `{ kb }`。可见范围为 `company`，或一组用户组 ID 和用户 ID。
+
+每个用户的视图 `views/<account>/` 为每个范围匹配该用户所在公司、有效用户组或账号的发布保存一份硬链接的只读副本，以知识库名称命名（重名时加短 ID 后缀）。在主体或用户组变化、发布或范围变化，以及用户打开知识库页面时重建视图；条目通过重命名替换，已停用用户的视图为空。每次视图变化都记为 `kb-view-apply` 审计。
+
 <a id="user-helper"></a>
 ## 用户助手
 
@@ -60,7 +70,7 @@ token 通过配额服务计费：每个任务用控制调用 `open-job` 打开�
 <a id="tests"></a>
 ## 测试
 
-`compile.spec.ts` 覆盖资料转换、使用模拟模型的编译与检查、任务（快进、冲突分支、超限分支、增量编译、上限、额度失败），以及通过真实配额任务通道计入作者的 token。`personal.spec.ts` 覆盖限额、归档校验、助手、通过 socket 的个人创建、上传与归档、恶意仓库配置以及生产助手参数。`mounts.spec.ts` 检查生成的 systemd unit、podman 卷及其参数校验、视图目录创建和开发环境链接。
+`share.spec.ts` 覆盖申请、审核、带或不带 `raw/` 的批准、驳回、重新提交、过期、范围变更、撤销，以及视图随用户组变化和用户停用而更新。`compile.spec.ts` 覆盖资料转换、使用模拟模型的编译与检查、任务（快进、冲突分支、超限分支、增量编译、上限、额度失败），以及通过真实配额任务通道计入作者的 token。`personal.spec.ts` 覆盖限额、归档校验、助手、通过 socket 的个人创建、上传与归档、恶意仓库配置以及生产助手参数。`mounts.spec.ts` 检查生成的 systemd unit、podman 卷及其参数校验、视图目录创建和开发环境链接。
 
 <a id="not-verified"></a>
 ## 开发主机上未验证的部分

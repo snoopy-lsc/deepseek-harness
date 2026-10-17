@@ -7,10 +7,14 @@ import { listenKbSocket, kbHandler, type KbRoutes } from './server.ts'
 import { createCore, MAX_SOURCE_BYTES, personalOps, prepareRoot, usageOf, type KbCore } from './service.ts'
 import { openKbStore } from './store.ts'
 import { compileJobs, jobView, type JobOptions } from './jobs.ts'
+import { shareModule } from './share.ts'
+import { reconcileViews } from './views.ts'
 
 export { createDirectRunner, createSystemdRunner, devUserTrees, systemdRunArgv, type HelperRunner, type UserTree, type UserTrees } from './runner.ts'
 export { KbError } from './errors.ts'
 export { compileJobs, jobView, quotaModelSource, staticModelSource, type JobOptions, type ModelSource, type QuotaJobBridge } from './jobs.ts'
+export { parseScope, publishSnapshot, REQUEST_TTL_MS, shareModule } from './share.ts'
+export { applyView, reconcileViews, visibleEntries, type ViewEntry } from './views.ts'
 export { createMessagesModel, createMockModel, ModelError, type KbModel } from './model.ts'
 
 /** Service settings. */
@@ -27,6 +31,10 @@ export interface KbServiceConfig {
   readonly log?: (line: string) => void
   /** Compile settings; without them compile requests answer 503 `compile-unavailable`. */
   readonly jobs?: JobOptions
+  /** Pending share requests expire after this long (default 30 days). */
+  readonly requestTtlMs?: number
+  /** How often views are reconciled and old requests swept (default ten minutes; 0 turns the timer off). */
+  readonly sweepIntervalMs?: number
 }
 
 /** A running service. */
@@ -55,6 +63,7 @@ export function baseRoutes(core: KbCore, hooks: { principalsChanged?: (userIds: 
   const { store } = core
   return {
     'GET /me/kb': async ({ actor }) => {
+      void reconcileViews(core, [actor.userId])
       const kbs = store.kb.byOwner(actor.userId).map(kb => ({ ...kb, ...personalState(core, kb.id) }))
       return { kbs, ...usageOf(core, actor.userId) }
     },
@@ -124,14 +133,21 @@ export async function startKbService(config: KbServiceConfig, extra: Array<(core
   const store = openKbStore(join(config.root, 'kb.sqlite'))
   const core = createCore({ store, root: config.root, users: config.users, runner: config.runner, ...config.clock ? { clock: config.clock } : {}, ...config.log ? { log: config.log } : {} })
   const jobs = config.jobs === undefined ? undefined : compileJobs(core, config.jobs)
-  const routes: KbRoutes = { ...baseRoutes(core), ...compileRoutes(core, jobs) }
+  const share = shareModule(core, config.requestTtlMs === undefined ? {} : { requestTtlMs: config.requestTtlMs })
+  const routes: KbRoutes = { ...baseRoutes(core, { principalsChanged: async ids => { await reconcileViews(core, ids) } }), ...compileRoutes(core, jobs), ...share.routes }
   for (const module of extra) Object.assign(routes, module(core))
   const server = await listenKbSocket(kbHandler(routes, config.log), config.socket, config.socketMode ?? 0o600, config.socketGid)
   jobs?.recover()
+  const sweep = async () => { try { await share.sweep(); await reconcileViews(core) } catch (error) { core.log(`kb: sweep failed: ${(error as Error).message}`) } }
+  const interval = config.sweepIntervalMs ?? 600_000
+  const timer = interval > 0 ? setInterval(() => { void sweep() }, interval) : undefined
+  timer?.unref()
   return {
     core, jobs,
     async close() {
+      if (timer !== undefined) clearInterval(timer)
       await jobs?.settled()
+      await reconcileViews(core, [])
       await new Promise<void>(resolve => server.close(() => resolve()))
       store.close()
     },
