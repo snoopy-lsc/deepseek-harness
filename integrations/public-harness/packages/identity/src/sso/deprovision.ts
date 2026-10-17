@@ -52,6 +52,10 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
       continue
     }
     if (record === undefined) continue
+    // Active directory records refresh the stored groups; OIDC and SAML have no directory and refresh only at sign-in.
+    if (record.status === 'active') {
+      try { database.groups?.syncUser(link.userId, deps.kind as 'ldap' | 'wecom' | 'dingtalk', record.groups, 'reconcile', now) } catch { /* next run */ }
+    }
     if (record.status === 'missing') remote.push({ userId: link.userId, reason: 'directory-missing' })
     else if (record.status === 'disabled') remote.push({ userId: link.userId, reason: 'directory-disabled' })
     else if (!record.groups.some(group => allowed.has(group))) remote.push({ userId: link.userId, reason: 'directory-group' })

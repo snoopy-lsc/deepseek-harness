@@ -18,6 +18,8 @@ import type { QuotaAdmin } from './quota-account.ts'
 import { createRoles } from './roles.ts'
 import type { AuditEvent } from './sso/store.ts'
 import { IdentityUnavailableError } from './transports.ts'
+import { GROUP_ADMIN_ENDPOINTS } from './admin-groups.ts'
+import { KB_ADMIN_ENDPOINTS } from './kb-gateway.ts'
 
 export const ADMIN_PATH = '/api/admin'
 /** How long an SSO sign-in counts as a fresh re-authentication. */
@@ -30,9 +32,34 @@ export class AdminError extends MeError { constructor(status: number, code: stri
 
 /** Endpoints, by method; used by the routing table and by the test that proves members are refused everywhere. */
 export const ADMIN_ENDPOINTS = {
-  GET: ['/invites', '/users', '/audit', '/audit.csv', '/sso', '/quota'],
-  POST: ['/invites', '/invites/revoke', '/users/disable', '/users/enable', '/users/role', '/quota/default', '/quota/user', '/quota/over-limit'],
+  GET: ['/invites', '/users', '/audit', '/audit.csv', '/sso', '/quota', ...GROUP_ADMIN_ENDPOINTS.GET, ...KB_ADMIN_ENDPOINTS.GET],
+  POST: ['/invites', '/invites/revoke', '/users/disable', '/users/enable', '/users/role', '/quota/default', '/quota/user', '/quota/over-limit',
+    ...GROUP_ADMIN_ENDPOINTS.POST, ...KB_ADMIN_ENDPOINTS.POST],
+  PUT: [...KB_ADMIN_ENDPOINTS.PUT],
+  DELETE: [...KB_ADMIN_ENDPOINTS.DELETE],
 } as const
+type AdminVerb = keyof typeof ADMIN_ENDPOINTS
+
+/** What an admin route module receives once the session, role, Origin and rate limit checks passed. */
+export interface AdminContext {
+  readonly req: IncomingMessage
+  readonly res: ServerResponse
+  readonly sub: string
+  readonly verb: AdminVerb
+  readonly session: { readonly user: { readonly id: string }; readonly email: string }
+  readonly actor: string
+  readonly query: URLSearchParams
+  /** The JSON body (writes only; cached after the first read). */
+  json(): Promise<Record<string, unknown>>
+  /** Re-authenticate for one action (password or a fresh SSO sign-in). */
+  reauth(body: Record<string, unknown>, action: string): Promise<void>
+  audit(event: AuditEvent['event'], outcome: AuditEvent['outcome'], target?: { id: string; email: string }, detail?: string): void
+  /** The user named by `userId`, or 404. */
+  target(body: Record<string, unknown>): { id: string; email: string }
+  send(status: number, body: unknown): void
+}
+/** An admin route module (groups, knowledge bases); answers false for paths it does not own. */
+export type AdminModule = (ctx: AdminContext) => Promise<boolean>
 
 /** Collaborators of the admin routes. */
 export interface AdminDeps {
@@ -43,8 +70,13 @@ export interface AdminDeps {
   readonly ip: (req: IncomingMessage) => string
   readonly limit: (key: string, windowMs: number, max: number) => void
   readonly quota?: QuotaAdmin
+  /** Route modules for the endpoints the core table lists but this file does not serve (groups, knowledge bases). */
+  readonly modules?: readonly AdminModule[]
 }
 
+/** Endpoints served in this file; the rest of ADMIN_ENDPOINTS belongs to route modules. */
+const CORE = new Set(['GET /invites', 'GET /users', 'GET /audit', 'GET /audit.csv', 'GET /sso', 'GET /quota', 'POST /invites', 'POST /invites/revoke',
+  'POST /users/disable', 'POST /users/enable', 'POST /users/role', 'POST /quota/default', 'POST /quota/user', 'POST /quota/over-limit'])
 const time = (value: unknown) => value === null || value === undefined ? null : typeof value === 'number' ? value : Date.parse(String(value))
 /** Most rows one CSV export carries; narrower filters reach older rows. */
 export const AUDIT_EXPORT_MAX = 50_000
@@ -170,7 +202,7 @@ export function adminRoutes(deps: AdminDeps): (req: IncomingMessage, res: Server
     return { id, email, name: String(row.name), createdAt: time(row.createdAt), role: source === undefined ? 'member' : 'admin', roleSource: source ?? null,
       status: disabled === undefined ? 'active' : 'disabled', disabledAt: disabled?.at ?? null, disabledReason: disabled?.reason ?? null,
       provider: origin === 'sso' ? links[0]?.provider ?? config.sso.kind : origin === 'emergency' ? 'emergency' : 'password',
-      lastLoginAt: sessionAt === null ? linkAt : linkAt === null ? sessionAt : Math.max(sessionAt, linkAt) }
+      lastLoginAt: sessionAt === null ? linkAt : linkAt === null ? sessionAt : Math.max(sessionAt, linkAt), groups: database.groups.groupsOf(id) }
   }
   const like = (value: string | null) => value === null || value === '' ? '' : `%${value.toLowerCase().replace(/[\\%_]/g, c => `\\${c}`)}%`
 
@@ -178,12 +210,24 @@ export function adminRoutes(deps: AdminDeps): (req: IncomingMessage, res: Server
     if (path !== ADMIN_PATH && !path.startsWith(`${ADMIN_PATH}/`)) return false
     const sub = path.slice(ADMIN_PATH.length), verb = req.method ?? 'GET'
     const read = verb === 'GET' || verb === 'HEAD'
-    if (!read && verb !== 'POST') throw new MeError(405, 'method')
-    if (!(read ? ADMIN_ENDPOINTS.GET as readonly string[] : ADMIN_ENDPOINTS.POST as readonly string[]).includes(sub)) throw new MeError(404, 'not-found')
+    if (!read && verb !== 'POST' && verb !== 'PUT' && verb !== 'DELETE') throw new MeError(405, 'method')
+    const table: AdminVerb = read ? 'GET' : verb as AdminVerb
+    if (!(ADMIN_ENDPOINTS[table] as readonly string[]).includes(sub)) throw new MeError(404, 'not-found')
     // The role is checked before anything else is read, so a member learns nothing beyond 403.
     const session = await adminSession(req)
     const actor = session.email
     const query = new URL(req.url ?? '/', config.publicOrigin).searchParams
+    if (!CORE.has(`${table} ${sub}`)) {
+      deps.limit(read ? `admin-read:${session.user.id}` : `admin-write:${session.user.id}`, HOUR, read ? 1200 : 120)
+      let cached: Promise<Record<string, unknown>> | undefined
+      const ctx: AdminContext = { req, res, sub, verb: table, session, actor, query,
+        json: () => cached ??= jsonBody(req),
+        reauth: (body, action) => reauth(req, session, body, action),
+        audit: (event, outcome, who, detail) => audit(event, outcome, actor, req, who, detail),
+        target, send: (status, body) => send(res, status, body) }
+      for (const module of deps.modules ?? []) if (await module(ctx)) return true
+      throw new MeError(404, 'not-found')
+    }
     if (read) {
       deps.limit(`admin-read:${session.user.id}`, HOUR, 1200)
       if (sub === '/invites') { send(res, 200, { invites: store(() => database.listInvites()).reverse() }); return true }

@@ -107,6 +107,8 @@ Harness Web 的个人中心使用 `/account/api/me/*`：`GET /security`（登录
 
 `GET /api/admin/audit.csv` 按查看器的筛选条件（`event`、`outcome`、`q`）导出审计日志：最新在前，每页 500 条流式输出，最多 50,000 条（`x-audit-export-rows`；被截断时 `x-audit-export-truncated: 1`）。每个字段都加引号并把内部引号写成两个，以 `=`、`+`、`-`、`@`、制表符或 CR 开头的字段前加 `'`，避免表格软件把它当作公式；文件以 UTF-8 BOM 开头，便于 Excel 识别。每位管理员每小时最多导出 10 次，每次导出会先写一条带行数与筛选条件的 `admin-audit-export` 审计记录。`POST /api/admin/quota/over-limit` `{ mode, gracePercent? }` 设置达到个人每日额度时的行为：`block`（默认）拒绝新的请求，`grace` 在额度之外再允许其 `gracePercent`（1–100，默认 10）的用量后拒绝，`warn` 不因个人额度拒绝（站点每日额度仍会拒绝）。它与其他额度变更一样需要重新认证，并以 `admin-over-limit-change` 记录审计；之后 `GET /account/api/me/usage` 会返回 `overLimit`、`state`（`ok`、`grace`、`over`、`blocked`）和 `hardLimitTokens`。
 
+用户组保存在 `dsh_group` 和 `dsh_user_group` 中（ID 带来源前缀，例如 `wecom:42`、`ldap:cn=eng,ou=groups,dc=corp` 或 `local:<uuid>`）。每次 SSO 登录都会替换该用户在这一身份源下的记录；LDAP、企业微信和钉钉的目录同步也会为有效的目录记录刷新它们，而 OIDC 和 SAML 用户组只在登录时变化。`GET /api/admin/groups` 列出同步的和本地的用户组及成员数，`GET /api/admin/groups/members?group=<id>` 列出某个用户组的成员，`POST /api/admin/groups` 接受 `{ op: 'create', name }`、`{ op: 'rename', id, name }`（本地）、`{ op: 'alias', id, name | null }`（同步组；仅用于展示，从不用于授权）或 `{ op: 'delete', id }`（本地，需要重新认证），`POST /api/admin/groups/members` `{ op: 'add' | 'remove', groupId, userId }` 在重新认证后修改本地成员。每次变更都写入 `admin-group-change`，`GET /users` 会返回每个用户的直接 `groups`。`groups.spec.ts` 覆盖存储、登录与目录同步刷新以及这些接口。
+
 紧急登录需要允许的来源地址、密码和新的验证器动态码；每个码只能用一次。普通密码表单拒绝已登记的管理员。每次 SSO 与紧急登录尝试都记入审计，超过 365 天的记录会被删除。
 
 <a id="understand-the-implementation"></a>

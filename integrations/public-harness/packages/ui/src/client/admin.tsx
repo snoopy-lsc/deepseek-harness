@@ -3,10 +3,13 @@
  * SSO configuration (read-only) and daily allowances. Built from Harness primitives and the settings-row geometry; only colours come from the theme.
  * Every refusal comes from the server; disable, role changes and allowance changes may ask the administrator to re-authenticate. */
 import { Button, IconChecklistOutlineRegular, IconChevronLeftOutlineRegular, IconGaugeOutlineRegular, IconLinkOutlineRegular, IconPlusOutlineRegular,
-  IconSearchOutlineRegular, IconUsersOutlineRegular, Input, Modal, SegmentedControl, Tag, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
+  IconSearchOutlineRegular, IconUsersOutlineRegular, IconWorkspaceTreeOutlineRegular, Input, Modal, SegmentedControl, Tag, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import { useCallback, useEffect, useState, useSyncExternalStore, type CSSProperties, type FormEvent, type ReactNode } from 'react'
-import { AdminApiError, type AdminApi, type AdminAuditPage, type AdminInvite, type AdminQuota, type AdminSso, type AdminUser, type AdminUserPage, type OverLimitMode, type Proof } from './admin-api.ts'
+import { groupAdminCopy } from './admin-kb-copy.ts'
+import { groupName, Groups } from './admin-groups.tsx'
+import { card, column, date, errorText, field, fill, hint, label, Note, page, Row, Card, select, type T, useReauth } from './admin-kit.tsx'
+import { type AdminApi, type AdminAuditPage, type AdminInvite, type AdminQuota, type AdminSso, type AdminUser, type AdminUserPage, type OverLimitMode, type Proof } from './admin-api.ts'
 
 /** Locale-owned administration copy. */
 export const adminDictionaries = {
@@ -39,6 +42,7 @@ export const adminDictionaries = {
     modeHint_warn: 'The personal limit is advisory: requests keep running with a warning. The site daily limit still refuses.',
     gracePercent: 'Grace (% of the limit)', invalidGrace: 'Enter a whole percentage from 1 to 100.',
     exportCsv: 'Export CSV', exportHint: 'Exports the entries matching these filters (newest first, at most 50,000 rows). The export is recorded in this log.',
+    ...groupAdminCopy.en,
   },
   zh: {
     title: '系统管理', back: '返回会话', menu: '系统管理分区',
@@ -69,6 +73,7 @@ export const adminDictionaries = {
     modeHint_warn: '个人额度仅作提醒：请求继续并提示用户；站点每日额度仍会拒绝。',
     gracePercent: '宽限比例（额度的 %）', invalidGrace: '请输入 1 到 100 之间的整数百分比。',
     exportCsv: '导出 CSV', exportHint: '导出符合当前筛选条件的记录（最新在前，最多 50,000 条）。导出操作本身也会记录在此日志中。',
+    ...groupAdminCopy.zh,
   },
 }
 
@@ -79,7 +84,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 }
 
 /** Administration sections, in menu order. */
-export const ADMIN_SECTIONS = ['users', 'invites', 'audit', 'sso', 'quota'] as const
+export const ADMIN_SECTIONS = ['users', 'groups', 'invites', 'audit', 'sso', 'quota'] as const
 export type AdminSection = typeof ADMIN_SECTIONS[number]
 
 /** The selected section, shared by the sidebar submenu and the main panel. */
@@ -91,23 +96,11 @@ export function createSectionState(initial: AdminSection = 'users'): SectionStat
 }
 const useSection = (state: SectionState) => useSyncExternalStore(state.subscribe, state.get, state.get)
 
-type T = PropsLocale<'publicHarnessAdmin'>['t']
-const fill = (text: string, values: Record<string, string | number>) => text.replace(/\{(\w+)\}/g, (_, key: string) => String(values[key] ?? ''))
-const date = (value: number | string) => new Date(value).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 const PROVIDERS: Record<string, string> = { oidc: 'OIDC', saml: 'SAML', ldap: 'LDAP', wecom: 'WeCom', dingtalk: 'DingTalk', password: 'Password', emergency: 'Emergency' }
 const ICONS: Record<AdminSection, (size: number) => ReactNode> = {
   users: size => <IconUsersOutlineRegular size={size} />, invites: size => <IconPlusOutlineRegular size={size} />, audit: size => <IconChecklistOutlineRegular size={size} />,
-  sso: size => <IconLinkOutlineRegular size={size} />, quota: size => <IconGaugeOutlineRegular size={size} />,
+  sso: size => <IconLinkOutlineRegular size={size} />, quota: size => <IconGaugeOutlineRegular size={size} />, groups: size => <IconWorkspaceTreeOutlineRegular size={size} />,
 }
-const errorText = (t: T, error: unknown) => {
-  if (error instanceof AdminApiError) {
-    const key = `err_${error.code.replace(/-/g, '_')}`
-    const known = ['err_last_admin', 'err_config_admin', 'err_emergency_admin', 'err_self', 'err_rate_limited']
-    if (known.includes(key)) return t(key as 'err_self')
-  }
-  return t('failed')
-}
-
 /* Sidebar submenu: rows share the sidebar's panel-row geometry (36px, 12px radius, hover surface). */
 function MenuRow({ icon, label, active, onClick, wide, testId }: { icon: ReactNode; label: string; active?: boolean; onClick: () => void; wide: boolean; testId: string }) {
   const [hover, setHover] = useState(false)
@@ -132,62 +125,6 @@ export function AdminMenu({ wide, section, back, t }: { wide: boolean; section: 
     {wide && <div style={{ margin: '10px 10px 4px 14px', fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-label-secondary)' }}>{t('title')}</div>}
     {ADMIN_SECTIONS.map(name => <MenuRow key={name} wide={wide} testId={name} icon={ICONS[name](wide ? 16 : 18)} label={t(name)} active={current === name} onClick={() => section.set(name)} />)}
   </nav>
-}
-
-const page: CSSProperties = { boxSizing: 'border-box', height: '100%', overflow: 'auto', padding: '40px 56px 64px', color: 'var(--dsw-alias-label-primary)' }
-const column: CSSProperties = { maxWidth: 880, margin: '0 auto', display: 'grid', gap: 20 }
-const card: CSSProperties = { background: 'var(--dsw-alias-settings-card-fill)', borderRadius: 'var(--dsw-radius-lg)', padding: '0 20px',
-  boxShadow: 'var(--dsw-elevation-soft)', WebkitBackdropFilter: 'var(--dsw-menu-backdrop-filter)', backdropFilter: 'var(--dsw-menu-backdrop-filter)' }
-const rowStyle: CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: '14px 0', borderBottom: '0.5px solid var(--dsw-alias-border-l2)' }
-const label: CSSProperties = { fontSize: 14, lineHeight: '20px' }
-const hint: CSSProperties = { marginTop: 2, color: 'var(--dsw-alias-label-secondary)', fontSize: 12, lineHeight: '18px' }
-const field: CSSProperties = { display: 'grid', gap: 6, minWidth: 0, fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-label-secondary)' }
-const statusStyle = (ok: boolean): CSSProperties => ({ margin: '8px 0', fontSize: 13, color: ok ? 'var(--dsw-alias-label-secondary)' : 'var(--dsw-alias-state-error, #d92d20)' })
-const select: CSSProperties = { height: 36, borderRadius: 'var(--dsw-radius-md)', border: '0.5px solid var(--dsw-alias-border-l2)', padding: '0 10px', background: 'transparent',
-  color: 'var(--dsw-alias-label-primary)', font: 'inherit', fontSize: 13 }
-
-function Row({ title, detail, children, end }: { title: ReactNode; detail?: ReactNode; children?: ReactNode; end?: boolean }) {
-  return <div style={end ? { ...rowStyle, borderBottom: 'none' } : rowStyle}>
-    <div style={{ minWidth: 0 }}><div style={label}>{title}</div>{detail !== undefined && <div style={hint}>{detail}</div>}</div>
-    {children !== undefined && <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 'none' }}>{children}</div>}
-  </div>
-}
-function Card({ children, testId }: { children: ReactNode; testId?: string }) { return <div style={card} data-team-admin-card={testId}>{children}</div> }
-function Note({ note }: { note?: { ok: boolean; text: string } | undefined }) {
-  return note === undefined ? null : <p role={note.ok ? 'status' : 'alert'} style={statusStyle(note.ok)} data-team-admin-note>{note.text}</p>
-}
-
-/* Re-authentication: run an action; when the server asks for proof, collect it and retry once more. */
-type Pending = { run: (proof: Proof) => Promise<void>; method: 'password' | 'sso'; wrong?: boolean }
-function useReauth(t: T, onError: (error: unknown) => void) {
-  const [pending, setPending] = useState<Pending>()
-  const attempt = useCallback((run: (proof: Proof) => Promise<void>, proof: Proof = {}) => {
-    run(proof).then(() => setPending(undefined), (error: unknown) => {
-      if (error instanceof AdminApiError && (error.code === 'reauth-required' || error.code === 'reauth') && error.method !== undefined) {
-        setPending({ run, method: error.method, wrong: error.code === 'reauth' })
-      } else { setPending(undefined); onError(error) }
-    })
-  }, [onError])
-  const dialog = pending === undefined ? null : <ReauthDialog t={t} pending={pending} onCancel={() => setPending(undefined)} onPassword={password => attempt(pending.run, { password })} />
-  return { attempt, dialog }
-}
-function ReauthDialog({ t, pending, onCancel, onPassword }: { t: T; pending: Pending; onCancel: () => void; onPassword: (password: string) => void }) {
-  const [password, setPassword] = useState('')
-  const submit = (event: FormEvent) => { event.preventDefault(); if (password) onPassword(password) }
-  // Back to this very page (path, query and fragment) after the sign-in; the server re-checks it against the user's own route.
-  const ret = `${globalThis.location?.pathname ?? '/'}${globalThis.location?.search ?? ''}${globalThis.location?.hash ?? ''}`
-  return <Modal open onClose={onCancel} title={t('reauthTitle')} closeLabel={t('cancel')} description={pending.method === 'password' ? t('reauthPassword') : t('reauthSso')}>
-    {pending.method === 'password'
-      ? <form onSubmit={submit} data-team-admin-reauth="password" style={{ display: 'grid', gap: 12 }}>
-        <label style={field}>{t('password')}<Input data-modal-autofocus type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} /></label>
-        {pending.wrong && <p role="alert" style={statusStyle(false)}>{t('reauthWrong')}</p>}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}><Button variant="outline" onClick={onCancel}>{t('cancel')}</Button><Button type="submit" variant="primary">{t('confirm')}</Button></div>
-      </form>
-      : <div data-team-admin-reauth="sso" style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-        <Button variant="outline" onClick={onCancel}>{t('cancel')}</Button>
-        <Button variant="primary" onClick={() => { globalThis.location.assign(`/api/auth/sso/start?return=${encodeURIComponent(ret)}`) }}>{t('signInAgain')}</Button>
-      </div>}
-  </Modal>
 }
 
 function Invites({ api, t }: { api: AdminApi; t: T }) {
@@ -236,6 +173,8 @@ function Users({ api, t }: { api: AdminApi; t: T }) {
   const [result, setResult] = useState<AdminUserPage | null>(), [note, setNote] = useState<{ ok: boolean; text: string }>(), [disabling, setDisabling] = useState<AdminUser>(), [reason, setReason] = useState('')
   const load = useCallback(() => { api.users({ q, role: role === 'all' ? undefined : role, status: status === 'all' ? undefined : status, offset, limit: PAGE } as never).then(setResult, () => setResult(null)) }, [api, q, role, status, offset])
   useEffect(load, [load])
+  const [groupNames, setGroupNames] = useState<ReadonlyMap<string, string>>(new Map())
+  useEffect(() => { api.groups().then(list => setGroupNames(new Map(list.map(group => [group.id, groupName(group)]))), () => undefined) }, [api])
   const fail = useCallback((error: unknown) => setNote({ ok: false, text: errorText(t, error) }), [t])
   const { attempt, dialog } = useReauth(t, fail)
   const act = (run: (proof: Proof) => Promise<void>) => { setNote(undefined); attempt(async proof => { await run(proof); setNote({ ok: true, text: t('done') }); load() }) }
@@ -258,7 +197,8 @@ function Users({ api, t }: { api: AdminApi; t: T }) {
               <Tag tone={user.status === 'active' ? 'success' : 'danger'}>{t(user.status === 'active' ? 'active' : 'st_disabled')}</Tag>
               <Tag tone="neutral">{PROVIDERS[user.provider] ?? user.provider}</Tag>
               <span>{user.lastLoginAt === null ? t('neverLogin') : fill(t('lastLogin'), { date: date(user.lastLoginAt) })}</span>
-              {user.disabledReason !== null && <span>· {user.disabledReason}</span>}</span>}>
+              {user.disabledReason !== null && <span>· {user.disabledReason}</span>}
+              {(user.groups?.length ?? 0) > 0 && <span data-team-admin-user-groups>· {fill(t('userGroups'), { groups: user.groups!.map(id => groupNames.get(id) ?? id).join(', ') })}</span>}</span>}>
             {user.role === 'member' && user.status === 'active' && <Button variant="outline" size="sm" onClick={() => act(proof => api.setRole(user.id, 'admin', proof))}>{t('makeAdmin')}</Button>}
             {user.roleSource === 'grant' && <Button variant="outline" size="sm" onClick={() => act(proof => api.setRole(user.id, 'member', proof))}>{t('removeAdmin')}</Button>}
             {user.status === 'active'
@@ -432,7 +372,7 @@ export function AdminPage({ api, section, t }: { api: AdminApi; section: Section
         <h1 style={{ margin: 0, fontSize: 20, lineHeight: '28px', fontWeight: 600 }}>{t(current)}</h1>
         <span style={{ ...hint, marginTop: 0 }}>· {t('title')}</span>
       </header>
-      {current === 'invites' ? <Invites api={api} t={t} /> : current === 'users' ? <Users api={api} t={t} /> : current === 'audit' ? <Audit api={api} t={t} />
+      {current === 'groups' ? <Groups api={api} t={t} /> : current === 'invites' ? <Invites api={api} t={t} /> : current === 'users' ? <Users api={api} t={t} /> : current === 'audit' ? <Audit api={api} t={t} />
         : current === 'sso' ? <Sso api={api} t={t} /> : <Quota api={api} t={t} />}
     </div>
   </div>

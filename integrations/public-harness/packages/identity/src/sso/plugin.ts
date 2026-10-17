@@ -9,6 +9,7 @@ import { safeReturnPath } from '../pages.ts'
 import { IdentityUnavailableError } from '../transports.ts'
 import { SsoRejectedError, type PasswordSsoProvider, type SsoIdentity, type SsoProvider } from './provider.ts'
 import { SsoBindingError, STATE_TTL_MS, type SsoStore } from './store.ts'
+import type { GroupStore } from '../groups.ts'
 
 /** Browser-binding cookie name for one sign-in attempt. */
 export const SSO_BROWSER_COOKIE = 'dsh-sso'
@@ -22,6 +23,8 @@ export const LDAP_LOCKOUT = { window: 15 * 60_000, perUserIp: 5, perUser: 20 } a
 export interface SsoPluginDeps {
   readonly config: IdentityConfig
   readonly store: SsoStore
+  /** Group persistence: the sign-in's groups replace the user's rows for this provider. */
+  readonly groups?: GroupStore
   readonly provider: SsoProvider | PasswordSsoProvider
   /** Shortest answer time for a refused LDAP sign-in, so timing says little about why; default 300 ms. */
   readonly ldapFloorMs?: number
@@ -74,6 +77,8 @@ export function ssoPlugin(deps: SsoPluginDeps) {
     const session = await adapter.createSession(user.id)
     await setSessionCookie(ctx, { session, user })
     store.touchLogin(kind, identity.subject, clock())
+    // Groups are stored after the session exists, so a group-table failure never blocks a sign-in the allow-list already admitted.
+    try { deps.groups?.syncUser(userId, kind, identity.groups, 'login', clock()) } catch { /* refreshed again at the next sign-in or reconciliation */ }
     store.audit({ event: 'sso-sign-in', outcome: 'ok', userId, ...who, ...ip === undefined ? {} : { ip } }, clock())
     return userId
   }

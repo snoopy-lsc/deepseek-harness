@@ -14,6 +14,7 @@ import { ipAllowed } from './sso/ip.ts'
 import { parseUserId } from '@public-harness/contracts'
 import { MeError, meRoutes, type UsageSource } from './me.ts'
 import { AdminError, adminRoutes } from './admin.ts'
+import { groupAdminRoutes } from './admin-groups.ts'
 import type { QuotaAdmin } from './quota-account.ts'
 
 const MAX_BODY = 64 * 1024
@@ -140,7 +141,8 @@ export function publicHandler(deps: PublicDeps): (req: IncomingMessage, res: Ser
     return id === undefined ? undefined : database.sso.origin(id)
   }
   const me = meRoutes({ config, auth, database, clock, limit, ip: req => clientIp(req, config.clientIpHeader), ...deps.usage === undefined ? {} : { usage: deps.usage } })
-  const admin = adminRoutes({ config, auth, database, clock, limit, ip: req => clientIp(req, config.clientIpHeader), ...deps.quota === undefined ? {} : { quota: deps.quota } })
+  const admin = adminRoutes({ config, auth, database, clock, limit, ip: req => clientIp(req, config.clientIpHeader), ...deps.quota === undefined ? {} : { quota: deps.quota },
+    modules: [groupAdminRoutes(database, clock)] })
   return (req, res) => {
     void (async () => {
       const path = (req.url ?? '/').split('?')[0]

@@ -53,7 +53,8 @@ describe('/api/admin', () => {
     for (const path of ADMIN_ENDPOINTS.GET) {
       expect((await s.get(path, s.member.cookie)).status, `GET ${path}`).toBe(403)
       expect((await s.get(path, 'dsh-account.session_token=forged')).status, `GET ${path}`).toBe(401)
-      expect((await s.get(path, s.root.cookie)).status, `admin GET ${path}`).toBe(200)
+      // 400 only for detail reads that need a query parameter (for example `/groups/members?group=`).
+      expect([200, 400], `admin GET ${path}`).toContain((await s.get(path, s.root.cookie)).status)
     }
     for (const path of ADMIN_ENDPOINTS.POST) {
       // A body that would succeed for an administrator; members are refused before it is read.
@@ -61,6 +62,11 @@ describe('/api/admin', () => {
       expect(reply.status, `POST ${path}`).toBe(403)
       expect(json(reply)).toEqual({ code: 'forbidden' })
       expect((await s.post(path, {}, 'dsh-account.session_token=forged')).status, `POST ${path}`).toBe(401)
+    }
+    for (const verb of ['PUT', 'DELETE'] as const) for (const path of ADMIN_ENDPOINTS[verb]) {
+      const reply = await call(s.config.publicSocket, verb, `/api/admin${path}`, { scope: { type: 'global', id: '*' }, name: 'max_kbs', value: 1, password: PASSWORD }, { cookie: s.member.cookie })
+      expect(reply.status, `${verb} ${path}`).toBe(403)
+      expect((await call(s.config.publicSocket, verb, `/api/admin${path}`, {}, { cookie: 'dsh-account.session_token=forged' })).status, `${verb} ${path}`).toBe(401)
     }
     // Only the administrator's own export left a row.
     expect(s.audit().filter(row => row.event.startsWith('admin-')).map(row => row.event)).toEqual(['admin-audit-export'])

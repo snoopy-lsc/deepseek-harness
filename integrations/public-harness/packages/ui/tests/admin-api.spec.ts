@@ -24,6 +24,20 @@ describe('administration client', () => {
     expect(JSON.parse(String(r.calls[3]!.init.body))).toEqual({ mode: 'grace', gracePercent: 15, password: 'pw' })
   })
 
+  it('group_calls_use_the_documented_paths_and_bodies', async () => {
+    const r = recorder(200, { group: { id: 'local:1' }, groups: [], members: [] })
+    await r.api.groups()
+    await r.api.groupMembers('wecom:dept 1')
+    await r.api.createGroup('Pilot')
+    await r.api.nameGroup('wecom:1', 'alias', null)
+    await r.api.setGroupMember('local:1', 'u1', 'add', { password: 'pw' })
+    await r.api.call('PUT', '/kb/limits', { name: 'max_kbs' })
+    expect(r.calls.map(call => `${call.init.method ?? 'GET'} ${call.url}`)).toEqual(['GET /api/admin/groups', 'GET /api/admin/groups/members?group=wecom%3Adept+1',
+      'POST /api/admin/groups', 'POST /api/admin/groups', 'POST /api/admin/groups/members', 'PUT /api/admin/kb/limits'])
+    expect(JSON.parse(String(r.calls[3]!.init.body))).toEqual({ op: 'alias', id: 'wecom:1', name: null })
+    expect(JSON.parse(String(r.calls[4]!.init.body))).toEqual({ op: 'add', groupId: 'local:1', userId: 'u1', password: 'pw' })
+  })
+
   it('builds_the_csv_export_address_from_the_current_filters', () => {
     const { api } = recorder()
     expect(api.auditCsvUrl({})).toBe('/api/admin/audit.csv')

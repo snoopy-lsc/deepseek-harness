@@ -21,7 +21,7 @@ export const COOKIE_PREFIX = 'dsh-account'
  */
 export function authOptions(config: IdentityConfig, database: IdentityDatabase, secret: string, mail: MailTransport, sso?: SsoProvider | PasswordSsoProvider, clock?: () => number) {
   return {
-    plugins: sso === undefined ? [] : [ssoPlugin({ config, store: database.sso, provider: sso, ...clock === undefined ? {} : { clock } })],
+    plugins: sso === undefined ? [] : [ssoPlugin({ config, store: database.sso, groups: database.groups, provider: sso, ...clock === undefined ? {} : { clock } })],
     appName: 'DeepSeek Harness', baseURL: config.publicOrigin, basePath: '/api/auth', secret,
     database: database.db, trustedOrigins: [config.publicOrigin], telemetry: { enabled: false },
     emailAndPassword: {

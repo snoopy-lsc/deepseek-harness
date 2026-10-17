@@ -3,6 +3,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { constants } from 'node:fs'
 import { lstat, open } from 'node:fs/promises'
 import { DatabaseSync } from 'node:sqlite'
+import { createGroupStore, type GroupStore } from './groups.ts'
 import { createSsoStore, type SsoStore } from './sso/store.ts'
 
 /** The identity database with the service-owned tables migrated. */
@@ -10,6 +11,8 @@ export interface IdentityDatabase {
   readonly db: DatabaseSync
   /** Enterprise SSO bindings, origins, login state, emergency enrollment and audit. */
   readonly sso: SsoStore
+  /** Persisted directory groups and departments plus local groups. */
+  readonly groups: GroupStore
   /** Atomically consume one unit of a fixed-window limit; false when the window is exhausted. */
   consume(key: string, windowMs: number, max: number, now?: number): boolean
   /** Record a one-time token; false when it was already consumed. Only a hash is stored. */
@@ -76,9 +79,11 @@ export async function openIdentityDatabase(file: string): Promise<IdentityDataba
   const listInvites = db.prepare('SELECT id, created_at, expires_at, used_at, used_by, revoked_at, note FROM dsh_invite ORDER BY created_at')
   const sso = createSsoStore(db)
   sso.pruneAudit(Date.now())
+  const groups = createGroupStore(db)
   return {
     db,
     sso,
+    groups,
     mintInvite(ttlMs, note, now = Date.now()) {
       if (!Number.isSafeInteger(ttlMs) || ttlMs < 60_000) throw new Error('invite lifetime must be at least one minute')
       const code = newInviteCode(), hash = inviteHash(code), id = hash.slice(0, 12)

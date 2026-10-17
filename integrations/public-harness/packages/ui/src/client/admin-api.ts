@@ -9,6 +9,8 @@ export interface AdminUser {
   readonly role: 'admin' | 'member'; readonly roleSource: 'config' | 'emergency' | 'grant' | null
   readonly status: 'active' | 'disabled'; readonly disabledAt: number | null; readonly disabledReason: string | null
   readonly provider: string; readonly lastLoginAt: number | null
+  /** Direct group memberships (IDs); absent from older servers. */
+  readonly groups?: readonly string[]
 }
 export interface AdminUserPage { readonly total: number; readonly offset: number; readonly limit: number; readonly users: readonly AdminUser[]; readonly self: string }
 export interface AdminAuditEntry { readonly id: number; readonly at: number; readonly event: string; readonly outcome: string; readonly userId: string | null; readonly email: string | null; readonly ip: string | null; readonly detail: string | null }
@@ -24,6 +26,10 @@ export interface AdminSso {
 }
 export interface AdminQuota { readonly configuredDailyTokens: number; readonly defaultDailyTokens: number; readonly defaultOverride?: number; readonly overrides: ReadonlyArray<{ readonly userId: string; readonly dailyTokens: number }>
   readonly overLimit?: { readonly mode: OverLimitMode; readonly gracePercent: number } }
+/** One synced or local group. */
+export interface AdminGroup { readonly id: string; readonly source: 'oidc' | 'saml' | 'ldap' | 'wecom' | 'dingtalk' | 'local'; readonly externalId: string
+  readonly displayName: string | null; readonly parentId: string | null; readonly members: number; readonly updatedAt: number }
+export interface AdminGroupMember { readonly userId: string; readonly email: string | null; readonly name: string | null }
 /** What the quota proxy does when a user reaches the personal daily limit. */
 export type OverLimitMode = 'block' | 'grace' | 'warn'
 
@@ -52,6 +58,15 @@ export interface AdminApi {
   setOverLimit(mode: OverLimitMode, gracePercent: number, proof?: Proof): Promise<AdminQuota>
   /** Download address of the CSV export for these audit filters (same-origin; the browser's session authenticates it). */
   auditCsvUrl(query: { event?: string; outcome?: string; q?: string }): string
+  groups(): Promise<readonly AdminGroup[]>
+  groupMembers(id: string): Promise<readonly AdminGroupMember[]>
+  createGroup(name: string): Promise<AdminGroup>
+  /** Rename a local group, or set (null clears) the alias of a synced one. */
+  nameGroup(id: string, op: 'rename' | 'alias', name: string | null): Promise<AdminGroup>
+  deleteGroup(id: string, proof?: Proof): Promise<void>
+  setGroupMember(groupId: string, userId: string, op: 'add' | 'remove', proof?: Proof): Promise<void>
+  /** Raw JSON call for the knowledge-base client (same error handling). */
+  call(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown): Promise<unknown>
 }
 
 /** Build the client: same-origin GETs and JSON POSTs.
@@ -59,10 +74,10 @@ export interface AdminApi {
  * @returns The client.
  */
 export function createAdminApi(fetcher?: typeof fetch): AdminApi {
-  const request = async (path: string, body?: unknown): Promise<unknown> => {
-    const init: RequestInit = body === undefined
+  const request = async (path: string, body?: unknown, method?: 'GET' | 'POST' | 'PUT' | 'DELETE'): Promise<unknown> => {
+    const init: RequestInit = body === undefined && (method === undefined || method === 'GET')
       ? { credentials: 'same-origin', headers: { accept: 'application/json' } }
-      : { method: 'POST', credentials: 'same-origin', headers: { accept: 'application/json', 'content-type': 'application/json' }, body: JSON.stringify(body) }
+      : { method: method ?? 'POST', credentials: 'same-origin', headers: { accept: 'application/json', 'content-type': 'application/json' }, body: JSON.stringify(body ?? {}) }
     const reply = await (fetcher ?? globalThis.fetch)(`${ADMIN_PATH}${path}`, init)
     let parsed: unknown
     try { parsed = await reply.json() } catch { parsed = undefined }
@@ -96,5 +111,12 @@ export function createAdminApi(fetcher?: typeof fetch): AdminApi {
     setUserQuota: async (userId, dailyTokens, p) => await request('/quota/user', { userId, dailyTokens, ...proof(p) }) as AdminQuota,
     setOverLimit: async (mode, gracePercent, p) => await request('/quota/over-limit', { mode, gracePercent, ...proof(p) }) as AdminQuota,
     auditCsvUrl: query => `${ADMIN_PATH}/audit.csv${qs(query)}`,
+    groups: async () => (await request('/groups') as { groups: AdminGroup[] }).groups,
+    groupMembers: async id => (await request(`/groups/members${qs({ group: id })}`) as { members: AdminGroupMember[] }).members,
+    createGroup: async name => (await request('/groups', { op: 'create', name }) as { group: AdminGroup }).group,
+    nameGroup: async (id, op, name) => (await request('/groups', { op, id, name }) as { group: AdminGroup }).group,
+    deleteGroup: async (id, p) => { await request('/groups', { op: 'delete', id, ...proof(p) }) },
+    setGroupMember: async (groupId, userId, op, p) => { await request('/groups/members', { op, groupId, userId, ...proof(p) }) },
+    call: (method, path, body) => request(path, body, method),
   }
 }
