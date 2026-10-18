@@ -85,7 +85,7 @@ describe('inventory, preview and limits', () => {
     // Page count above the limit (set directly; a real compile would have written the pages).
     s.service.core.store.kb.setStats(a.bytes, 5, 0, Date.now(), a.id)
     const all = (await admin.get('/admin/kb')).body
-    expect(all.totals).toEqual({ all: 2, over: 1 })
+    expect(all.totals).toEqual({ all: 2, over: 1, archived: 0 })
     const over = (await admin.get('/admin/kb?filter=over')).body.kbs
     expect(over.map((k: { id: string }) => k.id)).toEqual([a.id])
     expect(over[0]).toMatchObject({ ownerEmail: 'alice@example.test', over: [{ limit: 'max_pages', value: 5, allowed: 1 }], share: { state: 'private' } })
@@ -123,5 +123,40 @@ describe('inventory, preview and limits', () => {
       'admin-kb-limit-change scope=group:wecom:7 limit=max_kbs old=inherit new=3', 'admin-kb-limit-change scope=group:wecom:1 limit=max_kbs old=inherit new=unlimited',
       'admin-kb-limit-change scope=global:* limit=max_pages old=2000 new=unlimited', 'admin-kb-limit-change scope=user:bob limit=max_kbs old=inherit new=2',
       'admin-kb-limit-delete scope=user:bob limit=max_kbs old=2 new=inherit'])
+  })
+})
+
+describe('org knowledge base archive', () => {
+  it('archives_and_restores_an_org_kb_removing_and_returning_it_in_reader_views_with_audit', async () => {
+    const s = await start(); await people(s)
+    const admin = s.as('root', 'admin')
+    const kb = (await admin.post('/admin/kb/org', { title: 'Old handbook' })).body.kb
+    await admin.post('/admin/kb/org/edit', { kb: kb.id, path: 'wiki/a.md', text: '# A' })
+    await admin.post('/admin/kb/org/rollback', { kb: kb.id, scope: [{ kind: 'group', target: 'wecom:7' }] })
+    expect(await readdir(join(s.root, 'views', 'bob'))).toEqual(['old-handbook'])
+
+    expect((await s.as('bob').post('/admin/kb/org/archive', { kb: kb.id })).status).toBe(403)
+    expect((await admin.post('/admin/kb/org/archive', { kb: 'kb_nope' })).body.code).toBe('kb-not-found')
+    const archived = (await admin.post('/admin/kb/org/archive', { kb: kb.id })).body.kb
+    expect(archived.archivedAt).not.toBeNull()
+    expect(await readdir(join(s.root, 'views', 'bob'))).toEqual([])
+    expect((await s.as('bob').get('/me/kb/shared')).body.kbs).toEqual([])
+    // Archived org KBs refuse edits, compiles, publishing and a second archive; they are filterable in the inventory.
+    expect((await admin.post('/admin/kb/org/edit', { kb: kb.id, path: 'wiki/a.md', text: 'x' })).body.code).toBe('archived')
+    expect((await admin.post('/admin/kb/org/rollback', { kb: kb.id })).body.code).toBe('archived')
+    expect((await admin.post('/admin/kb/org/archive', { kb: kb.id })).body.code).toBe('archived')
+    const inv = (await admin.get('/admin/kb?filter=archived')).body
+    expect(inv.kbs.map((k: { id: string }) => k.id)).toEqual([kb.id])
+    expect(inv.totals.archived).toBe(1)
+    expect((await admin.get('/admin/kb?filter=all')).body.kbs.map((k: { id: string }) => k.id)).toContain(kb.id)
+
+    expect((await admin.post('/admin/kb/org/restore', { kb: kb.id })).body.kb.archivedAt).toBeNull()
+    expect(await readdir(join(s.root, 'views', 'bob'))).toEqual(['old-handbook'])
+    expect((await admin.post('/admin/kb/org/restore', { kb: kb.id })).body.code).toBe('not-archived')
+    expect((await audit(s)).filter(e => /^admin-kb-org-(archive|restore) /.test(e))).toEqual([`admin-kb-org-archive kb=${kb.id}`, `admin-kb-org-restore kb=${kb.id}`])
+
+    // Personal KBs are archived by their owner, not through the org routes.
+    const personal = (await s.as('alice').post('/me/kb', { title: 'Mine' })).body.kb
+    expect((await admin.post('/admin/kb/org/archive', { kb: personal.id })).body.code).toBe('not-org')
   })
 })

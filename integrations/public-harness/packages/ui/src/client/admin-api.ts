@@ -120,7 +120,10 @@ export interface AdminApi {
   rejectKb(id: string, reason: string): Promise<void>
   setKbScope(kbId: string, scope: readonly KbScopeEntry[], proof?: Proof): Promise<void>
   revokeKb(kbId: string, proof?: Proof): Promise<void>
-  kbInventory(filter: 'all' | 'over' | 'published' | 'pending'): Promise<{ kbs: readonly AdminKb[]; totals: { all: number; over: number } }>
+  kbInventory(filter: 'all' | 'over' | 'published' | 'pending' | 'archived'): Promise<{ kbs: readonly AdminKb[]; totals: { all: number; over: number; archived: number } }>
+  /** Archive an org KB (out of every reader's view, read-only) or restore it as it was. */
+  archiveOrgKb(kb: string, proof?: Proof): Promise<AdminKb>
+  restoreOrgKb(kb: string, proof?: Proof): Promise<AdminKb>
   kbPreview(userId: string): Promise<AdminKbPreview>
   kbContent(kb: string, path?: string, rev?: string): Promise<AdminKbContent & AdminKbFile>
   createOrgKb(title: string, description: string, proof?: Proof): Promise<AdminKb>
@@ -193,7 +196,9 @@ export function createAdminApi(fetcher?: typeof fetch): AdminApi {
     rejectKb: async (id, reason) => { await request('/kb/requests/reject', { id, reason }) },
     setKbScope: async (kb, scope, p) => { await request('/kb/scope', { kb, scope, ...proof(p) }) },
     revokeKb: async (kb, p) => { await request('/kb/revoke', { kb, ...proof(p) }) },
-    kbInventory: async filter => await request(`/kb${qs({ filter })}`) as { kbs: AdminKb[]; totals: { all: number; over: number } },
+    kbInventory: async filter => await request(`/kb${qs({ filter })}`) as { kbs: AdminKb[]; totals: { all: number; over: number; archived: number } },
+    archiveOrgKb: async (kb, p) => (await request('/kb/org/archive', { kb, ...proof(p) }) as { kb: AdminKb }).kb,
+    restoreOrgKb: async (kb, p) => (await request('/kb/org/restore', { kb, ...proof(p) }) as { kb: AdminKb }).kb,
     kbPreview: async user => await request(`/kb/preview${qs({ user })}`) as AdminKbPreview,
     kbContent: async (kb, path, rev) => await request(`/kb/content${qs({ kb, path, rev })}`) as AdminKbContent & AdminKbFile,
     createOrgKb: async (title, description, p) => (await request('/kb/org', { title, description, ...proof(p) }) as { kb: AdminKb }).kb,

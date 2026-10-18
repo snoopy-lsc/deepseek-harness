@@ -124,6 +124,7 @@ export function openKbStore(file: string) {
       setStats: exec('UPDATE kb SET bytes = ?, pages = ?, sources = ?, updated_at = ? WHERE id = ?'),
       touch: exec('UPDATE kb SET updated_at = ? WHERE id = ?'),
       archive: exec('UPDATE kb SET archived_at = ?, updated_at = ? WHERE id = ? AND archived_at IS NULL'),
+      restore: exec('UPDATE kb SET archived_at = NULL, updated_at = ? WHERE id = ? AND archived_at IS NOT NULL'),
     },
     requests: {
       /** Insert a pending request, withdrawing any pending one of the same KB first (one pending per KB). Returns the withdrawn count. */

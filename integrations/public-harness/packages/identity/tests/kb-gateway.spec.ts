@@ -87,5 +87,12 @@ describe('knowledge base gateway', () => {
     expect(s.seen.length).toBe(seen)
     expect((await admin('PUT', '/kb/limits', { scope: { type: 'group', id: group.id }, name: 'max_kbs', value: 2, password: PASSWORD })).status).toBe(200)
     expect(s.kb.core.store.principals.get(s.member.id)).toMatchObject({ disabled: false, email: 'member@example.test' })
+    // Archiving and restoring an org KB are routed through and need re-authentication.
+    for (const path of ['/kb/org/archive', '/kb/org/restore']) {
+      const before = s.seen.length
+      expect(json(await admin('POST', path, { kb: 'kb_aaaaaaaaaaaaaaaa' }))).toEqual({ code: 'reauth-required', method: 'password' })
+      expect(s.seen.length).toBe(before)
+      expect(json(await admin('POST', path, { kb: 'kb_aaaaaaaaaaaaaaaa', password: PASSWORD }))).toEqual({ code: 'kb-not-found' })
+    }
   })
 })

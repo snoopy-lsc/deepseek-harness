@@ -18,13 +18,13 @@ import { IdentityUnavailableError } from './transports.ts'
 export const KB_ADMIN_ENDPOINTS = {
   GET: ['/kb', '/kb/requests', '/kb/requests/content', '/kb/preview', '/kb/limits', '/kb/limits/effective', '/kb/content'],
   POST: ['/kb/requests/approve', '/kb/requests/reject', '/kb/scope', '/kb/revoke', '/kb/convert', '/kb/org', '/kb/org/sources', '/kb/org/edit',
-    '/kb/org/compile', '/kb/org/rollback'],
+    '/kb/org/compile', '/kb/org/rollback', '/kb/org/archive', '/kb/org/restore'],
   PUT: ['/kb/limits'],
   DELETE: ['/kb/limits'],
 } as const
 /** Admin actions that need re-authentication, as `METHOD path`. */
 export const KB_REAUTH = new Set(['POST /kb/requests/approve', 'POST /kb/scope', 'POST /kb/revoke', 'POST /kb/convert', 'POST /kb/org', 'POST /kb/org/rollback',
-  'PUT /kb/limits', 'DELETE /kb/limits'])
+  'POST /kb/org/archive', 'POST /kb/org/restore', 'PUT /kb/limits', 'DELETE /kb/limits'])
 /** Personal endpoints, by method (path after `/account/api/me`). */
 export const KB_ME_ENDPOINTS = {
   GET: ['/kb', '/kb/jobs', '/kb/shared'],

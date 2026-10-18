@@ -8,7 +8,7 @@ import type { AdminApi, AdminKb, AdminKbContent, AdminKbPreview, KbScopeEntry, P
 import { kbSize, ScopePicker, useDirectory } from './admin-kb.tsx'
 import { Card, date, errorText, field, fill, hint, label, Note, Row, select, type T, useReauth } from './admin-kit.tsx'
 
-type Filter = 'all' | 'over' | 'published' | 'pending'
+type Filter = 'all' | 'over' | 'published' | 'pending' | 'archived'
 type Attempt = (run: (proof: Proof) => Promise<void>) => void
 const textarea: CSSProperties = { boxSizing: 'border-box', width: '100%', minHeight: 220, resize: 'vertical', padding: '10px 12px', borderRadius: 'var(--dsw-radius-md)',
   border: '0.5px solid var(--dsw-alias-border-l2)', background: 'transparent', color: 'var(--dsw-alias-label-primary)', font: 'inherit', fontFamily: 'var(--dsw-font-mono, ui-monospace, monospace)', fontSize: 13, lineHeight: '20px' }
@@ -124,9 +124,9 @@ function Preview({ api, t }: { api: AdminApi; t: T }) {
 
 /** The inventory section. */
 export function KbInventory({ api, t }: { api: AdminApi; t: T }) {
-  const [filter, setFilter] = useState<Filter>('all'), [data, setData] = useState<{ kbs: readonly AdminKb[]; totals: { all: number; over: number } } | null>()
+  const [filter, setFilter] = useState<Filter>('all'), [data, setData] = useState<{ kbs: readonly AdminKb[]; totals: { all: number; over: number; archived: number } } | null>()
   const [note, setNote] = useState<{ ok: boolean; text: string }>(), [manage, setManage] = useState<AdminKb>(), [editor, setEditor] = useState<AdminKb>()
-  const [titleText, setTitleText] = useState(''), [description, setDescription] = useState('')
+  const [titleText, setTitleText] = useState(''), [description, setDescription] = useState(''), [archiving, setArchiving] = useState<AdminKb>()
   const load = useCallback(() => { api.kbInventory(filter).then(setData, () => setData(null)) }, [api, filter])
   useEffect(load, [load])
   const fail = useCallback((error: unknown) => setNote({ ok: false, text: errorText(t, error) }), [t])
@@ -136,10 +136,12 @@ export function KbInventory({ api, t }: { api: AdminApi; t: T }) {
     if (!titleText.trim()) return
     attempt(async proof => { const kb = await api.createOrgKb(titleText.trim(), description.trim(), proof); setTitleText(''); setDescription(''); load(); setEditor(kb) })
   }
-  const totals = data?.totals ?? { all: 0, over: 0 }
+  const totals = data?.totals ?? { all: 0, over: 0, archived: 0 }
+  const restore = (kb: AdminKb) => attempt(async proof => { await api.restoreOrgKb(kb.id, proof); setNote({ ok: true, text: t('kbRestoredNote') }); load() })
   return <>
     <SegmentedControl id="team-admin-kb-filter" label={t('kb')} value={filter} onChange={setFilter} options={[{ value: 'all', label: fill(t('kbFilterAll'), { n: totals.all }) },
-      { value: 'over', label: fill(t('kbFilterOver'), { n: totals.over }) }, { value: 'published', label: t('kbFilterPublished') }, { value: 'pending', label: t('kbFilterPending') }]} />
+      { value: 'over', label: fill(t('kbFilterOver'), { n: totals.over }) }, { value: 'published', label: t('kbFilterPublished') }, { value: 'pending', label: t('kbFilterPending') },
+      { value: 'archived', label: fill(t('kbFilterArchived'), { n: totals.archived }) }]} />
     <Note note={note} />
     <Card testId="kb-inventory">
       {data === undefined ? <Row title={t('loading')} end /> : data === null ? <Row title={t('failed')} end />
@@ -154,8 +156,11 @@ export function KbInventory({ api, t }: { api: AdminApi; t: T }) {
               kb.share.state === 'published' ? scopeSummary(t, kb.share.scope) : undefined, kb.convertedTo !== null ? t('kbConvertedTo') : undefined,
               ...kb.over.map(o => fill(t('kbOverDetail'), { limit: t(`kbLimit_${o.limit}`), value: o.limit === 'max_bytes' ? kbSize(o.value) : o.value, allowed: o.limit === 'max_bytes' ? kbSize(o.allowed) : o.allowed }))].filter(Boolean).join(' · ')}>
             <span style={{ display: 'inline-flex', gap: 8 }}>
-              {kb.share.state === 'published' && <Button variant="outline" size="sm" onClick={() => setManage(kb)} data-team-admin-kb-manage-open>{t('kbActions')}</Button>}
-              {kb.kind === 'org' && <Button variant="outline" size="sm" onClick={() => setEditor(kb)} data-team-admin-kb-open>{t('kbEditor')}</Button>}
+              {kb.share.state === 'published' && kb.archivedAt === null && <Button variant="outline" size="sm" onClick={() => setManage(kb)} data-team-admin-kb-manage-open>{t('kbActions')}</Button>}
+              {kb.kind === 'org' && kb.archivedAt === null && <Button variant="outline" size="sm" onClick={() => setEditor(kb)} data-team-admin-kb-open>{t('kbEditor')}</Button>}
+              {kb.kind === 'org' && (kb.archivedAt === null
+                ? <Button variant="outline" size="sm" onClick={() => setArchiving(kb)} data-team-admin-kb-archive>{t('kbArchive')}</Button>
+                : <Button variant="outline" size="sm" onClick={() => restore(kb)} data-team-admin-kb-restore>{t('kbRestore')}</Button>)}
             </span>
           </Row>)}
     </Card>
@@ -172,6 +177,12 @@ export function KbInventory({ api, t }: { api: AdminApi; t: T }) {
     <Preview api={api} t={t} />
     {manage !== undefined && <Manage api={api} t={t} kb={manage} attempt={attempt} onClose={() => setManage(undefined)} onDone={text => { setManage(undefined); setNote({ ok: true, text }); load() }} />}
     {editor !== undefined && <OrgEditor api={api} t={t} kb={editor} attempt={attempt} onClose={() => setEditor(undefined)} onChanged={load} />}
+    {archiving !== undefined && <Modal open onClose={() => setArchiving(undefined)} title={t('kbArchive')} closeLabel={t('cancel')} description={fill(t('kbArchiveConfirm'), { title: archiving.title })}>
+      <div data-team-admin-kb-archive-confirm style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+        <Button variant="outline" onClick={() => setArchiving(undefined)}>{t('cancel')}</Button>
+        <Button variant="primary" onClick={() => { const kb = archiving; setArchiving(undefined); attempt(async proof => { await api.archiveOrgKb(kb.id, proof); setNote({ ok: true, text: t('kbArchivedNote') }); load() }) }}>{t('kbArchive')}</Button>
+      </div>
+    </Modal>}
     {dialog}
   </>
 }

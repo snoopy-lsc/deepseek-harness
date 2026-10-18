@@ -83,10 +83,11 @@ export function orgModule(core: KbCore, jobs: ReturnType<typeof compileJobs> | u
   return {
     'GET /admin/kb': async ({ query }) => {
       const filter = query.get('filter') ?? 'all', kind = query.get('kind') ?? 'all'
-      if (!['all', 'over', 'published', 'pending'].includes(filter) || !['all', 'personal', 'org'].includes(kind)) throw new KbError(400, 'filter')
+      if (!['all', 'over', 'published', 'pending', 'archived'].includes(filter) || !['all', 'personal', 'org'].includes(kind)) throw new KbError(400, 'filter')
       const rows = store.kb.all().filter(kb => kind === 'all' || kb.kind === kind).map(inventoryRow)
-        .filter(row => filter === 'all' || (filter === 'over' ? row.over.length > 0 : row.share.state === filter))
-      return { kbs: rows, totals: { all: store.kb.all().length, over: store.kb.all().filter(kb => overOf(kb).length > 0).length } }
+        .filter(row => filter === 'all' || (filter === 'over' ? row.over.length > 0 : filter === 'archived' ? row.archivedAt !== null : row.share.state === filter))
+      const every = store.kb.all()
+      return { kbs: rows, totals: { all: every.length, over: every.filter(kb => overOf(kb).length > 0).length, archived: every.filter(kb => kb.archivedAt !== null).length } }
     },
     'GET /admin/kb/preview': async ({ query }) => {
       const user = query.get('user') ?? ''
@@ -183,6 +184,27 @@ export function orgModule(core: KbCore, jobs: ReturnType<typeof compileJobs> | u
       core.audit('admin-kb-rollback', req.actor.email, `kb=${kb.id} commit=${commit.slice(0, 12)} snap=${snapshotId} head=${commit === head ? 1 : 0} ${scopeDetail(scope)}`)
       const views = await reconcileViews(core)
       return { snapshotId, commit, scope, views: views.length }
+    },
+    /** Archive an org KB: it leaves every reader's view at once and refuses edits, compiles and publishing; its repository,
+     * publication and scope are kept so a restore brings it back as it was. */
+    'POST /admin/kb/org/archive': async req => {
+      const body = await req.json()
+      const kb = orgOf(body.kb)
+      if (store.jobs.byKb(kb.id).some(job => job.state === 'queued' || job.state === 'running')) throw new KbError(409, 'job-active')
+      store.kb.archive(clock(), clock(), kb.id)
+      core.audit('admin-kb-org-archive', req.actor.email, `kb=${kb.id}`)
+      await reconcileViews(core)
+      return { kb: inventoryRow(store.kb.get(kb.id)!) }
+    },
+    'POST /admin/kb/org/restore': async req => {
+      const body = await req.json()
+      const kb = kbOf(body.kb)
+      if (kb.kind !== 'org') throw new KbError(409, 'not-org')
+      if (kb.archivedAt === null) throw new KbError(409, 'not-archived')
+      store.kb.restore(clock(), kb.id)
+      core.audit('admin-kb-org-restore', req.actor.email, `kb=${kb.id}`)
+      await reconcileViews(core)
+      return { kb: inventoryRow(store.kb.get(kb.id)!) }
     },
     /** Convert a published personal KB into an org KB maintained by admins; the author is notified in the personal center. */
     'POST /admin/kb/convert': async req => {

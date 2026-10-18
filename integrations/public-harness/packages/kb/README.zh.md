@@ -64,7 +64,9 @@ token 通过配额服务计费：每个任务用控制调用 `open-job` 打开�
 
 组织知识库是服务自有的仓库，位于 `<kbRoot>/org/<kbId>/`，由助手以服务账号运行（`orgRunner`）。`POST /admin/kb/org` `{ title, description? }` 创建（需重新验证身份）；`POST /admin/kb/org/sources?kb=&name=` 上传资料；`POST /admin/kb/org/edit` `{ kb, path, text, message? }` 提交 `wiki/<page>.md`、`index.md` 或 `schema.md`；`POST /admin/kb/org/compile` `{ kb, op }` 排入编译任务，费用计入该知识库自己的账户 `org-kb-<kbId>`；`POST /admin/kb/org/rollback` `{ kb, commit?, scope?, includeRaw? }` 发布 HEAD 或更早的提交（需重新验证身份）。`GET /admin/kb/content?kb=[&path=&rev=]` 列出组织知识库的文件和历史；对个人知识库只从其有效发布中返回文件（每次读取文件都会审计），否则只返回元数据。`POST /admin/kb/convert` `{ kb }` 用已发布的树把已发布的个人知识库转为组织知识库，转移可见范围，作者的知识库恢复为私有，并在个人中心显示 `converted` 状态。
 
-`GET /admin/kb?filter=all|over|published|pending` 是清单，包含所有者、大小、共享状态、可见范围和超限标记；`GET /admin/kb/preview?user=` 列出某个用户能阅读的内容。`GET /admin/kb/limits` 返回全局值和所有覆盖；`PUT /admin/kb/limits` `{ scope: { type, id }, name, value }` 设置数值（`null` 表示不限），`DELETE /admin/kb/limits` `{ scope, name }` 删除用户组或用户覆盖；两者都需要重新验证身份，并写入带新旧值的 `admin-kb-limit-change` 或 `admin-kb-limit-delete`。身份服务会拒绝指向未知用户组的范围。`GET /admin/kb/limits/effective?user=` 返回每个数值及其来源，以及该用户的用量。
+`POST /admin/kb/org/archive` `{ kb }` 归档组织知识库（需重新验证身份；有排队或运行中的编译时拒绝）：它立即从所有读者视图中移除，并拒绝编辑、编译和发布，但仓库、发布和可见范围都会保留，因此 `POST /admin/kb/org/restore` `{ kb }` 能把它原样恢复。两者都会记录审计（`admin-kb-org-archive`、`admin-kb-org-restore`）。
+
+`GET /admin/kb?filter=all|over|published|pending|archived` 是清单，包含所有者、大小、共享状态、可见范围和超限标记；`GET /admin/kb/preview?user=` 列出某个用户能阅读的内容。`GET /admin/kb/limits` 返回全局值和所有覆盖；`PUT /admin/kb/limits` `{ scope: { type, id }, name, value }` 设置数值（`null` 表示不限），`DELETE /admin/kb/limits` `{ scope, name }` 删除用户组或用户覆盖；两者都需要重新验证身份，并写入带新旧值的 `admin-kb-limit-change` 或 `admin-kb-limit-delete`。身份服务会拒绝指向未知用户组的范围。`GET /admin/kb/limits/effective?user=` 返回每个数值及其来源，以及该用户的用量。
 
 <a id="skills"></a>
 ## 技能

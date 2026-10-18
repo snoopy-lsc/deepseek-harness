@@ -68,3 +68,15 @@ describe('System Admin knowledge base inventory and limits client', () => {
     expect(parseLimit('max_pages', '1.5', [1, 1_000_000])).toBeUndefined()
   })
 })
+
+describe('System Admin org knowledge base archive client', () => {
+  it('archives_and_restores_with_the_reauth_proof_and_filters_archived', async () => {
+    const r = recorder({ kb: { id: 'kb_a' }, kbs: [], totals: { all: 1, over: 0, archived: 1 } })
+    await r.api.archiveOrgKb('kb_a', { password: 'pw' })
+    await r.api.restoreOrgKb('kb_a', { password: 'pw' })
+    expect((await r.api.kbInventory('archived')).totals.archived).toBe(1)
+    expect(r.calls.map(c => `${c.init.method ?? 'GET'} ${c.url}`)).toEqual(['POST /api/admin/kb/org/archive', 'POST /api/admin/kb/org/restore', 'GET /api/admin/kb?filter=archived'])
+    expect(JSON.parse(String(r.calls[0]!.init.body))).toEqual({ kb: 'kb_a', password: 'pw' })
+    expect(kbAdminCopy.en.kbFilterArchived).toContain('{n}')
+  })
+})

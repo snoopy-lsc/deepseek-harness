@@ -24,7 +24,8 @@ export function visibleEntries(core: KbCore, userId: string): ViewEntry[] {
   const visible: Array<{ kb: KbRow; snapshotId: string }> = []
   for (const publication of store.publications.active()) {
     const kb = store.kb.get(publication.kbId)
-    if (kb === undefined) continue
+    // An archived KB keeps its publication and scope for a later restore but is out of every reader's view.
+    if (kb === undefined || kb.archivedAt !== null) continue
     const scopes = store.scopes.get(kb.id)
     if (scopes.some(s => s.kind === 'company' || (s.kind === 'group' && groups.has(s.target)) || (s.kind === 'user' && s.target === userId))) visible.push({ kb, snapshotId: publication.snapshotId })
   }
