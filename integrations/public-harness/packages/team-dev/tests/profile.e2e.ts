@@ -83,7 +83,6 @@ describe('team-dev dsh profile', () => {
         const socket = new WebSocket(`ws://127.0.0.1:${port}/u/${userId}/api/remote.mux`, {
           headers: { cookie: cookieHeader },
         })
-        const attachmentId = randomUUID()
         const frames: Array<{ type: string; value?: { type?: string; data?: string }; error?: object }> = []
         socket.on('message', bytes => { frames.push(JSON.parse(bytes.toString())) })
         try {
@@ -91,11 +90,13 @@ describe('team-dev dsh profile', () => {
             socket.once('open', resolve)
             socket.once('error', reject)
           })
-          socket.send(JSON.stringify({ type: 'open', streamId: id, endpoint: 'terminal/follow',
-            payload: { args: { agentId: sessionId, id, attachmentId } } }))
+          // terminal/attach is one duplex stream: frames arrive as items, and input goes up the same stream as numbered write items.
+          socket.send(JSON.stringify({ type: 'open', streamId: id, endpoint: 'terminal/attach',
+            payload: { args: { agentId: sessionId, id } } }))
           await expect.poll(() => frames.map(frame => frame.value?.type ?? frame.error), { timeout: 10_000 }).toContain('snapshot')
-          expect((await rpc('terminal/write', { agentId: sessionId, id, attachmentId,
-            data: `node -e "console.log('team'+'-exec-success')"\r` })).result.ok).toBe(true)
+          socket.send(JSON.stringify({ type: 'item', streamId: id,
+            value: { type: 'write', sequence: 1, data: `node -e "console.log('team'+'-exec-success')"\r` } }))
+          await expect.poll(() => frames.some(frame => frame.value?.type === 'ack' && (frame.value as { sequence?: number }).sequence === 1), { timeout: 10_000 }).toBe(true)
           await expect.poll(() => frames.map(frame => frame.value?.data ?? '').join(''), { timeout: 10_000 })
             .toContain('team-exec-success')
         } finally { socket.terminate() }
