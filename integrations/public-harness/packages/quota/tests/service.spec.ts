@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { parseUserId } from '@public-harness/contracts'
-import { createQuotaControlClient, startQuotaControlServer } from '../src/control.ts'
+import { createQuotaControlClient, startQuotaControlServer, startQuotaJobServer } from '../src/control.ts'
 import { createRejectionCounter, sanitizeDiagnostic } from '../src/health.ts'
 import { createQuotaService, validateQuotaServiceConfig, type QuotaService, type QuotaServiceConfig } from '../src/service.ts'
 
@@ -138,6 +138,25 @@ describe('production quota service', () => {
     await expect(requestLine(socket, { op: 'shell', cmd: 'id' })).rejects.toThrow('invalid request')
     await expect(requestLine(socket, { op: 'issue', userId: '../x', instanceId: 'a' })).rejects.toThrow()
     await expect(requestLine(socket, { op: 'issue', userId: 'alice', instanceId: 'a/b' })).rejects.toThrow('invalid request')
+  })
+
+  it.skipIf(process.platform === 'win32')('gives the knowledge base service a job socket that reaches only kbjob channels', async () => {
+    const { config, calls } = await setup()
+    const service = await start(config, calls)
+    const socket = join(config.stateDir, 'jobs.sock')
+    const server = await startQuotaJobServer(socket, service)
+    closers.push(() => server.close())
+    const client = createQuotaControlClient(socket)
+    const principal = parseUserId('org-kb-kb_x')
+    expect((await client.openJob(principal, 'kbjob-job_2')).port).toBeGreaterThan(0)
+    expect((await client.issue(principal, 'kbjob-job_2')).token).toMatch(/\./)
+    await client.closeJob('kbjob-job_2')
+    // A user's harness listener, its tokens, health, and closing a user are the provisioner's alone.
+    await expect(client.open(alice, 'instance-9')).rejects.toThrow('invalid request')
+    await expect(client.issue(alice, 'instance-9')).rejects.toThrow('invalid request')
+    await expect(client.close(alice)).rejects.toThrow('invalid request')
+    await expect(client.healthy()).rejects.toThrow('invalid request')
+    await expect(client.openJob(alice, 'instance-9')).rejects.toThrow('invalid request')
   })
 })
 

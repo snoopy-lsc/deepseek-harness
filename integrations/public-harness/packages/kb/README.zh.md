@@ -76,7 +76,7 @@ token 通过配额服务计费：每个任务用控制调用 `open-job` 打开�
 <a id="user-helper"></a>
 ## 用户助手
 
-对用户目录树的所有操作（创建、上传、提交、导出、统计、应用编译结果）都在 `helper.ts` 中以目录所有者的身份运行。生产环境用 `systemd-run --uid=<user> --pipe --wait` 启动它并施加沙箱（无网络、禁止提权、系统只读、只能写用户的 `kb` 目录）；开发环境直接启动。git 运行时禁用 hooks、fsmonitor 和系统配置。助手返回的归档都会校验：只允许普通文件和目录，不允许链接或设备，不允许绝对路径或 `..`，有数量和大小上限，并按扩展名白名单过滤。
+对用户目录树的所有操作（创建、上传、提交、导出、统计、应用编译结果）都在 `helper.ts` 中以目录所有者的身份运行。生产环境用 `systemd-run --uid=<user> --pipe --wait` 启动它并施加沙箱（无网络、禁止提权、系统只读、只能写用户的 `kb` 目录）；开发环境直接启动。服务本身没有特权：生产环境只通过 root 助手套接字访问助手（`root-helper.ts`，`createRootHelperRunner`）。每个连接只带一个请求，即 `{ verb, userId, args, input }` 和输入字节。root 助手只接受助手的固定动词和按动词白名单检查的参数，自行重新推导账号及其规范路径 `<storageRoot>/users/<account>/kb`（无符号链接、父目录属于 root、`kb` 属于该账号），之后才启动 `systemd-run`；服务发来的任何路径和 ID 都被忽略。git 运行时禁用 hooks、fsmonitor 和系统配置。助手返回的归档都会校验：只允许普通文件和目录，不允许链接或设备，不允许绝对路径或 `..`，有数量和大小上限，并按扩展名白名单过滤。
 
 <a id="development"></a>
 ## 开发环境
@@ -86,9 +86,9 @@ token 通过配额服务计费：每个任务用控制调用 `open-job` 打开�
 <a id="tests"></a>
 ## 测试
 
-`threats.spec.ts` 逐项检查威胁表：只含只读硬链接、没有符号链接的范围内视图，不可变快照，默认排除原始资料，立即生效的撤销，个人树中的符号链接，管理员只读元数据，成员访问，路径技巧以及资料围栏；它还检查技能及其启动补丁行。`org.spec.ts` 覆盖组织知识库（创建、上传、页面编辑、计入组织账户的编译、历史、发布与回滚）、转换、清单与预览以及限额接口。`share.spec.ts` 覆盖申请、审核、带或不带 `raw/` 的批准、驳回、重新提交、过期、范围变更、撤销，以及视图随用户组变化和用户停用而更新。`compile.spec.ts` 覆盖资料转换、使用模拟模型的编译与检查、任务（快进、冲突分支、超限分支、增量编译、上限、额度失败），以及通过真实配额任务通道计入作者的 token。`personal.spec.ts` 覆盖限额、归档校验、助手、通过 socket 的个人创建、上传与归档、恶意仓库配置以及生产助手参数。`mounts.spec.ts` 检查生成的 systemd unit、podman 卷及其参数校验、视图目录创建和开发环境链接。
+`threats.spec.ts` 逐项检查威胁表：只含只读硬链接、没有符号链接的范围内视图，不可变快照，默认排除原始资料，立即生效的撤销，个人树中的符号链接，管理员只读元数据，成员访问，路径技巧以及资料围栏；它还检查技能及其启动补丁行。`org.spec.ts` 覆盖组织知识库（创建、上传、页面编辑、计入组织账户的编译、历史、发布与回滚）、转换、清单与预览以及限额接口。`share.spec.ts` 覆盖申请、审核、带或不带 `raw/` 的批准、驳回、重新提交、过期、范围变更、撤销，以及视图随用户组变化和用户停用而更新。`compile.spec.ts` 覆盖资料转换、使用模拟模型的编译与检查、任务（快进、冲突分支、超限分支、增量编译、上限、额度失败），以及通过真实配额任务通道计入作者的 token。`personal.spec.ts` 覆盖限额、归档校验、助手、通过 socket 的个人创建、上传与归档、恶意仓库配置以及生产助手参数。`root-helper.spec.ts` 覆盖 root 助手的威胁：固定集合之外的动词、向助手命令行注入参数、用户 ID 和路径中的路径穿越、目录路径上任意位置的符号链接、错误的所有者，以及多余或超大的输入。`mounts.spec.ts` 检查生成的 systemd unit、podman 卷及其参数校验、视图目录创建和开发环境链接。
 
 <a id="not-verified"></a>
 ## 开发主机上未验证的部分
 
-`systemd-run` 助手、`BindPaths` 与 `BindReadOnlyPaths` 绑定以及 podman 卷只按生成的配置检查；需要在原生主机上验证。`threats.spec.ts` 中的 gVisor 视图刷新测试只在装有 runsc 和 podman 的主机上以 `PUBLIC_HARNESS_GVISOR=1` 运行；在那里通过之前，容器实例在范围变化后应回退为重启。生产环境的 `kb` 配置在确定其运行账号之前不附带 systemd 单元。
+`systemd-run` 助手、`deploy/native/systemd` 中的单元（`dsh-kb.service`、`dsh-kb-root.socket`、`dsh-kb-root@.service`）、套接字激活及套接字的组权限、`BindPaths` 与 `BindReadOnlyPaths` 绑定以及 podman 卷只按生成的配置检查；需要在原生主机上验证。`threats.spec.ts` 中的 gVisor 视图刷新测试只在装有 runsc 和 podman 的主机上以 `PUBLIC_HARNESS_GVISOR=1` 运行；在那里通过之前，容器实例在范围变化后应回退为重启。root 助手的能力边界集只保留 `CAP_SYS_ADMIN` 时 PID 1 是否接受它创建临时单元，需要在原生主机上确认。

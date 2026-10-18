@@ -1,0 +1,16 @@
+[Unit]
+Description=Native public Harness knowledge base root helper socket (only the dsh-kb account may connect)
+PartOf=dsh-public.target
+
+[Socket]
+ListenStream=/run/dsh-public/kb-root.sock
+SocketUser=root
+SocketGroup=dsh-kb
+SocketMode=0660
+# One short-lived dsh-kb-root@.service per connection: no daemon keeps root state between requests.
+Accept=yes
+MaxConnections=16
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

@@ -63,10 +63,10 @@ The design builds on what the code does today:
 <a id="architecture-overview"></a>
 ## Architecture overview
 
-A new host service, `dsh-kb`, owns KB metadata, submissions, published snapshots, per-user views, and the compile queue. It runs as a dedicated system account, listens only on a private Unix socket (`DSH_KB_SOCKET`, mode 0600, like the quota account socket), and never on TCP. Identity stays the only HTTP surface: it authenticates the browser, enforces the admin rules, writes `dsh_audit`, and calls `dsh-kb` over the socket with the acting user ID.
+A new host service, `dsh-kb`, owns KB metadata, submissions, published snapshots, per-user views, and the compile queue. It runs as a dedicated system account, listens only on a private Unix socket (`DSH_KB_SOCKET`, mode 0660 for a group shared only with the identity service, like the quota account socket), and never on TCP. Identity stays the only HTTP surface: it authenticates the browser, enforces the admin rules, writes `dsh_audit`, and calls `dsh-kb` over the socket with the acting user ID.
 
 - **Personal KB writes** happen inside the user's instance (the agent, the terminal, file uploads) on the read-write mount, or through the personal center.
-- **Git operations on user trees** run as the user's own UID through a transient `systemd-run` unit with the same sandbox as the instance, so the host never follows paths that the user controls.
+- **Git operations on user trees** run as the user's own UID through a transient `systemd-run` unit with the same sandbox as the instance, so the host never follows paths that the user controls. The `dsh-kb` service itself runs as its own unprivileged account; only starting that unit needs root, and a socket-activated root helper does it (see [Service account and root helper](#service-account-and-root-helper)).
 - **Compile jobs** run in a worker sandbox on a copy of the tree; the result is committed back as the user.
 - **Shared reading** happens through the read-only `kb/shared` view; queries use the built-in read and search tools plus a query skill.
 - **Group data** comes from new identity tables refreshed at sign-in and reconciliation.
@@ -177,12 +177,12 @@ CREATE TABLE IF NOT EXISTS kb_view_state (
         ├── index.md                              catalog: one line per page, read first by queries
         └── log.md                                append-only ingest / lint / edit history
 
-<kbRoot>/ (default /srv/dsh-public/kb)           root:dsh-kb 0750, hidden from instances (InaccessiblePaths)
+<kbRoot>/ (default /var/lib/dsh-public/kb)       dsh-kb:dsh-kb 0750, hidden from instances (InaccessiblePaths)
 ├── kb.sqlite                                     KB metadata (see data model)
 ├── org/<kbId>.git/                               bare repositories of company / department KBs
 ├── submissions/<requestId>/                      validated export of a submitted commit, read-only
-├── published/<kbId>/<snapshotId>/                immutable published tree, files root:root 0444
-├── views/<account>/                              root-owned per-user view, bound read-only into the instance
+├── published/<kbId>/<snapshotId>/                immutable published tree, files dsh-kb 0444
+├── views/<account>/                              dsh-kb-owned per-user view, bound read-only into the instance
 │   └── <slug>/  ->  hard-linked copy of published/<kbId>/<snapshotId>/
 ├── jobs/<jobId>/                                 compile scratch space (worker-owned, deleted after the job)
 └── templates/                                    schema.md, index.md and log.md skeletons, query skill
@@ -204,7 +204,7 @@ Inside a native instance (paths as the instance sees them)
 
 - The instance sees exactly two KB paths: its own `kb/mine` (read-write) and its own `kb/shared` view (read-only). `<kbRoot>` is added to `InaccessiblePaths=`; the binds still land, as the resolver bind already shows.
 - A view contains only KBs whose scope includes the user; that set is computed on the host from `dsh_user_group` and `kb_scope`.
-- Published files are root-owned 0444 and directories 0555; snapshots are never modified in place, so a hard link never exposes later edits.
+- Published files are owned by the `dsh-kb` service account, 0444, and directories 0555; snapshots are never modified in place, so a hard link never exposes later edits.
 - Container instances get the same two paths as `--volume …:rw,Z` and `--volume …:ro,Z`.
 - The development runtime (macOS and Windows) has no mount isolation; it copies the view instead and is labeled as not enforcing.
 
@@ -226,6 +226,17 @@ Scope changes, group changes, revocations, and new approvals all change which KB
 - `kb/` and each repository are owned by the user's UID, mode 0700, created by the host the same way as `home` (held descriptors, no traversal of user trees as root).
 - The host never reads a user's KB tree as root. Exports for submission and compile run `git` as the user with `core.hooksPath=/dev/null`, `core.fsmonitor=false`, `GIT_CONFIG_NOSYSTEM=1`, and a scrubbed environment, and stream a `git archive` of the exact commit to the host.
 - The host validates the archive before using it: regular files and directories only, no links or devices, no absolute or `..` paths, a file-count and size limit, and an extension allow-list.
+
+<a id="service-account-and-root-helper"></a>
+### Service account and root helper
+
+- `dsh-kb` runs as the dedicated `dsh-kb` account (`deploy/native/systemd/dsh-kb.service`): `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome=yes`, `PrivateTmp`, `PrivateNetwork`, `RestrictAddressFamilies=AF_UNIX`, an empty `CapabilityBoundingSet`, `SystemCallFilter=@system-service` without `@mount` and `@setuid`, write access to `<kbRoot>` and its socket directory only, and tenant storage, secrets and provisioner state made inaccessible.
+- The account owns `<kbRoot>`, so the store, org repositories, submissions, published snapshots and the hard-link view swaps are its own files and need no root. Mounts are not its business: the instance units bind `kb/mine` and `kb/shared` when they start, as before.
+- It reaches three sockets through groups that hold nothing else: its own socket (group `dsh-kb-clients`, with the identity service), the quota service's job socket (group `dsh-kb-quota`; only `open-job`, `issue` and `close-job` for `kbjob-` channels), and the root helper socket.
+- The one step that needs root, starting the user helper as the tree's owner, moves to `dsh-kb-root`: `dsh-kb-root.socket` (`root:dsh-kb 0660`, `Accept=yes`) starts one short-lived `dsh-kb-root@.service` per connection. File permissions on the socket are the authorization; there is no sudo and no polkit rule, and no root daemon keeps state between requests.
+- One request per connection: a JSON header (verb, user ID, arguments, input length) and the input. The helper accepts only the fixed verb set of the user helper (`init`, `put`, `commit`, `head`, `archive`, `stats`, `apply`, `log`, `show`), checks every argument against a per-verb whitelist (IDs and commit hashes by pattern, relative paths without `..`, empty segments or a leading `-`, messages without control characters, bounded numbers), and refuses unknown keys.
+- The caller names only the user ID. The helper derives the account itself, reads its ids with `getent passwd` (never root, never below `minUid`), and requires the canonical `<storageRoot>/users/<account>/kb`: `<storageRoot>` must be its own real path, `users` and `users/<account>` root-owned real directories nobody else may write, and `kb` a real directory of the account. A symbolic link anywhere refuses the request; because `users/<account>` is root-owned, the account cannot swap `kb` for a link after the check.
+- It then starts the same hardened `systemd-run --uid` unit as before. The helper unit itself has `NoNewPrivileges`, no network, a read-only system and `<kbRoot>` hidden; it keeps `CAP_SYS_ADMIN`, the capability PID 1 checks before starting a transient unit for a D-Bus caller, with mount system calls filtered.
 
 <a id="share-approval-state-machine"></a>
 ## Share approval state machine
@@ -403,6 +414,8 @@ Three limits apply to personal KBs: `max_kbs` (personal KBs per user, archived o
 | Cross-site requests on admin or user writes | Existing Origin and JSON checks; re-auth for approve, scope, revoke, convert, and rollback |
 | Cost exhaustion through repeated compiles | Quota channel, per-KB serial queue, site worker cap, per-user job rate limit |
 | Path tricks through slugs or file names | Opaque IDs on disk; slugs restricted to `[a-z0-9-]`; archive paths validated |
+| The `dsh-kb` service is compromised | It runs as its own account with no capabilities and no network; it cannot read tenant storage, and can only ask the root helper for the fixed verbs on a canonical tree |
+| Argument injection, path traversal or symbolic links through the root helper | Fixed verb set, per-verb argument whitelist with unknown keys refused, account and tree re-derived from the user ID, link-free canonical path with owner checks (`root-helper.spec.ts`) |
 | The compile worker is compromised by a hostile source | Worker runs unprivileged in a sandbox with no network except the quota port, only on its job directory |
 
 <a id="phased-implementation-plan"></a>

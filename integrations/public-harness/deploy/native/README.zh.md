@@ -42,9 +42,11 @@ tsx deploy/native/scripts/host-preflight.ts /etc/dsh-public/provisioner.json /et
 | `dsh-identity` | `dsh-identity` | `identity/public.sock`、`identity-session/session.sock` | 自己的 SQLite 文件、额度账户 socket、sendmail 或 SMTP 中继、CAPTCHA 服务（阿里云、腾讯云或 Turnstile） |
 | `dsh-router` | `dsh-router` | `router/router.sock` | 身份会话 socket、配置服务 socket、实例 socket |
 | `dsh-provisioner` | root | `control/provisioner.sock` | 账号、配额、AppArmor、nftables、system unit |
-| `dsh-quota` | `dsh-quota` | 额度控制 socket、`quota-account/account.sock`（仅身份服务可连）和每实例回环端口 | 模型服务商 |
+| `dsh-quota` | `dsh-quota` | 额度控制 socket、`quota-account/account.sock`（仅身份服务可连）、`quota-jobs/jobs.sock`（仅知识库服务可连）和每实例回环端口 | 模型服务商 |
+| `dsh-kb`（可选） | `dsh-kb` | `kb/kb.sock`（仅身份服务可连） | 自己的知识库根目录、额度任务 socket、root 助手 socket；无网络 |
+| `dsh-kb-root@` | root，每个连接一个进程 | `kb-root.sock`（`root:dsh-kb 0660`，套接字激活） | 为一个校验过的助手请求执行 `systemd-run --uid` |
 
-Caddy 会移除调用方提供的身份和转发标头。它无法访问会话 socket，因此只有路由器能把 cookie 解析为用户。配置服务以 root 运行，但从不运行租户代码：每个实例以自己的账号运行在 `dsh-user-<id>.slice` 下的 `dsh-user-<id>.service` 中。
+Caddy 会移除调用方提供的身份和转发标头。它无法访问会话 socket，因此只有路由器能把 cookie 解析为用户。配置服务以 root 运行，但从不运行租户代码：每个实例以自己的账号运行在 `dsh-user-<id>.slice` 下的 `dsh-user-<id>.service` 中。知识库服务是可选的：把 `deploy/production/config/kb.example.json` 和 `kb-root.example.json` 复制为 `/etc/dsh-public/kb.json` 和 `kb-root.json`，在额度配置中加入 `jobSocket` 和 `jobSocketGid`（组 `dsh-kb-quota`），把配置服务的 `paths.kbRoot` 设为 `/var/lib/dsh-public/kb`，把 `kb` profile 写入 `/var/lib/dsh-public/kb-home`，然后启用 `dsh-kb-root.socket` 和 `dsh-kb.service`。`dsh-kb` 组中只有 `dsh-kb` 一个成员，所以只有它能打开 root 助手 socket。
 
 <a id="validate-before-admission"></a>
 ## 准入前验证

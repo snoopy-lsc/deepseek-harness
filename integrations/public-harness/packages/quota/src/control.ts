@@ -38,7 +38,22 @@ export function startQuotaControlServer(path: string, service: Pick<QuotaService
   }, access)
 }
 
-/** Client used by the provisioner; satisfies its `QuotaBridge` shape. */
+/** Serve the knowledge base service's job socket: only `open-job`, `issue`, and `close-job`, and only for `kbjob-` channels.
+ * A user's harness listener, its tokens, health, and closing a user stay on the provisioner's control socket. */
+export function startQuotaJobServer(path: string, service: Pick<QuotaService, 'issue' | 'openJob' | 'closeJob'>, access?: SocketAccess): ReturnType<typeof startLineServer> {
+  return startLineServer(path, async raw => {
+    const request = parse(raw)
+    if (!request.instanceId?.startsWith('kbjob-')) throw new Error('invalid request')
+    switch (request.op) {
+      case 'open-job': return service.openJob(request.userId!, request.instanceId)
+      case 'issue': return service.issue(request.userId!, request.instanceId)
+      case 'close-job': await service.closeJob(request.instanceId); return null
+      default: throw new Error('invalid request')
+    }
+  }, access)
+}
+
+/** Client used by the provisioner (control socket) and the knowledge base service (job socket); satisfies the provisioner's `QuotaBridge` shape. */
 export function createQuotaControlClient(path: string): {
   healthy(): Promise<boolean>
   open(userId: ReturnType<typeof parseUserId>, instanceId: string): Promise<{ readonly port: number }>

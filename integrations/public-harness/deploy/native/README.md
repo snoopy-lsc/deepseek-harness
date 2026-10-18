@@ -42,9 +42,11 @@ The preflight only reads the host. It reports the OS version, cgroup controllers
 | `dsh-identity` | `dsh-identity` | `identity/public.sock`, `identity-session/session.sock` | its SQLite file, the quota account socket, sendmail or SMTP relay, CAPTCHA provider (Alibaba Cloud, Tencent Cloud or Turnstile) |
 | `dsh-router` | `dsh-router` | `router/router.sock` | identity session socket, provisioner socket, instance sockets |
 | `dsh-provisioner` | root | `control/provisioner.sock` | accounts, quotas, AppArmor, nftables, system units |
-| `dsh-quota` | `dsh-quota` | quota control socket, `quota-account/account.sock` (identity only) and per-instance loopback ports | the model provider |
+| `dsh-quota` | `dsh-quota` | quota control socket, `quota-account/account.sock` (identity only), `quota-jobs/jobs.sock` (knowledge base only) and per-instance loopback ports | the model provider |
+| `dsh-kb` (optional) | `dsh-kb` | `kb/kb.sock` (identity only) | its KB root, the quota job socket, the root helper socket; no network |
+| `dsh-kb-root@` | root, one process per connection | `kb-root.sock` (`root:dsh-kb 0660`, socket-activated) | `systemd-run --uid` for one validated helper request |
 
-Caddy removes caller identity and forwarding headers. It cannot reach the session socket, so only the router can turn a cookie into a user. The provisioner runs as root but never runs tenant code: each instance runs as its own account in `dsh-user-<id>.service` under `dsh-user-<id>.slice`.
+Caddy removes caller identity and forwarding headers. It cannot reach the session socket, so only the router can turn a cookie into a user. The provisioner runs as root but never runs tenant code: each instance runs as its own account in `dsh-user-<id>.service` under `dsh-user-<id>.slice`. The knowledge base service is optional: copy `deploy/production/config/kb.example.json` and `kb-root.example.json` to `/etc/dsh-public/kb.json` and `kb-root.json`, add `jobSocket` and `jobSocketGid` (group `dsh-kb-quota`) to the quota configuration, set `paths.kbRoot` to `/var/lib/dsh-public/kb` for the provisioner, write the `kb` profile into `/var/lib/dsh-public/kb-home`, and enable `dsh-kb-root.socket` and `dsh-kb.service`. Only `dsh-kb` is in the `dsh-kb` group, so only it can open the root helper socket.
 
 <a id="validate-before-admission"></a>
 ## Validate before admission

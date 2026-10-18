@@ -1,0 +1,9 @@
+{
+  "storageRoot": "/srv/dsh-public/storage",
+  "kbRoot": "/var/lib/dsh-public/kb",
+  "systemdRun": "/usr/bin/systemd-run",
+  "node": "/opt/dsh-public/node/bin/node",
+  "getent": "/usr/bin/getent",
+  "inaccessible": ["/var/lib/dsh-public/kb", "/etc/dsh-public", "/var/lib/dsh-public/state"],
+  "minUid": 1000
+}

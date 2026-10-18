@@ -24,8 +24,8 @@
   en: f161cbd9429de743
   zh: d9db30eeaf685bda
 /llm-wiki-knowledge-base-design/architecture-overview:
-  en: 77ac4b1ba39e758e
-  zh: 9defec54db32ac1a
+  en: d488918ab06e08df
+  zh: 598c058171444d59
 /llm-wiki-knowledge-base-design/data-model:
   en: b85ae4eafcb0bad9
   zh: d3c49f61f6e669eb
@@ -36,14 +36,17 @@
   en: 7ccc0c9ae44cdfe8
   zh: 00c6fdc5371f89c9
 /llm-wiki-knowledge-base-design/mount-and-permission-model/rules:
-  en: aa7ffbc88621426e
-  zh: f4a4a1f0d111fb5d
+  en: 128c71a239073d69
+  zh: e9d12044bad3a9d1
 /llm-wiki-knowledge-base-design/mount-and-permission-model/applying-scope-changes-without-restarting:
   en: 1adbdf04636ac97a
   zh: da14dda1c2a9b4e2
 /llm-wiki-knowledge-base-design/mount-and-permission-model/personal-kb-permissions:
-  en: d84541684465883b
-  zh: 6e7353df5d6b15ff
+  en: c57b0d46d080600f
+  zh: 170d134bc53f1c5c
+/llm-wiki-knowledge-base-design/mount-and-permission-model/service-account-and-root-helper:
+  en: ff67408d206586a0
+  zh: f7d505ae9b4540f7
 /llm-wiki-knowledge-base-design/share-approval-state-machine:
   en: 73f6aa6b833240c2
   zh: 251b04f2ee574661
@@ -81,8 +84,8 @@
   en: b9b835fb655ba9e9
   zh: 4fb9c44ff624a906
 /llm-wiki-knowledge-base-design/security-threat-analysis:
-  en: 3a905a58caa3b328
-  zh: 0ab7b0ca3ae7c15b
+  en: 95426eef0cf79f0e
+  zh: f7af0d40bd25469b
 /llm-wiki-knowledge-base-design/phased-implementation-plan:
   en: ddbc0871848a49f9
   zh: 423eea01e3fe9cdc

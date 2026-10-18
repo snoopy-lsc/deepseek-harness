@@ -17,6 +17,8 @@ import { parseQuotaProfileConfig } from '../packages/production/src/quota-servic
 import { parseTeamRouterConfig } from '../packages/production/src/team-router.ts'
 import { parseIdentityConfig } from '../packages/identity/src/config.ts'
 import { parseSystemdConfig } from '../packages/runtime-systemd/src/config.ts'
+import { parseKbProfileConfig } from '../packages/production/src/kb-service.ts'
+import { parseKbRootConfig } from '../packages/production/src/kb-root-helper.ts'
 import { preflight } from '../deploy/native/scripts/host-preflight.ts'
 
 const root = new URL('../', import.meta.url).pathname
@@ -565,6 +567,56 @@ describe('native deployment composition', () => {
     expect(caddy).toMatch(/header_up Host \{hostport\}/)
     expect(caddy).toMatch(/admin unix\/\/run\/caddy\/admin\.sock\|0600/)
     expect(caddy).toMatch(/trusted_proxies static\n/)
+  })
+
+  it('runs_the_knowledge_base_service_as_its_own_account_and_splits_out_a_socket_activated_root_helper', async () => {
+    const unit = await text('deploy/native/systemd/dsh-kb.service')
+    const lines = (body: string, key: string) => body.split('\n').filter(line => line.startsWith(`${key}=`)).map(line => line.slice(key.length + 1))
+    expect(unit).toMatch(/^ExecStart=\/usr\/bin\/node \/opt\/dsh-public\/harness\/apps\/cli\/lib\/bin\.js --profile kb$/m)
+    expect('kb' in PRODUCTION_PROFILES).toBe(true)
+    for (const [key, value] of [['User', 'dsh-kb'], ['Group', 'dsh-kb'], ['NoNewPrivileges', 'yes'], ['ProtectSystem', 'strict'], ['ProtectHome', 'yes'], ['PrivateTmp', 'yes'],
+      ['PrivateNetwork', 'yes'], ['RestrictAddressFamilies', 'AF_UNIX'], ['CapabilityBoundingSet', ''], ['AmbientCapabilities', ''], ['RestrictSUIDSGID', 'yes']] as const) {
+      expect(lines(unit, key), key).toEqual([value])
+    }
+    expect(lines(unit, 'SystemCallFilter')).toEqual(['@system-service', '~@mount @setuid'])
+    expect(lines(unit, 'ReadWritePaths')).toEqual(['/var/lib/dsh-public/kb /run/dsh-public/kb'])
+    // Tenant storage, secrets and provisioner state are not even visible to the service.
+    expect(lines(unit, 'InaccessiblePaths')[0]!.split(' ')).toEqual(expect.arrayContaining(['-/srv/dsh-public', '-/etc/dsh-public/secrets', '-/var/lib/dsh-public/state']))
+    expect(unit).not.toMatch(/^(User=root|SupplementaryGroups=.*dsh-kb\b)/m)
+
+    const socket = await text('deploy/native/systemd/dsh-kb-root.socket')
+    for (const [key, value] of [['ListenStream', '/run/dsh-public/kb-root.sock'], ['SocketUser', 'root'], ['SocketGroup', 'dsh-kb'], ['SocketMode', '0660'], ['Accept', 'yes']] as const) {
+      expect(lines(socket, key), key).toEqual([value])
+    }
+    const root = await text('deploy/native/systemd/dsh-kb-root@.service')
+    expect(lines(root, 'ExecStart')).toEqual(['/usr/bin/node /opt/dsh-public/integration/packages/production/lib/kb-root-helper.js /etc/dsh-public/kb-root.json'])
+    for (const [key, value] of [['StandardInput', 'socket'], ['StandardOutput', 'socket'], ['NoNewPrivileges', 'yes'], ['ProtectSystem', 'strict'], ['PrivateNetwork', 'yes'],
+      ['RestrictAddressFamilies', 'AF_UNIX'], ['CapabilityBoundingSet', 'CAP_SYS_ADMIN']] as const) {
+      expect(lines(root, key), key).toEqual([value])
+    }
+    expect(lines(root, 'SystemCallFilter')[1]).toMatch(/^~@mount /)
+    expect(lines(root, 'InaccessiblePaths')[0]!.split(' ')).toContain('-/var/lib/dsh-public/kb')
+    expect(root).not.toMatch(/sudo|pkexec|polkit/i)
+
+    // Only dsh-kb is in the dsh-kb group; identity reaches the kb socket and quota the job socket through their own groups.
+    const sysusers = await text('deploy/native/systemd/sysusers.conf')
+    expect(sysusers).toMatch(/^u dsh-kb\s/m)
+    expect(sysusers.split('\n').filter(line => /^m \S+ dsh-kb$/.test(line))).toEqual([])
+    for (const line of ['m dsh-kb dsh-kb-clients', 'm dsh-identity dsh-kb-clients', 'm dsh-kb dsh-kb-quota', 'm dsh-quota dsh-kb-quota']) expect(sysusers).toContain(line)
+    const tmpfiles = await text('deploy/native/systemd/tmpfiles.conf')
+    expect(tmpfiles).toMatch(/^d \/run\/dsh-public\/kb\s+0750 dsh-kb\s+dsh-kb-clients$/m)
+    expect(tmpfiles).toMatch(/^d \/run\/dsh-public\/quota-jobs\s+0750 dsh-quota\s+dsh-kb-quota$/m)
+    expect(lines(await text('deploy/native/systemd/dsh-quota.service'), 'ReadWritePaths')[0]).toContain('/run/dsh-public/quota-jobs')
+
+    // The examples agree with the units.
+    const kb = parseKbProfileConfig(await json('deploy/production/config/kb.example.json'))
+    const kbRoot = parseKbRootConfig(await json('deploy/production/config/kb-root.example.json'))
+    expect(kb.rootHelperSocket).toBe('/run/dsh-public/kb-root.sock')
+    expect(kb.socket.startsWith('/run/dsh-public/kb/')).toBe(true)
+    expect(kb.compile?.quotaSocket.startsWith('/run/dsh-public/quota-jobs/')).toBe(true)
+    expect([kb.root, kbRoot.kbRoot]).toEqual(['/var/lib/dsh-public/kb', '/var/lib/dsh-public/kb'])
+    expect(kb.storageRoot).toBe(kbRoot.storageRoot)
+    expect(kbRoot.inaccessible).toContain(kb.root)
   })
 
   it('host preflight reports failures without touching the host', async () => {

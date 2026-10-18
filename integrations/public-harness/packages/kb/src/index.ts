@@ -13,6 +13,7 @@ import { orgModule } from './org.ts'
 import { limitsModule } from './limits-admin.ts'
 
 export { createDirectRunner, createSystemdRunner, devUserTrees, systemdRunArgv, type HelperRunner, type UserTree, type UserTrees } from './runner.ts'
+export { canonicalKbDir, createRootHelperRunner, parseRootRequest, ROOT_VERBS, RootHelperError, serveRootConnection, type RootHelperDeps, type RootRequest } from './root-helper.ts'
 export { KbError } from './errors.ts'
 export { compileJobs, jobView, quotaModelSource, staticModelSource, type JobOptions, type ModelSource, type QuotaJobBridge } from './jobs.ts'
 export { parseScope, publishSnapshot, REQUEST_TTL_MS, shareModule } from './share.ts'

@@ -63,10 +63,10 @@
 <a id="architecture-overview"></a>
 ## 架构概览
 
-新增主机服务 `dsh-kb`，负责知识库元数据、提交的快照、已发布快照、每个用户的视图和编译队列。它以专用系统账户运行，只监听私有 Unix socket（`DSH_KB_SOCKET`，权限 0600，与配额账户 socket 相同），从不监听 TCP。identity 仍是唯一的 HTTP 入口：它验证浏览器身份、执行管理规则、写 `dsh_audit`，并带上操作者用户 ID 通过 socket 调用 `dsh-kb`。
+新增主机服务 `dsh-kb`，负责知识库元数据、提交的快照、已发布快照、每个用户的视图和编译队列。它以专用系统账户运行，只监听私有 Unix socket（`DSH_KB_SOCKET`，权限 0660，只对与身份服务共享的组开放，与配额账户 socket 相同），从不监听 TCP。identity 仍是唯一的 HTTP 入口：它验证浏览器身份、执行管理规则、写 `dsh_audit`，并带上操作者用户 ID 通过 socket 调用 `dsh-kb`。
 
 - **个人知识库的写入**在用户实例内部通过读写挂载完成（智能体、终端、文件上传），或通过个人中心完成。
-- **对用户目录的 git 操作**以用户自己的 UID 通过临时 `systemd-run` 单元执行，沙箱与实例相同，因此主机从不跟随用户可控的路径。
+- **对用户目录的 git 操作**以用户自己的 UID 通过临时 `systemd-run` 单元执行，沙箱与实例相同，因此主机从不跟随用户可控的路径。`dsh-kb` 服务本身以专用的非特权账号运行；只有启动这个单元需要 root，由一个按套接字激活的 root 助手完成（见[服务账号与 root 助手](#service-account-and-root-helper)）。
 - **编译任务**在 worker 沙箱中对目录副本运行，结果以该用户身份提交回去。
 - **共享阅读**通过只读的 `kb/shared` 视图进行；查询使用内置的读取和搜索工具，加一个查询 skill。
 - **组数据**来自 identity 新增的表，在登录和目录核查时刷新。
@@ -177,12 +177,12 @@ CREATE TABLE IF NOT EXISTS kb_view_state (
         ├── index.md                              catalog: one line per page, read first by queries
         └── log.md                                append-only ingest / lint / edit history
 
-<kbRoot>/ (default /srv/dsh-public/kb)           root:dsh-kb 0750, hidden from instances (InaccessiblePaths)
+<kbRoot>/ (default /var/lib/dsh-public/kb)       dsh-kb:dsh-kb 0750, hidden from instances (InaccessiblePaths)
 ├── kb.sqlite                                     KB metadata (see data model)
 ├── org/<kbId>.git/                               bare repositories of company / department KBs
 ├── submissions/<requestId>/                      validated export of a submitted commit, read-only
-├── published/<kbId>/<snapshotId>/                immutable published tree, files root:root 0444
-├── views/<account>/                              root-owned per-user view, bound read-only into the instance
+├── published/<kbId>/<snapshotId>/                immutable published tree, files dsh-kb 0444
+├── views/<account>/                              dsh-kb-owned per-user view, bound read-only into the instance
 │   └── <slug>/  ->  hard-linked copy of published/<kbId>/<snapshotId>/
 ├── jobs/<jobId>/                                 compile scratch space (worker-owned, deleted after the job)
 └── templates/                                    schema.md, index.md and log.md skeletons, query skill
@@ -204,7 +204,7 @@ Inside a native instance (paths as the instance sees them)
 
 - 实例只能看到两个知识库路径：自己的 `kb/mine`（读写）和自己的 `kb/shared` 视图（只读）。`<kbRoot>` 加入 `InaccessiblePaths=`；挂载仍然生效，解析器文件的挂载已经证明了这一点。
 - 视图只包含范围覆盖该用户的知识库；这个集合在主机上根据 `dsh_user_group` 和 `kb_scope` 计算。
-- 已发布的文件属于 root，权限 0444，目录 0555；快照从不原地修改，所以硬链接不会暴露之后的修改。
+- 已发布的文件属于 `dsh-kb` 服务账号，权限 0444，目录 0555；快照从不原地修改，所以硬链接不会暴露之后的修改。
 - 容器实例以 `--volume …:rw,Z` 和 `--volume …:ro,Z` 获得同样的两个路径。
 - 开发运行时（macOS 和 Windows）没有挂载隔离；它改为复制视图，并标注为不强制隔离。
 
@@ -226,6 +226,17 @@ Inside a native instance (paths as the instance sees them)
 - `kb/` 和其中每个仓库属于用户的 UID，权限 0700，由主机按创建 `home` 的同样方式创建（持有描述符，不以 root 身份遍历用户目录）。
 - 主机从不以 root 身份读取用户的知识库目录。为提交和编译所做的导出以该用户身份运行 `git`，设置 `core.hooksPath=/dev/null`、`core.fsmonitor=false`、`GIT_CONFIG_NOSYSTEM=1` 并清理环境变量，把确切提交的 `git archive` 以流的方式传给主机。
 - 主机在使用前校验归档：只允许普通文件和目录，不允许链接或设备文件，不允许绝对路径或 `..`，限制文件数和大小，并使用扩展名白名单。
+
+<a id="service-account-and-root-helper"></a>
+### 服务账号与 root 助手
+
+- `dsh-kb` 以专用的 `dsh-kb` 账号运行（`deploy/native/systemd/dsh-kb.service`）：`NoNewPrivileges`、`ProtectSystem=strict`、`ProtectHome=yes`、`PrivateTmp`、`PrivateNetwork`、`RestrictAddressFamilies=AF_UNIX`、空的 `CapabilityBoundingSet`、去掉 `@mount` 和 `@setuid` 的 `SystemCallFilter=@system-service`，只能写 `<kbRoot>` 和自己的套接字目录，租户存储、密钥和 provisioner 状态都不可访问。
+- 该账号拥有 `<kbRoot>`，所以存储库、组织仓库、提交、已发布快照以及硬链接视图的替换都是它自己的文件，不需要 root。挂载不由它负责：实例单元启动时照旧绑定 `kb/mine` 和 `kb/shared`。
+- 它通过只用于此目的的组访问三个套接字：自己的套接字（组 `dsh-kb-clients`，与身份服务共享）、配额服务的任务套接字（组 `dsh-kb-quota`；只允许对 `kbjob-` 通道执行 `open-job`、`issue` 和 `close-job`），以及 root 助手套接字。
+- 唯一需要 root 的步骤，即以目录所有者身份启动用户助手，移到 `dsh-kb-root`：`dsh-kb-root.socket`（`root:dsh-kb 0660`，`Accept=yes`）为每个连接启动一个短生命周期的 `dsh-kb-root@.service`。套接字的文件权限就是授权；不使用 sudo，也没有 polkit 规则，也没有在请求之间保留状态的 root 守护进程。
+- 每个连接一个请求：一个 JSON 头（动词、用户 ID、参数、输入长度）加上输入。助手只接受用户助手的固定动词集（`init`、`put`、`commit`、`head`、`archive`、`stats`、`apply`、`log`、`show`），按动词白名单检查每个参数（ID 和提交哈希按模式匹配，相对路径不得含 `..`、空段或开头的 `-`，消息不得含控制字符，数值有上下限），并拒绝未知的键。
+- 调用方只提供用户 ID。助手自己推导账号，用 `getent passwd` 读取其 ID（不能是 root，也不能低于 `minUid`），并要求规范路径 `<storageRoot>/users/<account>/kb`：`<storageRoot>` 必须就是它的真实路径，`users` 和 `users/<account>` 必须是 root 所有、他人不可写的真实目录，`kb` 必须是该账号的真实目录。路径上任何位置出现符号链接都会拒绝请求；由于 `users/<account>` 属于 root，账号无法在检查之后把 `kb` 换成链接。
+- 之后它启动与以前相同的加固 `systemd-run --uid` 单元。助手单元本身设置 `NoNewPrivileges`、无网络、只读系统并隐藏 `<kbRoot>`；它保留 `CAP_SYS_ADMIN`，这是 PID 1 为 D-Bus 调用方启动临时单元前检查的能力，同时过滤挂载类系统调用。
 
 <a id="share-approval-state-machine"></a>
 ## 共享审批状态机
@@ -403,6 +414,8 @@ stateDiagram-v2
 | 对管理端或用户写操作的跨站请求 | 沿用现有 Origin 和 JSON 检查；批准、修改范围、撤销、转换和回滚需要重新验证 |
 | 反复编译导致费用耗尽 | 配额通道、每个知识库串行队列、全站 worker 上限、按用户的任务限流 |
 | 通过 slug 或文件名做路径欺骗 | 磁盘上使用不透明 ID；slug 限定为 `[a-z0-9-]`；归档路径经过校验 |
+| `dsh-kb` 服务被攻破 | 它以自己的账号运行，没有任何能力，也没有网络；无法读取租户存储，只能请求 root 助手对规范目录执行固定动词 |
+| 通过 root 助手进行参数注入、路径穿越或符号链接攻击 | 固定动词集；按动词的参数白名单，拒绝未知的键；账号和目录从用户 ID 重新推导；无链接的规范路径并检查所有者（`root-helper.spec.ts`） |
 | 恶意资料攻破编译 worker | worker 以无特权身份在沙箱中运行，除配额端口外没有网络，只能访问自己的任务目录 |
 
 <a id="phased-implementation-plan"></a>

@@ -140,6 +140,16 @@ describe('strict production configuration files', () => {
     expect(() => parseQuotaProfileConfig({ ...without, accountSocketGid: 990 })).toThrow(/accountSocket/)
   })
 
+  it('quota profile may open a job socket for the knowledge base service with one group', async () => {
+    const without = JSON.parse(await readFile(new URL('../../../deploy/production/config/quota.example.json', import.meta.url), 'utf8'))
+    expect(parseQuotaProfileConfig(without).jobSocket).toBeUndefined()
+    const parsed = parseQuotaProfileConfig({ ...without, jobSocket: '/run/dsh-public/quota-jobs/jobs.sock', jobSocketGid: 993 })
+    expect([parsed.jobSocket, parsed.jobSocketGid]).toEqual(['/run/dsh-public/quota-jobs/jobs.sock', 993])
+    expect(() => parseQuotaProfileConfig({ ...without, jobSocket: 'jobs.sock' })).toThrow(/absolute/)
+    expect(() => parseQuotaProfileConfig({ ...without, jobSocketGid: 993 })).toThrow(/jobSocket/)
+    expect(() => parseQuotaProfileConfig({ ...without, jobSocket: '/run/q/jobs.sock', jobSocketGid: -1 })).toThrow(/group/)
+  })
+
   it('rejects incomplete quota and provisioner profiles before anything starts', () => {
     expect(() => parseQuotaProfileConfig({ controlSocket: `${dir}/q.sock`, service: {} })).toThrow()
     expect(() => parseProvisionerProfileConfig({ controlSocket: `${dir}/p.sock` })).toThrow(/exactly/)

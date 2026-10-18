@@ -1,0 +1,53 @@
+[Unit]
+Description=Native public Harness knowledge base service (unprivileged; user helpers only through dsh-kb-root.socket)
+PartOf=dsh-public.target
+After=dsh-quota.service dsh-kb-root.socket
+Wants=dsh-kb-root.socket
+ConditionPathExists=/etc/dsh-public/kb.json
+
+[Service]
+Type=simple
+User=dsh-kb
+Group=dsh-kb
+Environment=DSH_HOME=/var/lib/dsh-public/kb-home
+ExecStart=/usr/bin/node /opt/dsh-public/harness/apps/cli/lib/bin.js --profile kb
+Restart=on-failure
+RestartSec=3
+# Owns the KB root (store, org trees, submissions, published snapshots, views) and nothing else. Personal trees are reached only through
+# the root helper socket (root:dsh-kb 0660), which re-derives the account and starts the user helper; tenant storage is hidden here.
+# Sockets: its own (group dsh-kb-clients: identity), the root helper's, and the quota job socket (group dsh-kb-quota). No network.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+PrivateIPC=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=no
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@mount @setuid
+SystemCallErrorNumber=EPERM
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0027
+StateDirectory=dsh-public/kb dsh-public/kb-home
+StateDirectoryMode=0750
+ReadWritePaths=/var/lib/dsh-public/kb /run/dsh-public/kb
+ReadOnlyPaths=/etc/dsh-public /opt/dsh-public
+InaccessiblePaths=-/srv/dsh-public -/etc/dsh-public/secrets -/etc/dsh-public/identity-secrets -/var/lib/dsh-public/state -/var/lib/dsh-public/profiles
+
+[Install]
+WantedBy=dsh-public.target
