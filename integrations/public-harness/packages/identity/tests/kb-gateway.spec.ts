@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createDirectRunner, devUserTrees, startKbService, type KbService } from '../../kb/src/index.ts'
 import { startIdentity } from '../src/index.ts'
+import type { QuotaAdmin, QuotaLimits } from '../src/quota-account.ts'
 import { call, linkIn, localEnv, mailbox, sessionCookie, setup } from './helpers.ts'
 
 const open: { close(): Promise<void> }[] = []
@@ -12,6 +13,14 @@ afterEach(async () => { for (const service of open.splice(0).reverse()) await se
 const PASSWORD = 'correct horse battery'
 const json = (reply: { body: string }) => JSON.parse(reply.body)
 const until = async (check: () => boolean | Promise<boolean>) => { for (let i = 0; i < 100; i++) { if (await check()) return; await new Promise(r => setTimeout(r, 30)) } throw new Error('timed out') }
+
+function fakeQuota(): QuotaAdmin & { calls: unknown[] } {
+  let limits: QuotaLimits = { configuredDailyTokens: 400000, defaultDailyTokens: 400000, overrides: [], overLimit: { mode: 'block', gracePercent: 10 } }
+  const calls: unknown[] = []
+  return { calls, limits: async () => limits, setDefault: async () => limits,
+    setUser: async (id, n) => { calls.push(['user', id, n]); limits = { ...limits, overrides: n === null ? [] : [{ userId: id, dailyTokens: n }] }; return limits },
+    setOverLimit: async () => limits }
+}
 
 async function site() {
   const { dir } = await setup()
@@ -22,7 +31,8 @@ async function site() {
   open.push(kb)
   const { config } = await setup({}, { ...localEnv(dir), DSH_ADMIN_EMAILS: 'root@example.test', DSH_KB_SOCKET: join(dir, 'kb.sock') })
   const box = mailbox()
-  const service = await startIdentity(config, { mail: box.mail }); open.push(service)
+  const quota = fakeQuota()
+  const service = await startIdentity(config, { mail: box.mail, quota }); open.push(service)
   let n = 0
   const enroll = async (email: string) => {
     const ip = { 'x-forwarded-for': `198.51.100.${++n}` }
@@ -36,7 +46,7 @@ async function site() {
     try { return db.prepare('SELECT event, outcome, user_id, email, detail FROM dsh_audit ORDER BY id').all() as Array<Record<string, string | null>> } finally { db.close() }
   }
   const root = await enroll('root@example.test'), member = await enroll('member@example.test')
-  return { config, kb, seen, audit, root, member }
+  return { config, kb, seen, audit, root, member, quota }
 }
 
 describe('knowledge base gateway', () => {
@@ -94,5 +104,24 @@ describe('knowledge base gateway', () => {
       expect(s.seen.length).toBe(before)
       expect(json(await admin('POST', path, { kb: 'kb_aaaaaaaaaaaaaaaa', password: PASSWORD }))).toEqual({ code: 'kb-not-found' })
     }
+  })
+
+  it('sets_the_daily_allowance_of_an_org_kb_budget_principal_with_reauth_and_audit', async () => {
+    const s = await site()
+    const admin = (path: string, body: unknown, cookie = s.root.cookie) => call(s.config.publicSocket, 'POST', `/api/admin${path}`, body, { cookie })
+    const org = (await s.kb.core.store.kb.insert({ id: 'kb_aaaaaaaaaaaaaaaa', kind: 'org', ownerUserId: null, slug: 'handbook', title: 'Handbook', description: '' }, Date.now()), 'kb_aaaaaaaaaaaaaaaa')
+    const principal = `org-kb-${org}`
+    expect((await admin('/quota/principal', { principal, dailyTokens: 50000, password: PASSWORD }, s.member.cookie)).status).toBe(403)
+    expect(json(await admin('/quota/principal', { principal, dailyTokens: 50000 }))).toEqual({ code: 'reauth-required', method: 'password' })
+    // Only org KB budget principals that exist are accepted; login users go through /quota/user, and nothing else reaches the ledger.
+    for (const bad of [s.member.id, 'org-kb-kb_bbbbbbbbbbbbbbbb', 'org-kb-../x', `org-kb-${org}\n`, 42]) {
+      const reply = await admin('/quota/principal', { principal: bad, dailyTokens: 50000, password: PASSWORD })
+      expect([400, 404]).toContain(reply.status)
+    }
+    expect(s.quota.calls).toEqual([])
+    expect(json(await admin('/quota/principal', { principal, dailyTokens: 50000, password: PASSWORD })).overrides).toEqual([{ userId: principal, dailyTokens: 50000 }])
+    expect(json(await admin('/quota/principal', { principal, dailyTokens: null, password: PASSWORD })).overrides).toEqual([])
+    expect(s.quota.calls).toEqual([['user', principal, 50000], ['user', principal, null]])
+    expect(s.audit().filter(r => r.event === 'admin-quota-change').map(r => r.detail)).toEqual([`by=root@example.test principal=${principal} kb=${org} daily=50000`, `by=root@example.test principal=${principal} kb=${org} daily=default`])
   })
 })

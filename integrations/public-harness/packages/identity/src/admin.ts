@@ -33,7 +33,7 @@ export class AdminError extends MeError { constructor(status: number, code: stri
 /** Endpoints, by method; used by the routing table and by the test that proves members are refused everywhere. */
 export const ADMIN_ENDPOINTS = {
   GET: ['/invites', '/users', '/audit', '/audit.csv', '/sso', '/quota', ...GROUP_ADMIN_ENDPOINTS.GET, ...KB_ADMIN_ENDPOINTS.GET],
-  POST: ['/invites', '/invites/revoke', '/users/disable', '/users/enable', '/users/role', '/quota/default', '/quota/user', '/quota/over-limit',
+  POST: ['/invites', '/invites/revoke', '/users/disable', '/users/enable', '/users/role', '/quota/default', '/quota/user', '/quota/principal', '/quota/over-limit',
     ...GROUP_ADMIN_ENDPOINTS.POST, ...KB_ADMIN_ENDPOINTS.POST],
   PUT: [...KB_ADMIN_ENDPOINTS.PUT],
   DELETE: [...KB_ADMIN_ENDPOINTS.DELETE],
@@ -72,11 +72,13 @@ export interface AdminDeps {
   readonly quota?: QuotaAdmin
   /** Route modules for the endpoints the core table lists but this file does not serve (groups, knowledge bases). */
   readonly modules?: readonly AdminModule[]
+  /** Resolves an org KB's quota budget principal; without it `/quota/principal` answers 404. */
+  readonly budgetPrincipal?: (principal: string, actor: { id: string; email: string }) => Promise<{ kbId: string; title: string } | undefined>
 }
 
 /** Endpoints served in this file; the rest of ADMIN_ENDPOINTS belongs to route modules. */
 const CORE = new Set(['GET /invites', 'GET /users', 'GET /audit', 'GET /audit.csv', 'GET /sso', 'GET /quota', 'POST /invites', 'POST /invites/revoke',
-  'POST /users/disable', 'POST /users/enable', 'POST /users/role', 'POST /quota/default', 'POST /quota/user', 'POST /quota/over-limit'])
+  'POST /users/disable', 'POST /users/enable', 'POST /users/role', 'POST /quota/default', 'POST /quota/user', 'POST /quota/principal', 'POST /quota/over-limit'])
 const time = (value: unknown) => value === null || value === undefined ? null : typeof value === 'number' ? value : Date.parse(String(value))
 /** Most rows one CSV export carries; narrower filters reach older rows. */
 export const AUDIT_EXPORT_MAX = 50_000
@@ -351,6 +353,18 @@ export function adminRoutes(deps: AdminDeps): (req: IncomingMessage, res: Server
       await reauth(req, session, body, 'quota')
       const limits = await quotaCall(quota => quota.setDefault(dailyTokens))
       audit('admin-quota-change', 'ok', actor, req, undefined, `default=${dailyTokens ?? 'configured'}`)
+      send(res, 200, limits); return true
+    }
+    if (sub === '/quota/principal') {
+      // A non-login budget principal: only an existing org KB's `org-kb-<kbId>`, checked with the KB service before re-authentication.
+      if (deps.budgetPrincipal === undefined) throw new MeError(404, 'not-found')
+      const principal = body.principal
+      if (typeof principal !== 'string' || principal.length > 64) throw new MeError(400, 'body')
+      const kb = await deps.budgetPrincipal(principal, { id: session.user.id, email: session.email })
+      if (kb === undefined) throw new MeError(404, 'principal-not-found')
+      await reauth(req, session, body, 'quota')
+      const limits = await quotaCall(quota => quota.setUser(principal, dailyTokens))
+      audit('admin-quota-change', 'ok', actor, req, undefined, `principal=${principal} kb=${kb.kbId} daily=${dailyTokens ?? 'default'}`)
       send(res, 200, limits); return true
     }
     const user = target(body)

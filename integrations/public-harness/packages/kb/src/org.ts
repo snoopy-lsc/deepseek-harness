@@ -185,6 +185,14 @@ export function orgModule(core: KbCore, jobs: ReturnType<typeof compileJobs> | u
       const views = await reconcileViews(core)
       return { snapshotId, commit, scope, views: views.length }
     },
+    /** Resolve a quota budget principal (`org-kb-<kbId>`) to its org KB. Identity calls this before it lets an admin set the
+     * principal's daily allowance; it is not exposed to browsers. Archived KBs resolve too, so an allowance can still be lowered. */
+    'GET /admin/kb/principal': async ({ query }) => {
+      const match = /^org-kb-(kb_[a-z0-9]{16})$/.exec(query.get('id') ?? '')
+      const kb = match !== null && ID_PATTERN.kb.test(match[1]!) ? store.kb.get(match[1]!) : undefined
+      if (kb === undefined || kb.kind !== 'org') throw new KbError(404, 'principal-not-found')
+      return { principal: orgPrincipal(kb.id), kb: { id: kb.id, title: kb.title, archivedAt: kb.archivedAt } }
+    },
     /** Archive an org KB: it leaves every reader's view at once and refuses edits, compiles and publishing; its repository,
      * publication and scope are kept so a restore brings it back as it was. */
     'POST /admin/kb/org/archive': async req => {

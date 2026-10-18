@@ -102,6 +102,8 @@ export interface AdminApi {
   quota(): Promise<AdminQuota | undefined>
   setDefaultQuota(dailyTokens: number | null, proof?: Proof): Promise<AdminQuota>
   setUserQuota(userId: string, dailyTokens: number | null, proof?: Proof): Promise<AdminQuota>
+  /** Daily allowance of an org KB's budget principal (`org-kb-<kbId>`); `null` returns it to the default. */
+  setPrincipalQuota(principal: string, dailyTokens: number | null, proof?: Proof): Promise<AdminQuota>
   setOverLimit(mode: OverLimitMode, gracePercent: number, proof?: Proof): Promise<AdminQuota>
   /** Download address of the CSV export for these audit filters (same-origin; the browser's session authenticates it). */
   auditCsvUrl(query: { event?: string; outcome?: string; q?: string }): string
@@ -181,6 +183,7 @@ export function createAdminApi(fetcher?: typeof fetch): AdminApi {
     },
     setDefaultQuota: async (dailyTokens, p) => await request('/quota/default', { dailyTokens, ...proof(p) }) as AdminQuota,
     setUserQuota: async (userId, dailyTokens, p) => await request('/quota/user', { userId, dailyTokens, ...proof(p) }) as AdminQuota,
+    setPrincipalQuota: async (principal, dailyTokens, p) => await request('/quota/principal', { principal, dailyTokens, ...proof(p) }) as AdminQuota,
     setOverLimit: async (mode, gracePercent, p) => await request('/quota/over-limit', { mode, gracePercent, ...proof(p) }) as AdminQuota,
     auditCsvUrl: query => `${ADMIN_PATH}/audit.csv${qs(query)}`,
     groups: async () => (await request('/groups') as { groups: AdminGroup[] }).groups,

@@ -160,3 +160,15 @@ describe('org knowledge base archive', () => {
     expect((await admin.post('/admin/kb/org/archive', { kb: personal.id })).body.code).toBe('not-org')
   })
 })
+
+describe('org knowledge base budget principals', () => {
+  it('resolves_an_org_kb_budget_principal_for_identity_and_nothing_else', async () => {
+    const s = await start(); await people(s)
+    const admin = s.as('root', 'admin')
+    const kb = (await admin.post('/admin/kb/org', { title: 'Budgeted' })).body.kb
+    expect((await admin.get(`/admin/kb/principal?id=org-kb-${kb.id}`)).body).toMatchObject({ principal: `org-kb-${kb.id}`, kb: { id: kb.id, title: 'Budgeted', archivedAt: null } })
+    const personal = (await s.as('alice').post('/me/kb', { title: 'Mine' })).body.kb
+    for (const id of [`org-kb-${personal.id}`, 'org-kb-kb_bbbbbbbbbbbbbbbb', 'alice', `org-kb-${kb.id}x`, '']) expect((await admin.get(`/admin/kb/principal?id=${encodeURIComponent(id)}`)).body.code).toBe('principal-not-found')
+    expect((await s.as('bob').get(`/admin/kb/principal?id=org-kb-${kb.id}`)).status).toBe(403)
+  })
+})

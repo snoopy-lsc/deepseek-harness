@@ -11,6 +11,8 @@ import { groupName, Groups } from './admin-groups.tsx'
 import { KbRequests } from './admin-kb.tsx'
 import { KbInventory } from './admin-kb-inventory.tsx'
 import { KbLimitsCard } from './admin-kb-limits.tsx'
+import { KbBudgetsCard } from './admin-kb-budget.tsx'
+import { userOverrides } from './admin-kb-units.ts'
 import { card, column, date, errorText, field, fill, hint, label, Note, page, Row, Card, select, type T, useReauth } from './admin-kit.tsx'
 import { type AdminApi, type AdminAuditPage, type AdminInvite, type AdminQuota, type AdminSso, type AdminUser, type AdminUserPage, type OverLimitMode, type Proof } from './admin-api.ts'
 
@@ -338,10 +340,11 @@ function Quota({ api, t }: { api: AdminApi; t: T }) {
         </div>
       </form>
       <div style={{ ...label, padding: '14px 0 0' }}>{t('perUser')}</div>
-      {quota.overrides.length === 0 ? <Row title={<span style={hint}>{t('noOverrides')}</span>} end />
-        : quota.overrides.map((item, index) => <Row key={item.userId} end={index === quota.overrides.length - 1} title={email(item.userId)} detail={tokens(item.dailyTokens)}>
+      {userOverrides(quota.overrides).length === 0 ? <Row title={<span style={hint}>{t('noOverrides')}</span>} end />
+        : userOverrides(quota.overrides).map((item, index, list) => <Row key={item.userId} end={index === list.length - 1} title={email(item.userId)} detail={tokens(item.dailyTokens)}>
           <Button variant="outline" size="sm" onClick={() => save(proof => api.setUserQuota(item.userId, null, proof))}>{t('remove')}</Button></Row>)}
     </Card>
+    <KbBudgetsCard api={api} t={t} quota={quota} save={save} invalid={() => setNote({ ok: false, text: t('invalidTokens') })} />
     {dialog}
   </>
 }

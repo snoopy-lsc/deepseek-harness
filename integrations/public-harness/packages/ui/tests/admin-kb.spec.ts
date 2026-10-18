@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createAdminApi } from '../src/client/admin-api.ts'
 import { kbAdminCopy } from '../src/client/admin-kb-text.ts'
-import { limitText, parseLimit } from '../src/client/admin-kb-units.ts'
+import { budgetRows, limitText, parseLimit, userOverrides } from '../src/client/admin-kb-units.ts'
 
 function recorder(body: unknown = {}) {
   const calls: Array<{ url: string; init: RequestInit }> = []
@@ -78,5 +78,22 @@ describe('System Admin org knowledge base archive client', () => {
     expect(r.calls.map(c => `${c.init.method ?? 'GET'} ${c.url}`)).toEqual(['POST /api/admin/kb/org/archive', 'POST /api/admin/kb/org/restore', 'GET /api/admin/kb?filter=archived'])
     expect(JSON.parse(String(r.calls[0]!.init.body))).toEqual({ kb: 'kb_a', password: 'pw' })
     expect(kbAdminCopy.en.kbFilterArchived).toContain('{n}')
+  })
+})
+
+describe('org knowledge base compile budgets', () => {
+  it('sets_a_budget_principal_allowance_through_the_quota_api', async () => {
+    const r = recorder({ overrides: [] })
+    await r.api.setPrincipalQuota('org-kb-kb_aaaaaaaaaaaaaaaa', 50000, { password: 'pw' })
+    expect(r.calls.map(c => `${c.init.method ?? 'GET'} ${c.url}`)).toEqual(['POST /api/admin/quota/principal'])
+    expect(JSON.parse(String(r.calls[0]!.init.body))).toEqual({ principal: 'org-kb-kb_aaaaaaaaaaaaaaaa', dailyTokens: 50000, password: 'pw' })
+  })
+  it('pairs_org_kbs_with_their_allowance_and_keeps_principals_out_of_the_user_list', () => {
+    const quota = { defaultDailyTokens: 400000, overrides: [{ userId: 'org-kb-kb_a', dailyTokens: 50000 }, { userId: 'u1', dailyTokens: 9 }] }
+    const kbs = [{ id: 'kb_a', kind: 'org', title: 'A', archivedAt: null, chargedTo: 'org-kb-kb_a' }, { id: 'kb_b', kind: 'org', title: 'B', archivedAt: 1, chargedTo: 'org-kb-kb_b' },
+      { id: 'kb_c', kind: 'personal', title: 'C', archivedAt: null, chargedTo: 'u1' }]
+    expect(budgetRows(kbs, quota)).toEqual([{ kbId: 'kb_a', title: 'A', archived: false, principal: 'org-kb-kb_a', dailyTokens: 50000, inherited: false },
+      { kbId: 'kb_b', title: 'B', archived: true, principal: 'org-kb-kb_b', dailyTokens: 400000, inherited: true }])
+    expect(userOverrides(quota.overrides)).toEqual([{ userId: 'u1', dailyTokens: 9 }])
   })
 })

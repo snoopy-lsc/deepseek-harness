@@ -146,7 +146,7 @@ export function publicHandler(deps: PublicDeps): ((req: IncomingMessage, res: Se
   const me = meRoutes({ config, auth, database, clock, limit, ip: req => clientIp(req, config.clientIpHeader), ...deps.usage === undefined ? {} : { usage: deps.usage } })
   const kb = deps.kbSocket === undefined ? undefined : createKbGateway({ socket: deps.kbSocket, config, auth, database, clock, limit, log: line => console.error(line) })
   const admin = adminRoutes({ config, auth, database, clock, limit, ip: req => clientIp(req, config.clientIpHeader), ...deps.quota === undefined ? {} : { quota: deps.quota },
-    modules: [groupAdminRoutes(database, clock), ...kb === undefined ? [] : [kb.admin]] })
+    modules: [groupAdminRoutes(database, clock), ...kb === undefined ? [] : [kb.admin]], ...kb === undefined ? {} : { budgetPrincipal: kb.budgetPrincipal } })
   const handler = (req: IncomingMessage, res: ServerResponse) => {
     void (async () => {
       const path = (req.url ?? '/').split('?')[0]

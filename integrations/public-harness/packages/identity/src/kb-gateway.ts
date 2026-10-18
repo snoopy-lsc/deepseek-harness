@@ -14,6 +14,8 @@ import { createRoles } from './roles.ts'
 import type { AuditEvent } from './sso/store.ts'
 import { IdentityUnavailableError } from './transports.ts'
 
+/** Quota budget principals of org knowledge bases: `org-kb-` and a KB id. */
+export const BUDGET_PRINCIPAL = /^org-kb-kb_[a-z2-7]{16}$/
 /** Admin endpoints served by the KB service, by method (identity path after `/api/admin`). */
 export const KB_ADMIN_ENDPOINTS = {
   GET: ['/kb', '/kb/requests', '/kb/requests/content', '/kb/preview', '/kb/limits', '/kb/limits/effective', '/kb/content'],
@@ -109,6 +111,8 @@ export interface KbGateway {
   drainAudit(): Promise<number>
   /** Start the periodic sync and drain, and follow group changes; returns a stop function. */
   start(intervalMs?: number): () => void
+  /** Resolve a quota budget principal (`org-kb-<kbId>`) to its org KB, asking the service as `actor`; undefined when it is not one. */
+  budgetPrincipal(principal: string, actor: { id: string; email: string }): Promise<{ kbId: string; title: string } | undefined>
 }
 
 /** Build the gateway.
@@ -222,6 +226,15 @@ export function createKbGateway(deps: KbGatewayDeps): KbGateway {
     },
     syncPrincipals,
     drainAudit,
+    async budgetPrincipal(principal, actor) {
+      if (!BUDGET_PRINCIPAL.test(principal)) return undefined
+      const reply = await call('GET', `/admin/kb/principal?id=${encodeURIComponent(principal)}`, actorHeaders(actor, 'admin'))
+      if (reply.status === 404) return undefined
+      if (reply.status !== 200) throw new IdentityUnavailableError('kb')
+      const body = JSON.parse(reply.body.toString('utf8')) as { principal?: unknown; kb?: { id?: unknown; title?: unknown } }
+      if (body.principal !== principal || typeof body.kb?.id !== 'string' || typeof body.kb.title !== 'string') throw new IdentityUnavailableError('kb')
+      return { kbId: body.kb.id, title: body.kb.title }
+    },
     start(intervalMs = 60_000) {
       const tick = () => { void syncPrincipals().catch(error => log(`kb: principal sync failed: ${(error as Error).message}`)); void drainAudit().catch(() => {}) }
       tick()
