@@ -10,6 +10,7 @@ This fork tracks `deepseek-ai/deepseek-harness` through the `upstream` remote. A
 
 - [Known environment failures](#known-environment-failures)
 - [Sync process](#sync-process)
+- [Lessons](#lessons)
 - [Dev Note](#dev-note)
 
 -----
@@ -33,6 +34,12 @@ On 2026-10-14 the following tests failed on the agent box both on upstream relea
 3. Run `pnpm install`, `pnpm run typecheck`, the `integrations/public-harness` unit tests, its Chrome e2e tests with `PUBLIC_HARNESS_E2E_BROWSER` set, and the full root unit and e2e suites. Compare failures with the known environment failures above.
 4. Push only the sync branch and review it. Merge it into `master` with a normal merge. Never force-push or rewrite `master`.
 5. Optionally send the stagehand changes upstream as a pull request so the fork no longer carries them.
+
+<a id="lessons"></a>
+## Lessons
+
+- Run `pnpm run build` before any e2e suite, at the root and in `integrations/public-harness`. The e2e tests load built `lib/` and `dist/` output, so a merge without a fresh build tests stale code and reports failures that are not real.
+- Pushing a sync branch whose merge includes upstream edits under `.github/workflows/` needs a GitHub credential with the `workflow` scope; without it GitHub rejects the push. Check the scope of the `gh` login before the push, and report a rejection instead of dropping the workflow changes.
 
 <a id="dev-note"></a>
 ## Dev Note

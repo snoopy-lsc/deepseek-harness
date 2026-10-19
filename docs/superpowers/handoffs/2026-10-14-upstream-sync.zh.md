@@ -10,6 +10,7 @@
 
 - [已知环境失败](#known-environment-failures)
 - [同步流程](#sync-process)
+- [经验](#lessons)
 - [Dev Note](#dev-note)
 
 -----
@@ -33,6 +34,12 @@
 3. 运行 `pnpm install`、`pnpm run typecheck`、`integrations/public-harness` 单元测试、设置 `PUBLIC_HARNESS_E2E_BROWSER` 后的 Chrome e2e 测试，以及根目录完整单元和 e2e 套件，并与上面的已知环境失败对照。
 4. 只推送同步分支并评审，然后用普通合并并入 `master`。不要 force-push，也不要改写 `master` 历史。
 5. 可选：把 stagehand 改动以 pull request 提交给上游，使本分支不再维护这些改动。
+
+<a id="lessons"></a>
+## 经验
+
+- 运行任何 e2e 套件之前，先在根目录和 `integrations/public-harness` 中运行 `pnpm run build`。e2e 测试加载构建产物 `lib/` 和 `dist/`，合并后不重新构建就会测试旧代码，报出并不存在的失败。
+- 如果同步分支的合并包含上游对 `.github/workflows/` 的修改，推送需要带 `workflow` 权限范围的 GitHub 凭据，否则 GitHub 会拒绝推送。推送前检查 `gh` 登录的权限范围；被拒绝时如实报告，不要丢弃工作流改动。
 
 <a id="dev-note"></a>
 ## Dev Note
