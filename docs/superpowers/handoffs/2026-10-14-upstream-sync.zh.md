@@ -23,6 +23,15 @@
 - `packages/util/http-proxy/tests/install.spec.ts`：一个绕过代理的测试超时。机器通过沙箱出口代理转发流量，直连回环探测的行为不同。
 - `packages/util/http-proxy/tests/matcher-parity.spec.ts`：六个绕过规则一致性用例因同样的代理原因失败。
 - `scripts/gen-dependency-catalog.spec.ts`：npm 配置隔离用例失败，因为机器注入了测试未预期的 npm 配置。
+- `pnpm run test:docs` 的 "repository references" 检查：一处发现，即 `python/sdk/uv.lock` 第 113 行的提交哈希。该锁文件按提交固定一个依赖，本分支不修改它。
+
+### 负载下偶发、需单独重跑确认
+
+这些测试在机器上完整运行根目录单元测试时失败过一次，单独重跑时通过。遇到失败时只重跑该文件；只有仍然失败才算回归。
+
+- `packages/experimental/ptc-runtime-python/tests/runtime.spec.ts`：子进程在排空途中退出的恶意对端用例依赖时序断言。
+- `packages/llm/llm-deepseek/tests/runtime.spec.ts`：流中途中止用例断言中止前收到的流事件数量。
+- `scripts/persistence-schema.spec.ts`：编译可能拾取并发测试在 `packages/core/session/src/` 下临时创建又删除的 `oxlint-contract-*.ts` 文件，随后以 TS6053 失败。
 
 `apps/desktop/tests/welcome-flow.e2e.ts` 曾因 `node_modules/.pnpm/node_modules` 保留指向旧路径 `packages/hooks/hook-protocol` 的失效链接而失败。删除该目录并运行 `pnpm install --force` 即可修复，之后测试通过。
 

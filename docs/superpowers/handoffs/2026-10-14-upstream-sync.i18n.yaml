@@ -12,8 +12,11 @@
   en: bbc98fb6f678ce21
   zh: 21e711fcaf1afc6b
 /upstream-sync/known-environment-failures:
-  en: d599d8ac7af57d7f
-  zh: 9f728da6fd0d5350
+  en: 5345ce7fec30f031
+  zh: c80cde2b4de0545f
+/upstream-sync/known-environment-failures/flaky-under-load-rerun-alone-to-confirm:
+  en: 3d86ca661aed4369
+  zh: c46b995737fdbde2
 /upstream-sync/sync-process:
   en: f9c07c0156d3684a
   zh: c9c751c960be7585

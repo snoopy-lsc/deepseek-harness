@@ -23,6 +23,15 @@ On 2026-10-14 the following tests failed on the agent box both on upstream relea
 - `packages/util/http-proxy/tests/install.spec.ts`: one bypass test times out. The box sends traffic through a sandbox egress proxy, so direct loopback probes behave differently.
 - `packages/util/http-proxy/tests/matcher-parity.spec.ts`: six bypass matcher parity cases fail for the same proxy reason.
 - `scripts/gen-dependency-catalog.spec.ts`: the npm configuration isolation case fails because the box injects npm configuration that the test does not expect.
+- `pnpm run test:docs`, gate "repository references": one finding, a commit hash at `python/sdk/uv.lock` line 113. The lock file pins a dependency by commit, and the fork does not edit it.
+
+### Flaky under load; rerun alone to confirm
+
+These tests failed once during a full root unit run on the box and passed when rerun on their own. If one fails, rerun only that file; count it as a regression only if it still fails.
+
+- `packages/experimental/ptc-runtime-python/tests/runtime.spec.ts`: the hostile-peer case about a child that dies mid-drain asserts on timing.
+- `packages/llm/llm-deepseek/tests/runtime.spec.ts`: the mid-stream abort case asserts on how many stream events arrived before the abort.
+- `scripts/persistence-schema.spec.ts`: compilation can pick up a temporary `oxlint-contract-*.ts` file under `packages/core/session/src/` that a concurrent test creates and removes, and then fails with TS6053.
 
 `apps/desktop/tests/welcome-flow.e2e.ts` failed once because `node_modules/.pnpm/node_modules` kept a stale link to the old `packages/hooks/hook-protocol` path. Delete that directory and run `pnpm install --force` to fix the link; the test then passes.
 
