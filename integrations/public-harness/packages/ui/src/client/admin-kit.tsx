@@ -26,13 +26,11 @@ export const label: CSSProperties = { fontSize: 14, lineHeight: '20px' }
 export const hint: CSSProperties = { marginTop: 2, color: 'var(--dsw-alias-label-secondary)', fontSize: 12, lineHeight: '18px' }
 export const field: CSSProperties = { display: 'grid', gap: 6, minWidth: 0, fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-label-secondary)' }
 export const statusStyle = (ok: boolean): CSSProperties => ({ margin: '8px 0', fontSize: 13, color: ok ? 'var(--dsw-alias-label-secondary)' : 'var(--dsw-alias-state-error, #d92d20)' })
-export const select: CSSProperties = { height: 36, borderRadius: 'var(--dsw-radius-md)', border: '0.5px solid var(--dsw-alias-border-l2)', padding: '0 10px', background: 'transparent',
-  color: 'var(--dsw-alias-label-primary)', font: 'inherit', fontSize: 13 }
 
-export function Row({ title, detail, children, end }: { title: ReactNode; detail?: ReactNode; children?: ReactNode; end?: boolean }) {
-  return <div style={end ? { ...rowStyle, borderBottom: 'none' } : rowStyle}>
+export function Row({ title, detail, children, end, wrap }: { title: ReactNode; detail?: ReactNode; children?: ReactNode; end?: boolean; wrap?: boolean }) {
+  return <div style={{ ...rowStyle, ...end ? { borderBottom: 'none' } : {}, ...wrap ? { flexWrap: 'wrap' } : {} }}>
     <div style={{ minWidth: 0 }}><div style={label}>{title}</div>{detail !== undefined && <div style={hint}>{detail}</div>}</div>
-    {children !== undefined && <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 'none' }}>{children}</div>}
+    {children !== undefined && <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: wrap ? '0 1 auto' : 'none', ...wrap ? { flexWrap: 'wrap' } : {} }}>{children}</div>}
   </div>
 }
 export function Card({ children, testId }: { children: ReactNode; testId?: string }) { return <div style={card} data-team-admin-card={testId}>{children}</div> }

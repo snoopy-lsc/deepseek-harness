@@ -39,6 +39,8 @@ The service listens only on a private Unix socket (`DSH_KB_SOCKET`). Identity is
 
 Creating a knowledge base at or above `max_kbs`, or uploading a source that would take one above `max_bytes`, answers 409 `kb-limit` with the limit name, the value and the allowed value.
 
+`GET /me/kb/content?kb=<id>` lists files with a pinned revision and a read-only flag; adding `path` returns the file size and a text preview, or `text: null` for binary files. Text previews stop at 256 KiB and report `truncated`. Owners read their personal repository at the current Git commit. Other readers, including administrators on this route, need a currently visible publication and read only its published snapshot. Unknown query keys and arbitrary revision selection are refused; unsafe paths and symbolic links never expose files. Identity exposes the route at `/account/api/me/kb/content` and refreshes the actor’s principal before it reads shared access. Read audit records contain identifiers and the read kind, without filenames or file content.
+
 <a id="compile"></a>
 ## Compile
 

@@ -1,15 +1,15 @@
 /** Personal center inside the unified shell: account, sign-in method, sessions, usage and preferences.
  * Built from Harness primitives and the settings-row geometry (16px rows, 0.5px separators); only colours come from the theme. */
-import { Button, IconBrowseOutlineRegular, IconDatabaseOutlineRegular, IconGaugeOutlineRegular, IconLinkOutlineRegular, IconShieldOutlineRegular,
-  IconSlidersTwoOutlineRegular, IconUserOutlineRegular, Input, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconBrowseOutlineRegular, IconGaugeOutlineRegular, IconLinkOutlineRegular, IconShieldOutlineRegular,
+  IconSlidersTwoOutlineRegular, IconUserOutlineRegular, Input, StateDot, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import { useCallback, useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react'
 import type { AccountApi, AccountProfile, AccountSecurity, AccountSession, AccountUsage } from './me.ts'
 import { AccountApiError } from './me.ts'
 import { overLimitText } from './quota.tsx'
-import type { KbApi } from './kb-api.ts'
-import { KnowledgeBases } from './kb.tsx'
-import { kbCopy } from './kb-copy.ts'
+import { profileCopy } from './profile-copy.ts'
+import { AvatarEditor, ProfileAvatar, ProfileForm } from './profile-form.tsx'
+import type { UserProfile } from './me.ts'
 
 /** Locale-owned personal center copy. */
 export const personalDictionaries = {
@@ -27,7 +27,7 @@ export const personalDictionaries = {
     overWarn: 'You have used your daily allowance ({limit} tokens). Requests still run, but please slow down; it resets {reset}.',
     overBlocked: 'Your daily allowance ({limit} tokens) is used up. New requests stop until {reset}.', noUsage: 'Usage is not available on this deployment.',
     preferences: 'Preferences', appearance: 'Appearance and language', appearanceHint: 'Theme, colour mode and interface language.', open: 'Open settings',
-    failed: 'Something went wrong. Try again.', loading: 'Loading…', ...kbCopy.en },
+    failed: 'Something went wrong. Try again.', loading: 'Loading…', ...profileCopy.en },
   zh: { title: '个人中心', account: '账户', name: '名称', email: '邮箱', role: '角色', role_admin: '管理员', role_member: '成员',
     signIn: '登录与安全', method: '登录方式', method_password: '邮箱和密码', method_emergency: '管理员紧急账户', method_sso: '企业账号（{provider}）',
     bindings: '企业账号绑定', bound: '绑定于 {date}', lastLogin: '最近登录 {date}', never: '尚未使用', noBindings: '尚未绑定企业账号。',
@@ -42,7 +42,7 @@ export const personalDictionaries = {
     overWarn: '你今日的额度（{limit} tokens）已用完。请求仍可继续，但请控制用量；额度将于 {reset} 重置。',
     overBlocked: '你今日的额度（{limit} tokens）已用完，新的请求将暂停，直到 {reset}。', noUsage: '此部署未提供用量信息。',
     preferences: '偏好设置', appearance: '外观与语言', appearanceHint: '主题、深浅色模式与界面语言。', open: '打开设置',
-    failed: '操作失败，请重试。', loading: '加载中…', ...kbCopy.zh },
+    failed: '操作失败，请重试。', loading: '加载中…', ...profileCopy.zh },
 }
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -56,7 +56,7 @@ const fill = (text: string, values: Record<string, string | number>) => text.rep
 const date = (value: number | string) => new Date(value).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 const PROVIDERS: Record<string, string> = { oidc: 'OIDC', saml: 'SAML', ldap: 'LDAP', wecom: 'WeCom', dingtalk: 'DingTalk' }
 
-const page: CSSProperties = { boxSizing: 'border-box', height: '100%', overflow: 'auto', padding: '40px 56px 64px', color: 'var(--dsw-alias-label-primary)' }
+const page: CSSProperties = { boxSizing: 'border-box', height: '100%', overflow: 'auto', padding: '40px clamp(16px, 5vw, 56px) 64px', color: 'var(--dsw-alias-label-primary)' }
 const column: CSSProperties = { maxWidth: 720, margin: '0 auto', display: 'grid', gap: 28 }
 const card: CSSProperties = { background: 'var(--dsw-alias-settings-card-fill)', borderRadius: 'var(--dsw-radius-lg)', padding: '0 20px',
   boxShadow: 'var(--dsw-elevation-soft)', WebkitBackdropFilter: 'var(--dsw-menu-backdrop-filter)', backdropFilter: 'var(--dsw-menu-backdrop-filter)' }
@@ -183,27 +183,33 @@ function Usage({ api, t }: { api: AccountApi; t: T }) {
  * @param props - profile, client, settings opener and translator.
  * @returns the personal panel.
  */
-export function PersonalCenter({ profile, api, kb, openSettings, t }: { profile: AccountProfile; api: AccountApi; kb?: KbApi; openSettings: () => void } & PropsLocale<'publicHarnessPersonal'>) {
+export function PersonalCenter({ profile, api, openSettings, t }: { profile: AccountProfile; api: AccountApi; openSettings: () => void } & PropsLocale<'publicHarnessPersonal'>) {
   const [version, setVersion] = useState(0)
-  const initial = (profile.name || profile.email).trim().charAt(0).toUpperCase()
+  const [details, setDetails] = useState<UserProfile | null>(), [profileVersion, setProfileVersion] = useState(0)
+  useEffect(() => {
+    let live = true
+    api.profile().then(value => { if (live) setDetails(value) }, () => { if (live) setDetails(null) })
+    return () => { live = false }
+  }, [api, profileVersion])
+  const shown = details ?? { ...profile, avatarUrl: null }
   return <div style={page} data-team-personal>
     <div style={column}>
-      <header style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-        <span aria-hidden="true" style={{ display: 'grid', placeItems: 'center', width: 48, height: 48, borderRadius: '50%', background: 'var(--dsw-alias-button-primary-fill)',
-          color: 'var(--dsw-alias-label-primary-foreground)', fontSize: 20, fontWeight: 600 }}>{initial}</span>
-        <div><h1 style={{ margin: 0, fontSize: 20, lineHeight: '28px', fontWeight: 600 }}>{profile.name}</h1>
+      <header style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+        <ProfileAvatar profile={shown} label={t('profileAvatar')} />
+        <div style={{ minWidth: 0, flex: 1, overflowWrap: 'anywhere' }}><h1 style={{ margin: 0, fontSize: 20, lineHeight: '28px', fontWeight: 500 }}>{shown.name}</h1>
           <div style={{ ...hint, marginTop: 2 }}>{profile.email}</div></div>
         <Tag>{t(profile.role === 'admin' ? 'role_admin' : 'role_member')}</Tag>
       </header>
       <Section id="team-personal-account" icon={<IconUserOutlineRegular size={16} />} title={t('account')}>
-        <Row title={t('name')}><span style={label}>{profile.name}</span></Row>
-        <Row title={t('email')}><span style={label}>{profile.email}</span></Row>
+        {details === undefined ? <div style={{ display: 'grid', placeItems: 'center', minHeight: 100 }}><StateDot state="ongoing" size={20} /></div>
+          : details === null ? <div style={{ padding: '16px 0' }}><p role="alert" style={status(false)}>{t('profileLoadFailed')}</p><Button variant="outline" onClick={() => { setDetails(undefined); setProfileVersion(value => value + 1) }}>{t('profileRetry')}</Button></div>
+            : <><AvatarEditor profile={details} api={api} t={t} onSaved={setDetails} />
+              <ProfileForm initial={details} t={t} save={patch => api.updateProfile(patch)} onSaved={setDetails} /></>}
         <Row title={t('role')} end><span style={label}>{t(profile.role === 'admin' ? 'role_admin' : 'role_member')}</span></Row>
       </Section>
       <Section id="team-personal-security" icon={<IconShieldOutlineRegular size={16} />} title={t('signIn')}><Security api={api} t={t} onChanged={() => setVersion(v => v + 1)} /></Section>
       <Section id="team-personal-sessions" icon={<IconBrowseOutlineRegular size={16} />} title={t('sessions')}><Sessions api={api} t={t} version={version} /></Section>
       <Section id="team-personal-usage" icon={<IconGaugeOutlineRegular size={16} />} title={t('usage')}><Usage api={api} t={t} /></Section>
-      {kb !== undefined && <KnowledgeBases api={kb} t={t} frame={body => <Section id="team-personal-kb" icon={<IconDatabaseOutlineRegular size={16} />} title={t('kb_title')}>{body}</Section>} />}
       <Section id="team-personal-preferences" icon={<IconSlidersTwoOutlineRegular size={16} />} title={t('preferences')}>
         <Row title={t('appearance')} detail={t('appearanceHint')} end><Button variant="outline" onClick={openSettings}>{t('open')}</Button></Row>
       </Section>

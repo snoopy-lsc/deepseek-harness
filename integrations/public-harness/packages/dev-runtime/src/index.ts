@@ -1,7 +1,7 @@
 /** Local-only instance-manager provider for macOS and Windows development. */
 import { AccountSuspendedError, CapacityError, createActivityTracker, type ActivityTracker, type InstanceManager, type UserId } from '@public-harness/contracts'
 import type { DevRuntimeConfig } from './config.ts'
-import { validateDevRuntimeConfig } from './config.ts'
+import { validateDevRuntimeConfig, validateDevUsers } from './config.ts'
 import { startWebProcess, type RunningWeb } from './processes.ts'
 
 export type { DevRuntimeConfig } from './config.ts'
@@ -9,6 +9,8 @@ export { validateDevUsers } from './config.ts'
 
 export interface DevInstanceManager extends InstanceManager {
   readonly storageRoot: string
+  /** Admit an authenticated local identity before its first workspace request. */
+  register(userId: UserId): void
   /** Last-routed-request times; the idle reaper reads this. */
   readonly tracker: ActivityTracker
   /** Users with a starting or running Web child, which is what the admission cap counts. */
@@ -64,6 +66,12 @@ export function createDevInstanceManager(config: DevRuntimeConfig, tracker: Acti
   }
   return {
     storageRoot: config.storageRoot,
+    register(userId) {
+      if (closed) throw new Error('development instance manager is closed')
+      if (users.has(userId)) return
+      validateDevUsers([...users, userId])
+      users.add(userId)
+    },
     tracker,
     async ensure(userId) { return (await get(userId)).endpoint },
     async launchGrant(userId) { return (await get(userId)).grant },

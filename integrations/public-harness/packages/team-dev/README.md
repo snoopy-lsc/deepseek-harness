@@ -14,6 +14,7 @@ The `team-dev` Cordis plugin starts a loopback router and one lazy Harness Web p
 ## Table of Contents
 
 - [Use the profile](#use-the-profile)
+- [Local enterprise profile](#local-enterprise-profile)
 - [Configuration](#configuration)
 - [Further Exploration](#further-exploration)
 
@@ -25,6 +26,19 @@ The `team-dev` Cordis plugin starts a loopback router and one lazy Harness Web p
 From the integration root, run `pnpm dev` after building the repository's Harness CLI and Web frontend. Open the printed `/dev` URL and select a test user. In the model selector, choose `Platform` → `Local mock model`. The fixture returns text and token usage; it does not generate tool calls or implement the upstream Files API. Harness terminal and filesystem features use the local development execution environment. Each user's data lives under the configured `storageRoot`. Stop the process to close the router and Web children.
 
 To use a real model instead of the fixture, add `quota.upstream` to the profile configuration: `root` is a pinned HTTPS Messages root ending in `/v1` (the same form as the production quota service's `upstreamRoot`), and `keyEnv` names an upper-case environment variable containing `KEY`, for example `DSH_TEAM_DEV_UPSTREAM_KEY`. Export the platform key in that variable for the `pnpm dev` process only. The quota proxy reads it at startup and sends it upstream as `x-api-key`; the development runtime strips every `*KEY*` variable from Harness children, and the key is never written to a patch, credential file, or instance. Startup fails if the variable is missing. The model then appears as `Platform` → `Platform model`, with the same reservations, `maxTokens` limit, and refusal messages as production.
+
+<a id="local-enterprise-profile"></a>
+## Local enterprise profile
+
+After building the repository CLI and Web frontend, run `pnpm dev:enterprise` from the integration root. This builds the integration and launches the named `enterprise-dev` profile. Open `http://127.0.0.1:3080/account/login?lang=en`. `pnpm start:enterprise` reuses the integration build. A busy port causes startup to fail; stop its owner or change `port` before retrying.
+
+The profile creates `admin@example.test` and `member@example.test` through the normal registration and email verification APIs. Generated passwords are stored in the owner-only `.enterprise-local/state/accounts.json`; the terminal prints its absolute path. The administrator sees Administration; members see Personal without administrator access. Identity sessions, quota, knowledge bases and separate workspaces persist across restarts. The development processes share your operating-system account and provide no filesystem or process isolation.
+
+`deploy/enterprise-dev.config.json` supplies the initial accounts, port, identity limits and knowledge-base worker settings; `deploy/team-dev.config.json` supplies process and model limits. Set `PUBLIC_HARNESS_ENTERPRISE_HOME` to keep a separate private data directory. The generator verifies its existing settings and refuses changed files instead of overwriting them; use a fresh home when changing initial generated settings. Stop the process to close the ingress and await its children before releasing the data-directory lease.
+
+Chat and knowledge-base compilation use deterministic mock models by default, and both charge the shared quota ledger. Configure `quota.upstream` as described above to use the same real Messages provider for both. Existing `DSH_SSO_*` provider variables enable enterprise SSO; in that mode the launcher skips password-account initialization. Set `DSH_ADMIN_EMAILS` to the real administrator addresses. External SSO providers and real model credentials require operator configuration and are not exercised by the keyless local checks.
+
+Registration and password reset use the local file mailbox under `.enterprise-local/state/mailbox/`. For these pages, append `?captcha=enterprise-local`; verification and reset links are in the delivered JSON messages. The default launcher uses the in-page directory picker. The local-only CAPTCHA, mailbox and direct knowledge-base helper are development providers; use the separate Linux deployment for hosted users.
 
 <a id="configuration"></a>
 ## Configuration

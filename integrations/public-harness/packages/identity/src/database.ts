@@ -3,6 +3,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { constants } from 'node:fs'
 import { lstat, open } from 'node:fs/promises'
 import { DatabaseSync } from 'node:sqlite'
+import { migrateProfiles } from './profile.ts'
 import { createGroupStore, type GroupStore } from './groups.ts'
 import { createSsoStore, type SsoStore } from './sso/store.ts'
 
@@ -66,6 +67,7 @@ export async function openIdentityDatabase(file: string): Promise<IdentityDataba
     CREATE TABLE IF NOT EXISTS dsh_used_token (hash TEXT PRIMARY KEY, used_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS dsh_invite (hash TEXT PRIMARY KEY, id TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
       used_at INTEGER, used_by TEXT, revoked_at INTEGER, note TEXT);`)
+  try { migrateProfiles(db) } catch (error) { db.close(); throw error }
   const read = db.prepare('SELECT window_start, count FROM dsh_rate WHERE key = ?')
   const write = db.prepare('INSERT INTO dsh_rate (key, window_start, count) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET window_start = excluded.window_start, count = excluded.count')
   const claim = db.prepare('INSERT OR IGNORE INTO dsh_used_token (hash, used_at) VALUES (?, ?)')

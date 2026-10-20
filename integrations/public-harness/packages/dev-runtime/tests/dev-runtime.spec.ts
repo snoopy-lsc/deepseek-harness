@@ -32,6 +32,24 @@ describe('development instance manager', () => {
     const settings = await config()
     expect(() => createDevInstanceManager({ ...settings, users: users.map(parseUserId) })).toThrow('user')
   })
+  it('registers a verified identity before its first workspace and retains the active-instance cap', async () => {
+    const manager = createDevInstanceManager({ ...(await config()), users: [], maxActive: 1 })
+    const first = parseUserId('new-user'), second = parseUserId('second-user')
+    try {
+      manager.register(first)
+      manager.register(first)
+      manager.register(second)
+      expect(() => manager.register(parseUserId('NEW-USER'))).toThrow(/user/)
+      expect(() => manager.register(parseUserId('CON'))).toThrow(/user/)
+      await manager.ensure(first)
+      await expect(manager.ensure(second)).rejects.toBeInstanceOf(CapacityError)
+      await manager.stop(first)
+      await manager.ensure(second)
+      expect(manager.active()).toEqual([second])
+    } finally { await manager.close() }
+    expect(() => manager.register(parseUserId('after-close'))).toThrow(/closed/)
+  })
+
   it('starts two loopback children with separate homes and workspaces', async () => {
     const manager = createDevInstanceManager(await config())
     try {

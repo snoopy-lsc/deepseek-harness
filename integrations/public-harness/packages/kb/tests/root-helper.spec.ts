@@ -1,6 +1,6 @@
 /** Root helper threats: the only privileged step (starting the user helper as the tree's owner) accepts a fixed verb set, strictly
  * validated arguments, and a canonical, symlink-free tree whose owners match the host layout; everything else is refused. */
-import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, symlink } from 'node:fs/promises'
 import { createServer, type Server } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -62,7 +62,7 @@ describe('root helper request', () => {
 
 describe('canonical tree', () => {
   let dir: string
-  beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'kb-root-')) })
+  beforeEach(async () => { dir = await realpath(await mkdtemp(join(tmpdir(), 'kb-root-'))) })
   afterEach(async () => { await rm(dir, { recursive: true, force: true }) })
   const layout = async (account = 'dsh-0123') => { await mkdir(join(dir, 'users', account, 'kb'), { recursive: true, mode: 0o700 }); return join(dir, 'users', account, 'kb') }
   const check = (account: string, owner = uid) => canonicalKbDir({ storageRoot: dir, rootUid: uid }, account, owner)

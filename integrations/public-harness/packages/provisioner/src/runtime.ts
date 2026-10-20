@@ -199,6 +199,7 @@ export function webPatch(config: ContainerConfig, publicHost: string, proxyPort:
   return `${JSON.stringify([
     { id: 'web-runtime', config: { openBrowser: false, printUrl: false, publicUrl: null, surfaceContext: true, trustedHosts: [publicHost] } },
     { id: 'ui-brand-official', disabled: true },
+    { id: 'ui-settings-account', disabled: true },
     // Containers receive no official model key: fresh agents start on the platform model and the keyless official route is hidden.
     ...platformModelRows({ provider: 'platform', model: modelId }),
     // With knowledge bases enabled, the read-only kb-query and kb-author skills come from the release assets.

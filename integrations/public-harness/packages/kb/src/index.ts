@@ -10,6 +10,7 @@ import { compileJobs, jobView, type JobOptions } from './jobs.ts'
 import { shareModule } from './share.ts'
 import { reconcileViews } from './views.ts'
 import { orgModule } from './org.ts'
+import { contentModule } from './content.ts'
 import { limitsModule } from './limits-admin.ts'
 
 export { createDirectRunner, createSystemdRunner, devUserTrees, systemdRunArgv, type HelperRunner, type UserTree, type UserTrees } from './runner.ts'
@@ -143,7 +144,7 @@ export async function startKbService(config: KbServiceConfig, extra: Array<(core
   const core = createCore({ store, root: config.root, users: config.users, runner: config.runner, ...config.orgRunner ? { orgRunner: config.orgRunner } : {}, ...config.clock ? { clock: config.clock } : {}, ...config.log ? { log: config.log } : {} })
   const jobs = config.jobs === undefined ? undefined : compileJobs(core, config.jobs)
   const share = shareModule(core, config.requestTtlMs === undefined ? {} : { requestTtlMs: config.requestTtlMs })
-  const routes: KbRoutes = { ...baseRoutes(core, { principalsChanged: async ids => { await reconcileViews(core, ids) } }), ...compileRoutes(core, jobs), ...share.routes, ...orgModule(core, jobs), ...limitsModule(core) }
+  const routes: KbRoutes = { ...baseRoutes(core, { principalsChanged: async ids => { await reconcileViews(core, ids) } }), ...compileRoutes(core, jobs), ...contentModule(core), ...share.routes, ...orgModule(core, jobs), ...limitsModule(core) }
   for (const module of extra) Object.assign(routes, module(core))
   const server = await listenKbSocket(kbHandler(routes, config.log), config.socket, config.socketMode ?? 0o600, config.socketGid)
   jobs?.recover()

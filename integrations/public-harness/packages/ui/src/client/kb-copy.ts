@@ -4,7 +4,7 @@
 export const kbCopy = {
   en: { kb_title: 'Knowledge bases', kb_summary: '{count} of {max} knowledge bases', kb_summaryUnlimited: '{count} knowledge bases', kb_each: 'Each up to {bytes} and {pages} pages',
     kb_unlimited: 'unlimited', kb_create: 'New knowledge base', kb_createTitle: 'New knowledge base', kb_name: 'Title', kb_description: 'Description (optional)',
-    kb_createHint: 'Starts from the team template: schema.md, index.md, log.md, raw/ for sources and wiki/ for compiled pages.', kb_cancel: 'Cancel', kb_save: 'Create',
+    kb_createHint: 'Upload sources, turn them into knowledge pages, and request sharing with your team.', kb_cancel: 'Cancel', kb_save: 'Create',
     kb_none: 'No knowledge bases yet. Create one, add sources, then compile it into wiki pages.',
     kb_stats: 'Pages: {pages} · Sources: {sources} · {size}', kb_lastJob: 'Last compile: {state}, {date}', kb_never: 'Not compiled yet',
     kb_upload: 'Add source', kb_uploaded: 'Added {name}.', kb_compile: 'Compile', kb_share: 'Request share', kb_withdraw: 'Withdraw request',
@@ -30,7 +30,7 @@ export const kbCopy = {
     kb_loading: 'Loading…', kb_unavailable: 'Knowledge bases are not available on this deployment.' },
   zh: { kb_title: '知识库', kb_summary: '已有 {count} / {max} 个知识库', kb_summaryUnlimited: '已有 {count} 个知识库', kb_each: '每个最多 {bytes}、{pages} 个页面',
     kb_unlimited: '不限', kb_create: '新建知识库', kb_createTitle: '新建知识库', kb_name: '标题', kb_description: '描述（可选）',
-    kb_createHint: '从团队模板创建：schema.md、index.md、log.md，raw/ 存放资料，wiki/ 存放编译出的页面。', kb_cancel: '取消', kb_save: '创建',
+    kb_createHint: '创建后可上传资料、生成知识页面，并申请共享给团队。', kb_cancel: '取消', kb_save: '创建',
     kb_none: '还没有知识库。新建一个，添加资料，再编译成 wiki 页面。',
     kb_stats: '{pages} 个页面 · {sources} 份资料 · {size}', kb_lastJob: '最近编译：{state}，{date}', kb_never: '尚未编译',
     kb_upload: '添加资料', kb_uploaded: '已添加 {name}。', kb_compile: '编译', kb_share: '申请共享', kb_withdraw: '撤回申请',

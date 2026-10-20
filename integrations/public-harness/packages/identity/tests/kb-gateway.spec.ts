@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createDirectRunner, devUserTrees, startKbService, type KbService } from '../../kb/src/index.ts'
+import { KbError } from '../../kb/src/errors.ts'
 import { startIdentity } from '../src/index.ts'
 import type { QuotaAdmin, QuotaLimits } from '../src/quota-account.ts'
 import { call, linkIn, localEnv, mailbox, sessionCookie, setup } from './helpers.ts'
@@ -22,12 +23,13 @@ function fakeQuota(): QuotaAdmin & { calls: unknown[] } {
     setOverLimit: async () => limits }
 }
 
-async function site() {
+async function site(options: { rejectPrincipalSync?: () => boolean } = {}) {
   const { dir } = await setup()
   const seen: Array<{ headers: Record<string, unknown>; body: unknown }> = []
   const kb: KbService = await startKbService({ root: join(dir, 'kb'), socket: join(dir, 'kb.sock'), users: devUserTrees(join(dir, 'storage')), runner: createDirectRunner() },
     [() => ({ 'PUT /admin/kb/limits': async request => { const body = await request.json(); seen.push({ headers: { ...request.actor }, body }); return { ok: true } },
-      'GET /admin/kb': async request => { seen.push({ headers: { ...request.actor }, body: null }); return { kbs: [] } } })])
+      'GET /admin/kb': async request => { seen.push({ headers: { ...request.actor }, body: null }); return { kbs: [] } } }),
+      ...options.rejectPrincipalSync === undefined ? [] : [() => ({ 'POST /internal/principals': async () => { if (options.rejectPrincipalSync!()) throw new KbError(503, 'sync-failed'); return { changed: 0 } } })]])
   open.push(kb)
   const { config } = await setup({}, { ...localEnv(dir), DSH_ADMIN_EMAILS: 'root@example.test', DSH_KB_SOCKET: join(dir, 'kb.sock') })
   const box = mailbox()
@@ -73,6 +75,56 @@ describe('knowledge base gateway', () => {
     await until(() => s.audit().some(row => row.event === 'kb-create'))
     expect(s.audit().find(row => row.event === 'kb-create')).toMatchObject({ outcome: 'ok', user_id: s.member.id, email: 'member@example.test', detail: `kb=${kb.id}` })
     expect(s.kb.core.store.audit.pending()).toEqual([])
+  })
+
+  it('serves browser content only as the verified actor and refreshes access before each read', async () => {
+    const s = await site()
+    const me = (method: string, path: string, body?: unknown, headers: Record<string, string> = {}) => call(s.config.publicSocket, method, `/account/api/me${path}`, body, { cookie: s.member.cookie, ...headers })
+    const kb = json(await me('POST', '/kb', { title: 'Member files' })).kb
+    await me('POST', `/kb/sources?kb=${kb.id}&name=notes.md`, '# Verified member source', { 'content-type': 'application/octet-stream' })
+    const endpoint = `/account/api/me/kb/content?kb=${kb.id}&path=raw%2Fnotes.md`
+    expect((await call(s.config.publicSocket, 'GET', endpoint)).status).toBe(401)
+    const reply = await me('GET', `/kb/content?kb=${kb.id}&path=raw%2Fnotes.md`, undefined, { 'x-dsh-user': s.root.id, 'x-dsh-role': 'admin' })
+    expect(reply.status).toBe(200)
+    expect(json(reply)).toEqual({ path: 'raw/notes.md', bytes: 24, text: '# Verified member source', truncated: false })
+    expect(reply.headers).toMatchObject({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' })
+    expect((await call(s.config.publicSocket, 'GET', endpoint, undefined, { cookie: s.root.cookie, 'x-dsh-user': s.member.id, 'x-dsh-role': 'member' })).status).toBe(404)
+    // A stale projected disabled state is replaced from identity before the read is authorized.
+    s.kb.core.store.principals.upsert({ userId: s.member.id, groups: [], email: s.member.email, disabled: true }, Date.now())
+    expect((await me('GET', `/kb/content?kb=${kb.id}`)).status).toBe(200)
+    const db = new DatabaseSync(s.config.databaseFile)
+    try { db.prepare('INSERT INTO dsh_user_disabled (user_id, at, reason) VALUES (?, ?, ?)').run(s.member.id, Date.now(), 'disabled') } finally { db.close() }
+    expect((await me('GET', `/kb/content?kb=${kb.id}`)).status).toBe(401)
+    await until(() => s.audit().some(row => row.event === 'kb-content-read'))
+    const event = s.audit().find(row => row.event === 'kb-content-read')!
+    expect(event).toMatchObject({ user_id: s.member.id, email: 'member@example.test' })
+    expect(JSON.stringify(event)).not.toContain('# Verified member source')
+  })
+
+  it('fails closed when current principal projection cannot be refreshed', async () => {
+    const s = await site({ rejectPrincipalSync: () => true })
+    const endpoint = '/account/api/me/kb/content?kb=kb_aaaaaaaaaaaaaaaa'
+    const response = await call(s.config.publicSocket, 'GET', endpoint, undefined, { cookie: s.member.cookie })
+    expect(response.status).toBe(503)
+    expect(json(response)).toEqual({ code: 'unavailable' })
+    expect((await call(s.config.publicSocket, 'GET', '/account/api/me/kb/shared', undefined, { cookie: s.member.cookie })).status).toBe(503)
+  })
+
+  it('ignores stale group membership on browser listings and content reads', async () => {
+    const s = await site()
+    const admin = (path: string, body: unknown) => call(s.config.publicSocket, 'POST', `/api/admin${path}`, body, { cookie: s.root.cookie })
+    const group = json(await admin('/groups', { op: 'create', name: 'Readers' })).group
+    await admin('/groups/members', { op: 'add', groupId: group.id, userId: s.member.id, password: PASSWORD })
+    const rootHeaders = { 'x-dsh-user': s.root.id, 'x-dsh-email': s.root.email, 'x-dsh-role': 'admin', 'content-type': 'application/json' }
+    const org = json(await call(s.config.kbSocket!, 'POST', '/admin/kb/org', { title: 'Handbook' }, rootHeaders)).kb
+    expect((await call(s.config.kbSocket!, 'POST', '/admin/kb/org/rollback', { kb: org.id, scope: [{ kind: 'group', target: group.id }] }, rootHeaders)).status).toBe(200)
+    const read = (path: string) => call(s.config.publicSocket, 'GET', `/account/api/me/kb/${path}`, undefined, { cookie: s.member.cookie })
+    expect((await read(`content?kb=${org.id}&path=index.md`)).status).toBe(200)
+    await admin('/groups/members', { op: 'remove', groupId: group.id, userId: s.member.id, password: PASSWORD })
+    s.kb.core.store.principals.upsert({ userId: s.member.id, groups: [group.id], disabled: false, email: s.member.email }, Date.now())
+    expect((await read(`content?kb=${org.id}&path=index.md`)).status).toBe(404)
+    s.kb.core.store.principals.upsert({ userId: s.member.id, groups: [group.id], disabled: false, email: s.member.email }, Date.now())
+    expect(json(await read('shared')).kbs).toEqual([])
   })
 
   it('re_authenticates_sensitive_admin_actions_strips_the_password_and_syncs_groups', async () => {

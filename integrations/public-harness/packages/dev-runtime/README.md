@@ -25,6 +25,8 @@ This provider implements `InstanceManager` for macOS and Windows development. It
 
 Pass `createDevInstanceManager` an absolute storage root, a fixed list of validated test user IDs, a built `dsh` command and arguments, the Web token overlay path, and positive startup and stop timeouts. IDs must be unique under case folding and cannot be Windows reserved device names. The manager rejects every bind except `127.0.0.1` and every mode except `development` before starting a child. Set `maxActive` to cap simultaneous children (default: the number of users); a start beyond the cap fails with `CapacityError`, and `suspend` stops a user and refuses further starts with `AccountSuspendedError` until `reactivate`. `stopIdle(idleMs)` stops children with no routed request in that interval. Call `close()` to await child shutdown.
 
+A local identity service may start with an empty user list and an explicit `maxActive`, then call `register(userId)` after authenticating a new user. Registration checks portable, case-distinct directory names and is idempotent for an existing ID. It does not itself authenticate the caller; the enterprise router retains that responsibility.
+
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 

@@ -10,7 +10,7 @@ function recorder(status = 200, body: unknown = {}) {
 }
 
 describe('knowledge base client', () => {
-  it('uses_the_personal_center_paths_json_writes_and_a_streamed_upload', async () => {
+  it('uses_authenticated_account_paths_json_writes_and_a_streamed_upload', async () => {
     const r = recorder(200, { kb: { id: 'kb_a' }, job: { id: 'job_a' }, jobs: [], kbs: [] })
     await r.api.overview()
     await r.api.create('Runbooks', '')
@@ -27,6 +27,16 @@ describe('knowledge base client', () => {
     expect(r.calls[2]!.init.headers).toMatchObject({ 'content-type': 'application/octet-stream' })
     expect(r.calls[2]!.init.credentials).toBe('same-origin')
     expect(JSON.parse(String(r.calls[3]!.init.body))).toEqual({ kb: 'kb_a', op: 'lint' })
+  })
+  it('encodes_knowledge_base_and_file_queries_for_authenticated_previews', async () => {
+    const r = recorder()
+    await r.api.content('kb_a')
+    await r.api.file('kb_a', 'raw/部署 notes & links.md')
+    expect(r.calls.map(call => call.url)).toEqual([
+      '/account/api/me/kb/content?kb=kb_a',
+      '/account/api/me/kb/content?kb=kb_a&path=raw%2F%E9%83%A8%E7%BD%B2%20notes%20%26%20links.md',
+    ])
+    expect(r.calls.every(call => call.init.credentials === 'same-origin')).toBe(true)
   })
   it('turns_refusals_into_coded_errors', async () => {
     const r = recorder(409, { code: 'kb-limit', limit: 'max_kbs' })

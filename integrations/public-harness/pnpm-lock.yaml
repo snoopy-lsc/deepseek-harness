@@ -208,6 +208,12 @@ importers:
       '@public-harness/dev-runtime':
         specifier: workspace:*
         version: link:../dev-runtime
+      '@public-harness/identity':
+        specifier: workspace:*
+        version: link:../identity
+      '@public-harness/kb':
+        specifier: workspace:*
+        version: link:../kb
       '@public-harness/quota':
         specifier: workspace:*
         version: link:../quota

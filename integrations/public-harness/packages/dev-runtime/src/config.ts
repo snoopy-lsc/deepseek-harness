@@ -29,7 +29,8 @@ export function validateDevRuntimeConfig(config: DevRuntimeConfig): void {
     || (typeof config.webPatch === 'string' && !isAbsolute(config.webPatch)) || (config.kbRoot !== undefined && !isAbsolute(config.kbRoot))) {
     throw new Error('development runtime paths must be absolute')
   }
-  validateDevUsers(config.users)
+  if (config.users.length > 0) validateDevUsers(config.users)
+  else if (config.maxActive === undefined) throw new Error('empty development users require an explicit active-instance cap')
   if (config.maxActive !== undefined && (!Number.isSafeInteger(config.maxActive) || config.maxActive <= 0)) {
     throw new Error('development runtime active-instance cap must be positive')
   }

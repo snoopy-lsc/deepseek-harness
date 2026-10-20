@@ -13,6 +13,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { IdentityAuth } from './auth.ts'
 import type { IdentityConfig } from './config.ts'
 import type { IdentityDatabase } from './database.ts'
+import { createProfiles, profilePatch } from './profile.ts'
 import { MeError } from './me.ts'
 import type { QuotaAdmin } from './quota-account.ts'
 import { createRoles } from './roles.ts'
@@ -32,8 +33,8 @@ export class AdminError extends MeError { constructor(status: number, code: stri
 
 /** Endpoints, by method; used by the routing table and by the test that proves members are refused everywhere. */
 export const ADMIN_ENDPOINTS = {
-  GET: ['/invites', '/users', '/audit', '/audit.csv', '/sso', '/quota', ...GROUP_ADMIN_ENDPOINTS.GET, ...KB_ADMIN_ENDPOINTS.GET],
-  POST: ['/invites', '/invites/revoke', '/users/disable', '/users/enable', '/users/role', '/quota/default', '/quota/user', '/quota/principal', '/quota/over-limit',
+  GET: ['/invites', '/users', '/users/profile', '/audit', '/audit.csv', '/sso', '/quota', ...GROUP_ADMIN_ENDPOINTS.GET, ...KB_ADMIN_ENDPOINTS.GET],
+  POST: ['/users/profile', '/invites', '/invites/revoke', '/users/disable', '/users/enable', '/users/role', '/quota/default', '/quota/user', '/quota/principal', '/quota/over-limit',
     ...GROUP_ADMIN_ENDPOINTS.POST, ...KB_ADMIN_ENDPOINTS.POST],
   PUT: [...KB_ADMIN_ENDPOINTS.PUT],
   DELETE: [...KB_ADMIN_ENDPOINTS.DELETE],
@@ -77,7 +78,7 @@ export interface AdminDeps {
 }
 
 /** Endpoints served in this file; the rest of ADMIN_ENDPOINTS belongs to route modules. */
-const CORE = new Set(['GET /invites', 'GET /users', 'GET /audit', 'GET /audit.csv', 'GET /sso', 'GET /quota', 'POST /invites', 'POST /invites/revoke',
+const CORE = new Set(['GET /users/profile', 'POST /users/profile', 'GET /invites', 'GET /users', 'GET /audit', 'GET /audit.csv', 'GET /sso', 'GET /quota', 'POST /invites', 'POST /invites/revoke',
   'POST /users/disable', 'POST /users/enable', 'POST /users/role', 'POST /quota/default', 'POST /quota/user', 'POST /quota/principal', 'POST /quota/over-limit'])
 const time = (value: unknown) => value === null || value === undefined ? null : typeof value === 'number' ? value : Date.parse(String(value))
 /** Most rows one CSV export carries; narrower filters reach older rows. */
@@ -127,6 +128,7 @@ export function redactSso(sso: object): Record<string, unknown> {
 export function adminRoutes(deps: AdminDeps): (req: IncomingMessage, res: ServerResponse, path: string) => Promise<boolean> {
   const { config, auth, database, clock } = deps
   const db = database.db
+  const profiles = createProfiles(database)
   const roles = createRoles(config, database)
   const store = <T>(work: () => T): T => { try { return work() } catch (error) { if (error instanceof MeError) throw error; throw new IdentityUnavailableError('store') } }
   const userById = db.prepare('SELECT id, email, name, createdAt FROM user WHERE id = ?')
@@ -232,6 +234,7 @@ export function adminRoutes(deps: AdminDeps): (req: IncomingMessage, res: Server
     }
     if (read) {
       deps.limit(`admin-read:${session.user.id}`, HOUR, 1200)
+      if (sub === '/users/profile') { const user = target({ userId: query.get('userId') }); send(res, 200, store(() => profiles.read(user.id))); return true }
       if (sub === '/invites') { send(res, 200, { invites: store(() => database.listInvites()).reverse() }); return true }
       if (sub === '/users') {
         const offset = Math.max(0, Math.min(Number(query.get('offset')) || 0, 1_000_000)), limit = Math.max(1, Math.min(Number(query.get('limit')) || 50, 100))
@@ -287,6 +290,12 @@ export function adminRoutes(deps: AdminDeps): (req: IncomingMessage, res: Server
 
     const body = await jsonBody(req)
     deps.limit(`admin-write:${session.user.id}`, HOUR, 120)
+    if (sub === '/users/profile') {
+      const patch = profilePatch(body, true), user = target(body)
+      const profile = store(() => profiles.update(user.id, patch, () => database.sso.audit({ event: 'admin-profile-update', outcome: 'ok', userId: user.id,
+        ip: deps.ip(req), detail: `by=${session.user.id} fields=${Object.keys(patch).sort().join(',')}` }, clock())))
+      send(res, 200, profile); return true
+    }
     if (sub === '/invites') {
       const hours = body.ttlHours === undefined ? 168 : body.ttlHours, note = body.note
       if (typeof hours !== 'number' || !Number.isSafeInteger(hours) || hours < 1 || hours > 720) throw new MeError(400, 'body')

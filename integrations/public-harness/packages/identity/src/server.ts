@@ -149,7 +149,8 @@ export function publicHandler(deps: PublicDeps): ((req: IncomingMessage, res: Se
     modules: [groupAdminRoutes(database, clock), ...kb === undefined ? [] : [kb.admin]], ...kb === undefined ? {} : { budgetPrincipal: kb.budgetPrincipal } })
   const handler = (req: IncomingMessage, res: ServerResponse) => {
     void (async () => {
-      const path = (req.url ?? '/').split('?')[0]
+      const url = new URL(req.url ?? '/', config.publicOrigin)
+      const path = url.pathname
       const acs = config.sso.kind === 'saml' && path === SAML_ACS_PATH && req.method === 'POST'
       if (acs && req.headers.origin !== config.publicOrigin) {
         // The IdP posts cross-site, so the SameSite=Lax browser-binding cookie is absent. Re-post the form from this origin, where the cookie is
@@ -168,7 +169,6 @@ export function publicHandler(deps: PublicDeps): ((req: IncomingMessage, res: Se
         return
       }
       checkRequestOrigin(req, config)
-      const url = new URL(req.url ?? '/', config.publicOrigin)
       if (path === SAML_METADATA_PATH && req.method === 'GET' && deps.ssoMetadata !== undefined) {
         res.writeHead(200, { 'content-type': 'application/samlmetadata+xml; charset=utf-8', 'cache-control': 'no-store' })
         res.end(deps.ssoMetadata)

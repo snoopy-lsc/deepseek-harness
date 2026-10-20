@@ -18,9 +18,11 @@ class FakeRuntime implements InstanceRuntime {
   async releaseAllocation(record: { account: string }): Promise<void> { await this.stop(record) }
   readonly started: string[] = []
   readonly stopped: string[] = []
+  onStart: (() => void) | undefined
   gate: Promise<void> | undefined
   async start(record: RuntimeInstance): Promise<InstanceEndpoint> {
     this.started.push(record.account)
+    this.onStart?.()
     await this.gate
     return { kind: 'unix', path: `${record.controlDir}/instance.sock` }
   }
@@ -55,14 +57,17 @@ describe.skipIf(process.platform === 'win32')('suspend, restart, and recovery', 
     const { runtime, call } = await service()
     let release!: () => void
     runtime.gate = new Promise<void>(resolve => { release = resolve })
-    const first = call('ensure')
-    await new Promise(resolve => setTimeout(resolve, 20))
-    // The router's client gave up on `first` and asks again while the image is still loading.
-    const retry = call('ensure')
-    await new Promise(resolve => setTimeout(resolve, 20))
-    expect(runtime.started).toHaveLength(1)
-    release()
-    expect(await retry).toEqual(await first)
+    const starting = new Promise<void>(resolve => { runtime.onStart = resolve })
+    const calls = [call('ensure')]
+    try {
+      await starting
+      calls.push(call('ensure'))
+      expect(runtime.started).toHaveLength(1)
+    } finally {
+      release()
+      await Promise.allSettled(calls)
+    }
+    expect(await calls[1]).toEqual(await calls[0])
     expect(runtime.started).toHaveLength(1)
     expect(await call('status')).toBe('running')
   })

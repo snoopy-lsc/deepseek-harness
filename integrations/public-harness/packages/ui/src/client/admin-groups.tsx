@@ -1,9 +1,10 @@
 /** System Admin, Groups: synced departments and groups (alias, member count, last refresh) and administrator-managed local groups
  * with their members. Membership changes and deletions may ask for re-authentication; the server decides. */
+import { AdminSelect } from './admin-select.tsx'
 import { Button, Input, Modal, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import type { AdminApi, AdminGroup, AdminGroupMember, AdminUser, Proof } from './admin-api.ts'
-import { Card, date, errorText, field, fill, hint, label, Note, Row, select, type T, useReauth } from './admin-kit.tsx'
+import { Card, date, errorText, field, fill, hint, label, Note, Row, type T, useReauth } from './admin-kit.tsx'
 
 const SOURCE: Record<AdminGroup['source'], string> = { oidc: 'OIDC', saml: 'SAML', ldap: 'LDAP', wecom: 'WeCom', dingtalk: 'DingTalk', local: 'Local' }
 /** Display name of a group: alias or local name, else the directory value. */
@@ -79,8 +80,8 @@ function MembersDialog({ api, t, group, attempt, onClose }: { api: AdminApi; t: 
     </div>
     {group.source === 'local' && <form style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 8, alignItems: 'end', marginTop: 12 }}
       onSubmit={event => { event.preventDefault(); if (userId) change(userId, 'add') }}>
-      <label style={field}>{t('user')}<select style={select} value={userId} onChange={e => setUserId(e.target.value)}><option value="">—</option>
-        {users.filter(user => !members?.some(member => member.userId === user.id)).map(user => <option key={user.id} value={user.id}>{user.email}</option>)}</select></label>
+      <label style={field}>{t('user')}<AdminSelect label={t('user')} value={userId} onChange={setUserId} options={[{ value: '', label: '—' },
+        ...users.filter(user => !members?.some(member => member.userId === user.id)).map(user => ({ value: user.id, label: user.email }))]} /></label>
       <Button type="submit" variant="primary">{t('groupAdd')}</Button>
     </form>}
   </Modal>

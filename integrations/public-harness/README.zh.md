@@ -27,6 +27,8 @@ kind: "package-library"
 
 插件开发依赖与[生产发布清单](deploy/release-manifest.json)面向 Harness `0.2.1-alpha.2`。清单使用独立的候选发布编号，因此开放公开注册需要为该候选版本记录的 Linux 验证结果。
 
+本地密码登录、管理后台和知识库使用[企业开发配置](packages/team-dev/README.zh.md#local-enterprise-profile)。
+
 <a id="understand-the-implementation"></a>
 ## 了解实现
 

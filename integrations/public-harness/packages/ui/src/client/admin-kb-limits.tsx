@@ -1,13 +1,14 @@
 /** System Admin, Quota, Knowledge base limits: the global values (each with "Unlimited", sizes in MB), group and user overrides with a
  * picker for new rows, and the effective limits of one user with their source and usage. Built like the over-limit editor above it:
  * the same fields, save button and re-authentication dialog. Hidden when the knowledge base service is not running. */
+import { AdminSelect } from './admin-select.tsx'
 import { Button, Checkbox, Input } from '@deepseek-ai/dsh-client-ui-primitives'
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { AdminApiError, type AdminApi, type AdminGroup, type AdminKbEffective, type AdminKbLimits, type AdminUser, type KbLimitName, type KbLimitScope, type Proof } from './admin-api.ts'
 import { groupName } from './admin-groups.tsx'
 import { kbSize, useDirectory } from './admin-kb.tsx'
 import { KB_LIMIT_NAMES, limitText, parseLimit } from './admin-kb-units.ts'
-import { Card, field, fill, hint, label, Row, select, type T } from './admin-kit.tsx'
+import { Card, field, fill, hint, label, Row, type T } from './admin-kit.tsx'
 
 const MB = 1024 * 1024
 const rangeText = (name: KbLimitName, range: readonly [number, number]) => name === 'max_bytes' ? { min: range[0] / MB, max: range[1] / MB } : { min: range[0], max: range[1] }
@@ -71,8 +72,8 @@ export function KbLimitsCard({ api, t, attempt, note }: { api: AdminApi; t: T; a
     <form style={{ padding: '14px 0', borderBottom: '0.5px solid var(--dsw-alias-border-l2)' }} onSubmit={addOverride}>
       <div style={label}>{t('kbAddLimitOverride')}</div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end', marginTop: 10 }}>
-        <label style={{ ...field, flex: '2 1 260px', minWidth: 0 }}>{t('kbOverrideFor')}<select style={select} value={target} onChange={e => setTarget(e.target.value)}><option value="">—</option>{targets.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select></label>
-        <label style={{ ...field, flex: '1 1 220px', minWidth: 0 }}>{t('kbLimitName')}<select style={select} value={name} onChange={e => setName(e.target.value as KbLimitName)}>{KB_LIMIT_NAMES.map(n => <option key={n} value={n}>{t(`kbLimit_${n}`)}</option>)}</select></label>
+        <label style={{ ...field, flex: '2 1 260px', minWidth: 0 }}>{t('kbOverrideFor')}<AdminSelect label={t('kbOverrideFor')} value={target} onChange={setTarget} options={[{ value: '', label: '—' }, ...targets]} /></label>
+        <label style={{ ...field, flex: '1 1 220px', minWidth: 0 }}>{t('kbLimitName')}<AdminSelect label={t('kbLimitName')} value={name} onChange={setName} options={KB_LIMIT_NAMES.map(n => ({ value: n, label: t(`kbLimit_${n}`) }))} /></label>
         <label style={{ ...field, flex: '1 1 220px', minWidth: 0 }}>{t('kbLimitValue')}<Input inputMode="numeric" disabled={none} value={none ? '' : value} onChange={e => setValue(e.target.value.replace(/\D/g, ''))} /></label>
         <span style={{ whiteSpace: 'nowrap', paddingBottom: 8 }}><Checkbox checked={none} onChange={setNone} label={t('kbUnlimited')} /></span>
         <Button type="submit" variant="primary">{t('save')}</Button>
@@ -86,7 +87,7 @@ export function KbLimitsCard({ api, t, attempt, note }: { api: AdminApi; t: T; a
       </Row>)}
     <div style={{ padding: '14px 0', display: 'grid', gap: 8 }}>
       <div style={label}>{t('kbEffective')}</div>
-      <label style={{ ...field, maxWidth: 360 }}>{t('user')}<select style={select} value={effectiveUser} onChange={e => setEffectiveUser(e.target.value)}><option value="">—</option>{users.map(u => <option key={u.id} value={u.id}>{u.email}</option>)}</select></label>
+      <label style={{ ...field, maxWidth: 360 }}>{t('user')}<AdminSelect label={t('user')} value={effectiveUser} onChange={setEffectiveUser} options={[{ value: '', label: '—' }, ...users.map(u => ({ value: u.id, label: u.email }))]} /></label>
       {effective === null ? <div style={hint}>{t('failed')}</div> : effective !== undefined && <div data-team-admin-kb-effective style={{ display: 'grid', gap: 4, fontSize: 13 }}>
         {KB_LIMIT_NAMES.map(n => <div key={n}>{t(`kbLimit_${n}`)}: <strong>{shown(n, effective.limits[n].value)}</strong> <span style={{ ...hint, display: 'inline' }}>{fill(t('kbEffectiveSource'), { source: effective.limits[n].source.startsWith('group:')
           ? (g => g ? groupName(g) : effective.limits[n].source.slice(6))(groups.find(g => g.id === effective.limits[n].source.slice(6))) : t(effective.limits[n].source === 'user' ? 'kbSource_user' : 'kbSource_global') })}</span></div>)}

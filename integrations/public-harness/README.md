@@ -27,6 +27,8 @@ Build the repository's Harness CLI and Web frontend, then run `pnpm install` and
 
 The plugin development dependencies and the [production release manifest](deploy/release-manifest.json) target Harness `0.2.1-alpha.2`. The manifest identifies a separate candidate release, so public enrollment requires Linux evidence recorded for that candidate.
 
+For local password login, administration and knowledge bases, use the [enterprise development profile](packages/team-dev/README.md#local-enterprise-profile).
+
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 

@@ -23,6 +23,23 @@ describe('personal center client', () => {
       ['/account/api/me/security', 'GET', 'same-origin'], ['/account/api/me/sessions', 'GET', 'same-origin'], ['/account/api/me/usage', 'GET', 'same-origin']])
   })
 
+  it('profile_updates_cannot_send_organization_fields_and_avatars_use_the_own_endpoint', async () => {
+    const profile = { name: 'Ann', email: 'ann@example.test', phone: '', employeeId: '', department: '', jobTitle: '', avatarUrl: null, managedBy: 'local' }
+    const { calls, fetcher } = recorder(Array.from({ length: 4 }, () => ({ status: 200, body: profile })))
+    const api = createAccountApi(fetcher)
+    expect(await api.profile()).toEqual(profile)
+    const patch = { name: 'Ann B', phone: '123', employeeId: 'forbidden', email: 'other@example.test' }
+    expect(await api.updateProfile(patch)).toEqual(profile)
+    await api.avatar({ mime: 'image/jpeg', data: 'aW1hZ2U=' })
+    await api.avatar({ data: null })
+    expect(calls.map(call => [call.url, call.init.method ?? 'GET', call.init.credentials])).toEqual([
+      ['/account/api/me/profile', 'GET', 'same-origin'], ['/account/api/me/profile', 'POST', 'same-origin'],
+      ['/account/api/me/avatar', 'POST', 'same-origin'], ['/account/api/me/avatar', 'POST', 'same-origin']])
+    expect(JSON.parse(String(calls[1]!.init.body))).toEqual({ name: 'Ann B', phone: '123' })
+    expect(JSON.parse(String(calls[2]!.init.body))).toEqual({ mime: 'image/jpeg', data: 'aW1hZ2U=' })
+    expect(JSON.parse(String(calls[3]!.init.body))).toEqual({ data: null })
+  })
+
   it('writes_post_json_and_surface_the_server_code', async () => {
     const { calls, fetcher } = recorder([{ status: 200, body: { revoked: 1 } }, { status: 200, body: { revoked: 3 } }, { status: 403, body: { code: 'reauth' } }])
     const api = createAccountApi(fetcher)

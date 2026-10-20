@@ -1,0 +1,30 @@
+{
+  "port": 3080,
+  "accounts": [
+    {
+      "name": "Administrator",
+      "email": "admin@example.test",
+      "role": "admin"
+    },
+    {
+      "name": "Member",
+      "email": "member@example.test",
+      "role": "member"
+    }
+  ],
+  "identity": {
+    "limits": {
+      "signupPerIpPerHour": 100,
+      "signupPerDay": 1000,
+      "resetPerEmailPerHour": 20,
+      "loginPerIpPerMinute": 100
+    },
+    "sessionTtlSeconds": 604800,
+    "verificationTtlSeconds": 3600
+  },
+  "kb": {
+    "siteWorkers": 2,
+    "perUserPerHour": 20,
+    "sweepIntervalMs": 600000
+  }
+}

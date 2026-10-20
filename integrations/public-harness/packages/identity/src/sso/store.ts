@@ -12,9 +12,10 @@ export const AUDIT_RETENTION_MS = 365 * 86_400_000
 /** One audit entry; never holds passwords, codes or tokens. */
 export interface AuditEvent {
   readonly event: 'sso-sign-in' | 'emergency-sign-in' | 'emergency-enroll' | 'emergency-revoke' | 'sso-disable' | 'sso-enable' | 'sso-reconcile'
+    | 'profile-update' | 'admin-profile-update' | 'avatar-update'
     | 'password-change' | 'session-revoke' | 'sessions-revoke-others'
     | 'admin-invite-create' | 'admin-invite-revoke' | 'admin-user-disable' | 'admin-user-enable' | 'admin-role-change' | 'admin-quota-change' | 'admin-reauth' | 'admin-audit-export' | 'admin-over-limit-change'
-    | 'admin-group-change' | 'kb-create' | 'kb-archive' | 'kb-compile' | 'kb-share-request' | 'kb-share-withdraw' | 'kb-view-apply'
+    | 'admin-group-change' | 'kb-create' | 'kb-archive' | 'kb-compile' | 'kb-share-request' | 'kb-share-withdraw' | 'kb-view-apply' | 'kb-content-read'
     | 'admin-kb-approve' | 'admin-kb-reject' | 'admin-kb-scope-change' | 'admin-kb-revoke' | 'admin-kb-convert' | 'admin-kb-org-create' | 'admin-kb-org-edit'
     | 'admin-kb-org-compile' | 'admin-kb-rollback' | 'admin-kb-limit-change' | 'admin-kb-limit-delete' | 'admin-kb-content-read'
   readonly outcome: 'ok' | 'denied' | 'error'

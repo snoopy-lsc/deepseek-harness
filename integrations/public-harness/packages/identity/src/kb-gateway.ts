@@ -29,7 +29,7 @@ export const KB_REAUTH = new Set(['POST /kb/requests/approve', 'POST /kb/scope',
   'POST /kb/org/archive', 'POST /kb/org/restore', 'PUT /kb/limits', 'DELETE /kb/limits'])
 /** Personal endpoints, by method (path after `/account/api/me`). */
 export const KB_ME_ENDPOINTS = {
-  GET: ['/kb', '/kb/jobs', '/kb/shared'],
+  GET: ['/kb', '/kb/jobs', '/kb/shared', '/kb/content'],
   POST: ['/kb', '/kb/sources', '/kb/compile', '/kb/share', '/kb/share/withdraw', '/kb/archive'],
 } as const
 /** Streamed uploads (application/octet-stream) and their cap. */
@@ -38,7 +38,7 @@ export const KB_MAX_UPLOAD = 25 * 1024 * 1024
 /** JSON bodies: page edits are the largest. */
 const MAX_JSON = 1024 * 1024
 const HOUR = 3_600_000
-const KB_EVENTS = new Set<string>(['kb-create', 'kb-archive', 'kb-compile', 'kb-share-request', 'kb-share-withdraw', 'kb-view-apply', 'admin-kb-approve', 'admin-kb-reject',
+const KB_EVENTS = new Set<string>(['kb-content-read', 'kb-create', 'kb-archive', 'kb-compile', 'kb-share-request', 'kb-share-withdraw', 'kb-view-apply', 'admin-kb-approve', 'admin-kb-reject',
   'admin-kb-scope-change', 'admin-kb-revoke', 'admin-kb-convert', 'admin-kb-org-create', 'admin-kb-org-edit', 'admin-kb-org-compile', 'admin-kb-rollback',
   'admin-kb-limit-change', 'admin-kb-limit-delete', 'admin-kb-content-read'])
 
@@ -197,16 +197,18 @@ export function createKbGateway(deps: KbGatewayDeps): KbGateway {
       let result
       try { result = await auth.api.getSession({ headers: new Headers({ cookie: req.headers.cookie ?? '' }), query: { disableCookieCache: true } }) }
       catch { throw new IdentityUnavailableError('store') }
-      if (result === null || !result.user.emailVerified) throw new MeError(401, 'unauthenticated')
+      if (result === null || !result.user.emailVerified || database.sso.disabledAt(result.user.id) !== undefined) throw new MeError(401, 'unauthenticated')
       const user = { id: result.user.id, email: result.user.email }
       deps.limit(read ? `kb-read:${user.id}` : `kb-write:${user.id}`, HOUR, read ? 3600 : 600)
       const role = roles.role(user.id, user.email.toLowerCase())
-      if (!synced.has(user.id)) await syncPrincipals([user.id]).catch(error => log(`kb: principal sync failed: ${(error as Error).message}`))
+      if (sub === '/kb/content' || sub === '/kb/shared') {
+        try { await syncPrincipals([user.id]) } catch { throw new IdentityUnavailableError('kb') }
+      } else if (!synced.has(user.id)) await syncPrincipals([user.id]).catch(error => log(`kb: principal sync failed: ${(error as Error).message}`))
       const { headers, body } = await forwardBody(req, sub, !read)
       const search = new URL(req.url ?? '/', config.publicOrigin).search
       const reply = await call(read ? 'GET' : 'POST', `/me${sub}${search}`, { ...actorHeaders(user, role), ...headers }, body)
       relay(res, reply)
-      if (!read) void drainAudit().catch(error => log(`kb: audit drain failed: ${(error as Error).message}`))
+      if (!read || sub === '/kb/content') void drainAudit().catch(error => log(`kb: audit drain failed: ${(error as Error).message}`))
       return true
     },
     async admin(ctx: AdminContext) {

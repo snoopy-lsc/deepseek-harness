@@ -1,10 +1,13 @@
 /** Personal center endpoints under `/account/api/me`: the signed-in user's profile, sign-in method, sessions, password and usage.
  * Every request needs a live, verified session; writes also need the configured Origin (checked before this runs) and a JSON body,
  * which a cross-site form cannot send without a preflight. Security-relevant writes are audited. */
+import { MeError } from './me-error.ts'
+export { MeError } from './me-error.ts'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { IdentityAuth } from './auth.ts'
 import type { IdentityConfig } from './config.ts'
 import type { IdentityDatabase } from './database.ts'
+import { AVATAR_BODY_LIMIT, createProfiles, profileAvatar, profilePatch } from './profile.ts'
 import { IdentityUnavailableError } from './transports.ts'
 
 /** The signed-in user's profile and server-decided role, read by the Harness Web shell. */
@@ -31,9 +34,6 @@ export type OverLimitMode = 'block' | 'grace' | 'warn'
 /** Read-only source of one user's usage, supplied by the deployment that owns the ledger. */
 export type UsageSource = (userId: string) => Promise<PersonalUsage | undefined>
 
-/** A refusal with an HTTP status and a stable code. */
-export class MeError extends Error { constructor(readonly status: number, readonly code: string) { super(code) } }
-
 /** Collaborators of the personal center routes. */
 export interface MeDeps {
   readonly config: IdentityConfig
@@ -54,11 +54,11 @@ function send(res: ServerResponse, status: number, body: unknown, headers: Recor
   res.end(JSON.stringify(body))
 }
 
-async function jsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+async function jsonBody(req: IncomingMessage, maxBody = MAX_BODY): Promise<Record<string, unknown>> {
   if (!/^application\/json(;|$)/.test(req.headers['content-type'] ?? '')) throw new MeError(415, 'json-only')
   const chunks: Buffer[] = []
   let size = 0
-  for await (const chunk of req as AsyncIterable<Buffer>) { size += chunk.length; if (size > MAX_BODY) throw new MeError(413, 'body-too-large'); chunks.push(chunk) }
+  for await (const chunk of req as AsyncIterable<Buffer>) { size += chunk.length; if (size > maxBody) throw new MeError(413, 'body-too-large'); chunks.push(chunk) }
   let parsed: unknown
   try { parsed = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') } catch { throw new MeError(400, 'body') }
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) throw new MeError(400, 'body')
@@ -73,16 +73,17 @@ export function meRoutes(deps: MeDeps): (req: IncomingMessage, res: ServerRespon
   const { config, auth, database, clock } = deps
   const roles = createRoles(config, database)
   const db = database.db
+  const profiles = createProfiles(database)
   const listSessions = db.prepare('SELECT id, createdAt, updatedAt, expiresAt, ipAddress, userAgent FROM session WHERE userId = ? ORDER BY updatedAt DESC')
   const deleteOne = db.prepare('DELETE FROM session WHERE id = ? AND userId = ?')
   const deleteOthers = db.prepare('DELETE FROM session WHERE userId = ? AND id <> ?')
-  const store = <T>(work: () => T): T => { try { return work() } catch { throw new IdentityUnavailableError('store') } }
+  const store = <T>(work: () => T): T => { try { return work() } catch (error) { if (error instanceof MeError) throw error; throw new IdentityUnavailableError('store') } }
 
   const session = async (req: IncomingMessage) => {
     let result
     try { result = await auth.api.getSession({ headers: new Headers({ cookie: req.headers.cookie ?? '' }), query: { disableCookieCache: true } }) }
     catch { throw new IdentityUnavailableError('store') }
-    if (result === null || !result.user.emailVerified) throw new MeError(401, 'unauthenticated')
+    if (result === null || !result.user.emailVerified || store(() => database.sso.disabledAt(result.user.id)) !== undefined) throw new MeError(401, 'unauthenticated')
     return result
   }
   const method = (userId: string) => store(() => {
@@ -94,14 +95,27 @@ export function meRoutes(deps: MeDeps): (req: IncomingMessage, res: ServerRespon
     store(() => database.sso.audit({ event, outcome, userId: user.id, email: user.email.toLowerCase(), ip: deps.ip(req), ...detail === undefined ? {} : { detail } }, clock()))
 
   return async (req, res, path) => {
-    if (path !== ME_PATH && !path.startsWith(`${ME_PATH}/`)) return false
-    const sub = path.slice(ME_PATH.length), verb = req.method ?? 'GET'
+    const legacyUpdate = path === '/api/auth/update-user' && req.method === 'POST'
+    if (!legacyUpdate && path !== ME_PATH && !path.startsWith(`${ME_PATH}/`)) return false
+    const sub = legacyUpdate ? '/profile' : path.slice(ME_PATH.length), verb = req.method ?? 'GET'
     const read = verb === 'GET' || verb === 'HEAD'
-    const known = read ? ['', '/security', '/sessions', '/usage'] : ['/sessions/revoke', '/sessions/revoke-others', '/password']
+    if (!read && verb !== 'POST') throw new MeError(405, 'method')
+    const known = read ? ['', '/security', '/sessions', '/usage', '/profile', '/avatar'] : ['/sessions/revoke', '/sessions/revoke-others', '/password', '/profile', '/avatar']
     if (!known.includes(sub)) throw new MeError(read || verb === 'POST' ? 404 : 405, 'not-found')
-    const body = read ? undefined : await jsonBody(req)
     const { user, session: current } = await session(req)
+    const body = read ? undefined : await jsonBody(req, sub === '/avatar' ? AVATAR_BODY_LIMIT : MAX_BODY)
     const email = user.email.toLowerCase()
+    if (sub === '/profile' && read) { send(res, 200, store(() => profiles.read(user.id))); return true }
+    if (sub === '/avatar' && read) {
+      const query = new URL(req.url ?? '/', config.publicOrigin).searchParams
+      const target = query.get('userId') ?? user.id
+      if (target.length === 0 || target.length > 128) throw new MeError(400, 'query')
+      if (target !== user.id && store(() => roles.role(user.id, email)) !== 'admin') throw new MeError(403, 'forbidden')
+      const image = store(() => profiles.avatar(target))
+      if (image === undefined) throw new MeError(404, 'avatar-not-found')
+      res.writeHead(200, { 'content-type': image.mime, 'content-length': String(image.data.length), 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff' })
+      res.end(verb === 'HEAD' ? undefined : image.data); return true
+    }
     if (sub === '') {
       const { provider, passwordChange } = method(user.id)
       const role: AccountRole = store(() => roles.role(user.id, email))
@@ -125,6 +139,19 @@ export function meRoutes(deps: MeDeps): (req: IncomingMessage, res: ServerRespon
       send(res, 200, usage); return true
     }
     deps.limit(`me-write:${user.id}`, HOUR, 60)
+    if (sub === '/profile') {
+      const patch = profilePatch(body!, false)
+      const profile = store(() => profiles.update(user.id, patch, () => database.sso.audit({ event: 'profile-update', outcome: 'ok', userId: user.id,
+        ip: deps.ip(req), detail: `by=${user.id} fields=${Object.keys(patch).sort().join(',')}` }, clock())))
+      send(res, 200, legacyUpdate ? { status: true } : profile); return true
+    }
+    if (sub === '/avatar') {
+      deps.limit(`avatar-write:${user.id}`, HOUR, 10)
+      const image = profileAvatar(body!)
+      const profile = store(() => profiles.setAvatar(user.id, image, () => database.sso.audit({ event: 'avatar-update', outcome: 'ok', userId: user.id,
+        ip: deps.ip(req), detail: `by=${user.id} action=${image === null ? 'remove' : 'replace'}` }, clock())))
+      send(res, 200, profile); return true
+    }
     if (sub === '/sessions/revoke') {
       const id = body!.id
       if (typeof id !== 'string' || id.length > 128) throw new MeError(400, 'body')

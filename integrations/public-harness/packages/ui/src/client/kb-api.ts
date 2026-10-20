@@ -30,7 +30,27 @@ export interface KbOverview {
 }
 export interface KbShared { readonly id: string; readonly title: string; readonly kind: 'personal' | 'org'; readonly owner: string | null; readonly publishedAt: number; readonly path: string }
 
+/** Authenticated directory listing of the current private or published KB revision. */
+export interface KbContent {
+  readonly files: ReadonlyArray<{ readonly path: string; readonly bytes: number }>
+  readonly revision: string
+  readonly readOnly: boolean
+}
+/** Safe read-only text preview; null text identifies a format without a preview. */
+export interface KbFile { readonly path: string; readonly bytes: number; readonly text: string | null; readonly truncated: boolean }
+
 export interface KbApi {
+  /** List files in an owned KB or an authorized active publication.
+   * @param kbId - Knowledge-base identifier.
+   * @returns The available files and their revision and read-only policy.
+   */
+  content(kbId: string): Promise<KbContent>
+  /** Read a file without executing markup or loading remote content.
+   * @param kbId - Knowledge-base identifier.
+   * @param path - Server-listed relative file path.
+   * @returns A bounded plain-text preview, or null text for an unsupported format.
+   */
+  file(kbId: string, path: string): Promise<KbFile>
   overview(): Promise<KbOverview>
   create(title: string, description: string): Promise<KbItem>
   upload(kbId: string, file: { name: string; data: Blob }): Promise<void>
@@ -60,6 +80,8 @@ export function createKbApi(fetcher?: typeof fetch): KbApi {
   }
   const post = (path: string, body: unknown) => request(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
   return {
+    content: async kbId => await request(`/kb/content?kb=${encodeURIComponent(kbId)}`) as KbContent,
+    file: async (kbId, path) => await request(`/kb/content?kb=${encodeURIComponent(kbId)}&path=${encodeURIComponent(path)}`) as KbFile,
     overview: async () => await request('/kb') as KbOverview,
     create: async (title, description) => (await post('/kb', { title, description }) as { kb: KbItem }).kb,
     upload: async (kbId, file) => {

@@ -1,11 +1,12 @@
 /** System Admin, knowledge bases: the share-request queue with review (files, diff against the current publication, compile log), approve
  * with a scope and the raw option, and reject with a reason; plus the scope picker reused by the inventory. The server decides access
  * and asks for re-authentication where the design requires it. */
+import { AdminSelect } from './admin-select.tsx'
 import { Button, Checkbox, DiffBlock, Input, Modal, SegmentedControl, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import type { AdminApi, AdminGroup, AdminKbFile, AdminKbRequest, AdminKbRequestContent, AdminUser, KbScopeEntry, Proof } from './admin-api.ts'
 import { groupName } from './admin-groups.tsx'
-import { Card, date, errorText, field, fill, hint, label, Note, Row, select, type T, useReauth } from './admin-kit.tsx'
+import { Card, date, errorText, field, fill, hint, label, Note, Row, type T, useReauth } from './admin-kit.tsx'
 
 /** Human size in MB or KB. */
 export const kbSize = (bytes: number) => bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(bytes >= 10 * 1024 * 1024 ? 0 : 1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`
@@ -40,8 +41,7 @@ export function ScopePicker({ t, value, onChange, groups, users }: { t: T; value
         </span>)}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 8, alignItems: 'end' }}>
-        <label style={field}>{t('kbSearchPeople')}<select style={select} value={pick} onChange={e => setPick(e.target.value)}><option value="">—</option>
-          {options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+        <label style={field}>{t('kbSearchPeople')}<AdminSelect label={t('kbSearchPeople')} value={pick} onChange={setPick} options={[{ value: '', label: '—' }, ...options]} /></label>
         <Button variant="outline" disabled={!pick} onClick={() => { const [kind, target] = pick.split('|') as ['group' | 'user', string]; onChange([...value, { kind, target }]); setPick('') }}>{t('kbAdd')}</Button>
       </div>
     </>}

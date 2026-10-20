@@ -2,11 +2,12 @@
  * a publication (change scope, revoke, convert to a company KB); preview one user's effective set; create company KBs and maintain
  * them in an editor (upload, compile, page edit, history, publish or roll back). The server decides access; the sensitive actions
  * ask for re-authentication through the shared dialog. */
+import { AdminSelect } from './admin-select.tsx'
 import { Button, Input, Modal, SegmentedControl, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent } from 'react'
 import type { AdminApi, AdminKb, AdminKbContent, AdminKbPreview, KbScopeEntry, Proof } from './admin-api.ts'
 import { kbSize, ScopePicker, useDirectory } from './admin-kb.tsx'
-import { Card, date, errorText, field, fill, hint, label, Note, Row, select, type T, useReauth } from './admin-kit.tsx'
+import { Card, date, errorText, field, fill, hint, label, Note, Row, type T, useReauth } from './admin-kit.tsx'
 
 type Filter = 'all' | 'over' | 'published' | 'pending' | 'archived'
 type Attempt = (run: (proof: Proof) => Promise<void>) => void
@@ -113,8 +114,7 @@ function Preview({ api, t }: { api: AdminApi; t: T }) {
   return <Card testId="kb-preview">
     <div style={{ padding: '14px 0', display: 'grid', gap: 8 }}>
       <div style={label}>{t('kbPreview')}</div>
-      <label style={{ ...field, maxWidth: 360 }}>{t('kbPreviewUser')}<select style={select} value={user} onChange={e => setUser(e.target.value)}><option value="">—</option>
-        {users.map(u => <option key={u.id} value={u.id}>{u.email}</option>)}</select></label>
+      <label style={{ ...field, maxWidth: 360 }}>{t('kbPreviewUser')}<AdminSelect label={t('kbPreviewUser')} value={user} onChange={setUser} options={[{ value: '', label: '—' }, ...users.map(u => ({ value: u.id, label: u.email }))]} /></label>
       {preview === null ? <div style={hint}>{t('failed')}</div> : preview !== undefined && (preview.user.disabled ? <div style={hint}>{t('kbPreviewDisabled')}</div>
         : preview.kbs.length === 0 ? <div style={hint}>{t('kbPreviewNone')}</div>
           : <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>{preview.kbs.map(k => <Tag key={k.id} tone="outline">{k.path}</Tag>)}</div>)}

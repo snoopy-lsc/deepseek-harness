@@ -31,10 +31,10 @@ describe('unified shell entries', () => {
   it('everyone_gets_the_personal_entry_but_only_admins_get_administration', async () => {
     const member = fakeContext()
     await installShell(member.ctx, async () => profile('member'))
-    expect([...member.live.keys()].sort()).toEqual(['main:team.profile', 'shell.overlay:team.over-limit', 'sidebar.panellist:team.profile'])
+    expect([...member.live.keys()].sort()).toEqual(['main:team.library', 'main:team.profile', 'shell.overlay:team.over-limit', 'sidebar.panellist:team.library', 'sidebar.panellist:team.profile'])
     const admin = fakeContext()
     await installShell(admin.ctx, async () => profile('admin'))
-    expect([...admin.live.keys()].sort()).toEqual(['main:team.admin', 'main:team.profile', 'shell.overlay:team.over-limit', 'sidebar.panellist:team.admin', 'sidebar.panellist:team.profile'])
+    expect([...admin.live.keys()].sort()).toEqual(['main:team.admin', 'main:team.library', 'main:team.profile', 'shell.overlay:team.over-limit', 'sidebar.panellist:team.admin', 'sidebar.panellist:team.library', 'sidebar.panellist:team.profile'])
     admin.dispose()
     expect(admin.live.size).toBe(0)
   })
@@ -64,13 +64,16 @@ describe('unified shell entries', () => {
     member.layout.selectPanel('team.admin')
     expect(member.live.has('sidebar.workspaces:')).toBe(false)
     expect(member.listeners.size).toBe(0)
+    const library = member.live.get('main:team.library') as { inject: () => object }
+    expect(library.inject()).not.toHaveProperty('admin')
+    expect(library.inject()).not.toHaveProperty('adminT')
   })
 
   it('personal_center_gets_the_account_client_and_opens_the_harness_settings_dialog', async () => {
     const shell = fakeContext()
     await installShell(shell.ctx, async () => profile('member'))
     const injected = (shell.live.get('main:team.profile') as { inject: () => { api: object; openSettings: () => void } }).inject()
-    expect(Object.keys(injected.api).sort()).toEqual(['changePassword', 'revoke', 'revokeOthers', 'security', 'sessions', 'usage'])
+    expect(Object.keys(injected.api).sort()).toEqual(['avatar', 'changePassword', 'profile', 'revoke', 'revokeOthers', 'security', 'sessions', 'updateProfile', 'usage'])
     vi.stubGlobal('document', { querySelector: (selector: string) => ({ click: () => { shell.invoked.push(selector) } }) })
     injected.openSettings()
     vi.unstubAllGlobals()

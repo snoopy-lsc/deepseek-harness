@@ -84,10 +84,16 @@ export function resolveTeamDevUpstream(upstream: TeamDevUpstreamConfig | undefin
 /** Running private model service and one Web patch per fixed user. */
 export interface TeamDevQuota {
   readonly patches: ReadonlyMap<UserId, string>
+  /** Create one user's private model channel; concurrent calls share the same initialization. */
+  ensureUser(userId: UserId): Promise<string>
   /** One user's own read-only usage from the ledger, for the personal center. */
   usage(userId: UserId): Promise<PersonalUsage>
   /** The ledger's account operations, served on the same account socket production uses (`startQuotaAccountServer`). */
   readonly account: QuotaAccountLedger
+  /** Reservations shared by local knowledge-base compile jobs and Web requests. */
+  readonly budget: Pick<ReturnType<typeof createQuotaLedger>, 'reserve' | 'settle'>
+  /** Private Messages endpoints and credential files for initialized local identities. */
+  readonly channels: ReadonlyMap<UserId, { readonly baseUrl: string; readonly credentialFile: string }>
   /** Stop listeners after in-flight credential writes finish; repeated calls join shutdown. */
   close(): Promise<void>
 }
@@ -126,7 +132,7 @@ export async function startTeamDevQuota(options: {
   readonly env?: Readonly<Record<string, string | undefined>>
 }): Promise<TeamDevQuota> {
   const { config } = options
-  validateDevUsers(options.users)
+  if (options.users.length > 0) validateDevUsers(options.users)
   validateStorageLockConfig(options.storageLock)
   const { staleMs, updateMs } = options.storageLock
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(config.modelId)
@@ -168,6 +174,7 @@ export async function startTeamDevQuota(options: {
   const timers: NodeJS.Timeout[] = []
   const rotations = new Set<Promise<void>>()
   const patches = new Map<UserId, string>()
+  const channels = new Map<UserId, { baseUrl: string; credentialFile: string }>()
   let mockStarted = false
   try {
     let forwardMessages: ReturnType<typeof createMessagesForwarder>
@@ -184,7 +191,10 @@ export async function startTeamDevQuota(options: {
     if (!Array.isArray(parsed)) throw new Error('development Web patch must contain a list')
     const providerUrl = import.meta.resolve('@public-harness/quota-provider')
     const uiUrl = import.meta.resolve('@public-harness/ui')
-    for (const userId of options.users) {
+    let closing: Promise<void> | undefined
+    const initializing = new Map<UserId, Promise<string>>()
+    const createUser = async (userId: UserId): Promise<string> => {
+      validateDevUsers([...patches.keys(), userId])
       const home = join(options.storageRoot, 'users', userId, 'home')
       await privateDirectory(join(options.storageRoot, 'users'))
       await privateDirectory(join(options.storageRoot, 'users', userId))
@@ -201,34 +211,64 @@ export async function startTeamDevQuota(options: {
         maxBodyBytes: config.maxBodyBytes, maxFileBodyBytes: config.maxFileBodyBytes,
       })
       listeners.push(listener)
-      const credentialFile = join(home, 'quota-credential.json')
-      const rotate = async (): Promise<void> => {
-        const issued = issuer.issue(userId, instanceId)
-        const temporary = `${credentialFile}.${randomUUID()}`
-        await writeFile(temporary, `${JSON.stringify(issued)}\n`, { flag: 'wx', mode: 0o600 })
-        await rename(temporary, credentialFile)
-      }
-      await rotate()
       let active: Promise<void> | undefined
-      timers.push(setInterval(() => {
-        if (active !== undefined) return
-        active = rotate().catch((_error: unknown) => {
-          process.stderr.write('team-dev: model credential rotation failed\n')
-        }).finally(() => { if (active !== undefined) rotations.delete(active); active = undefined })
-        rotations.add(active)
-      }, config.credentialRotateMs))
-      const patch = join(home, 'team-dev-web.patch.yml')
-      // Child processes never inherit model keys, so the official route has none: start on the platform model and hide it.
-      await writeFile(patch, `${JSON.stringify([...parsed, { id: 'ui-brand-official', disabled: true }, ...platformModelRows({ provider: 'platform', model: config.modelId }), { insert: [{
-        id: 'public-harness-quota-provider', name: providerUrl,
-        config: { proxyBaseUrl: `http://127.0.0.1:${listener.port}/v1`, credentialFile,
-          provider: 'platform', modelId: config.modelId, modelName: upstream === undefined ? 'Local mock model' : 'Platform model',
-          contextWindow: config.contextWindow, maxTokens: config.maxTokens },
-      }, { id: 'public-harness-ui', name: uiUrl }] }])}\n`, { mode: 0o600 })
-      patches.set(userId, patch)
+      let timer: NodeJS.Timeout | undefined
+      try {
+        const credentialFile = join(home, 'quota-credential.json')
+        const rotate = async (): Promise<void> => {
+          const issued = issuer.issue(userId, instanceId)
+          const temporary = `${credentialFile}.${randomUUID()}`
+          await writeFile(temporary, `${JSON.stringify(issued)}\n`, { flag: 'wx', mode: 0o600 })
+          await rename(temporary, credentialFile)
+        }
+        await rotate()
+        timer = setInterval(() => {
+          if (active !== undefined) return
+          active = rotate().catch((_error: unknown) => {
+            process.stderr.write('team-dev: model credential rotation failed\n')
+          }).finally(() => { if (active !== undefined) rotations.delete(active); active = undefined })
+          rotations.add(active)
+        }, config.credentialRotateMs)
+        timers.push(timer)
+        const patch = join(home, 'team-dev-web.patch.yml')
+        // Child processes never inherit model keys, so the official route has none: start on the platform model and hide it.
+        await writeFile(patch, `${JSON.stringify([...parsed, { id: 'ui-brand-official', disabled: true }, { id: 'ui-settings-account', disabled: true }, ...platformModelRows({ provider: 'platform', model: config.modelId }), { insert: [{
+          id: 'public-harness-quota-provider', name: providerUrl,
+          config: { proxyBaseUrl: `http://127.0.0.1:${listener.port}/v1`, credentialFile,
+            provider: 'platform', modelId: config.modelId, modelName: upstream === undefined ? 'Local mock model' : 'Platform model',
+            contextWindow: config.contextWindow, maxTokens: config.maxTokens },
+        }, { id: 'public-harness-ui', name: uiUrl }] }])}\n`, { mode: 0o600 })
+        channels.set(userId, { baseUrl: `http://127.0.0.1:${listener.port}/v1`, credentialFile })
+        patches.set(userId, patch)
+        return patch
+      } catch (error) {
+        if (timer !== undefined) {
+          clearInterval(timer)
+          timers.splice(timers.indexOf(timer), 1)
+        }
+        await active
+        try { await listener.close() }
+        catch (closeError) { throw new AggregateError([error, closeError], 'failed to initialize and stop a local model channel') }
+        listeners.splice(listeners.indexOf(listener), 1)
+        throw error
+      }
     }
-    let closing: Promise<void> | undefined
-    return { patches, usage: userId => ledger.usage(userId), account: ledger, close() { return closing ??= (async () => {
+    const ensureUser = (userId: UserId): Promise<string> => {
+      if (closing !== undefined) return Promise.reject(new Error('development quota is closed'))
+      const existing = patches.get(userId)
+      if (existing !== undefined) return Promise.resolve(existing)
+      let pending = initializing.get(userId)
+      if (pending === undefined) {
+        validateDevUsers([...new Set([...patches.keys(), ...initializing.keys(), userId])])
+        pending = createUser(userId)
+        initializing.set(userId, pending)
+        void pending.then(() => initializing.delete(userId), () => initializing.delete(userId))
+      }
+      return pending
+    }
+    for (const userId of options.users) await ensureUser(userId)
+    return { patches, ensureUser, budget: ledger, channels, usage: userId => ledger.usage(userId), account: ledger, close() { return closing ??= (async () => {
+      await Promise.allSettled([...initializing.values()])
       for (const timer of timers) clearInterval(timer)
       await Promise.all(rotations)
       const outcomes = await Promise.allSettled(listeners.map(listener => listener.close()))

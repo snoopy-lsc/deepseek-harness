@@ -24,6 +24,24 @@ export async function loadProfile(fetcher?: typeof fetch): Promise<AccountProfil
   } catch { return undefined }
 }
 
+/** Editable account details; organization fields are maintained by administrators. */
+export interface UserProfile {
+  readonly name: string
+  readonly email: string
+  readonly phone: string
+  readonly employeeId: string
+  readonly department: string
+  readonly jobTitle: string
+  readonly avatarUrl: string | null
+  readonly managedBy: 'local' | 'sso'
+}
+/** Contact fields a user may update; SSO names remain directory-owned. */
+export interface OwnProfilePatch { readonly name?: string; readonly phone?: string }
+/** Contact and organization fields administrators may update. */
+export interface AdminProfilePatch extends OwnProfilePatch { readonly employeeId?: string; readonly department?: string; readonly jobTitle?: string }
+/** Decoded image bytes are limited to 512 KiB by the server. Null removes an avatar. */
+export type AvatarUpload = { readonly mime: 'image/png' | 'image/jpeg' | 'image/webp'; readonly data: string } | { readonly data: null }
+
 /** How the account signs in: `password`, `emergency`, or an SSO provider kind. */
 export interface AccountSecurity {
   readonly provider: string
@@ -60,6 +78,18 @@ export class AccountApiError extends Error { constructor(readonly status: number
 
 /** Personal center calls against the identity service. */
 export interface AccountApi {
+  /** @returns The signed-in account's complete profile. */
+  profile(): Promise<UserProfile>
+  /** Save only the signed-in account's own contact fields.
+   * @param patch - Name and contact phone to replace; SSO names cannot be changed.
+   * @returns Complete saved profile.
+   */
+  updateProfile(patch: OwnProfilePatch): Promise<UserProfile>
+  /** Replace or remove the signed-in account's avatar.
+   * @param image - Base64 image and MIME type, or null data to remove it.
+   * @returns Complete saved profile with an authenticated avatar URL.
+   */
+  avatar(image: AvatarUpload): Promise<UserProfile>
   security(): Promise<AccountSecurity>
   sessions(): Promise<readonly AccountSession[]>
   /** Undefined when this deployment does not expose usage. */
@@ -89,6 +119,9 @@ export function createAccountApi(fetcher?: typeof fetch): AccountApi {
     return parsed
   }
   return {
+    profile: async () => await request('/profile') as UserProfile,
+    updateProfile: async patch => await request('/profile', { ...patch.name === undefined ? {} : { name: patch.name }, ...patch.phone === undefined ? {} : { phone: patch.phone } }) as UserProfile,
+    avatar: async image => await request('/avatar', image) as UserProfile,
     security: async () => await request('/security') as AccountSecurity,
     sessions: async () => (await request('/sessions') as { sessions: AccountSession[] }).sessions,
     usage: async () => {

@@ -60,6 +60,11 @@ export function ssoPlugin(deps: SsoPluginDeps) {
       if (user === null) throw fail('account-missing', { ...who, userId })
       // Deprovisioned accounts stay out until an operator lifts the disable, even when the directory admits them again.
       if (store.disabledAt(userId) !== undefined) throw fail('disabled', { ...who, userId })
+      if (user.name !== identity.name) {
+        const updated = await adapter.updateUser(user.id, { name: identity.name })
+        if (updated === null) throw fail('account-missing', { ...who, userId })
+        user = updated
+      }
     } else {
       // D2: never merge by email. An address already held by any account (invite, emergency or legacy) refuses the sign-in.
       if (await adapter.findUserByEmail(identity.email) !== null) throw fail('email-in-use', who)

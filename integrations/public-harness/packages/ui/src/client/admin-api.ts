@@ -1,4 +1,5 @@
 /** System administration client for the identity service's `/api/admin` endpoints. The server decides access; this only calls it. */
+import type { AdminProfilePatch, UserProfile } from './me.ts'
 
 /** Same-origin administration endpoint root. */
 export const ADMIN_PATH = '/api/admin'
@@ -89,6 +90,17 @@ export class AdminApiError extends Error {
 export type Proof = { readonly password?: string }
 
 export interface AdminApi {
+  /** Read a target account's contact and organization details.
+   * @param userId - Target account identifier.
+   * @returns Complete profile, including directory ownership and authenticated avatar URL.
+   */
+  profile(userId: string): Promise<UserProfile>
+  /** Save editable details; SSO names and sign-in emails cannot be changed.
+   * @param userId - Target account identifier.
+   * @param patch - Contact and organization fields to replace.
+   * @returns Complete saved profile.
+   */
+  updateProfile(userId: string, patch: AdminProfilePatch): Promise<UserProfile>
   invites(): Promise<readonly AdminInvite[]>
   createInvite(ttlHours: number, note: string): Promise<{ id: string; code: string; expiresAt: number }>
   revokeInvite(id: string): Promise<void>
@@ -169,6 +181,11 @@ export function createAdminApi(fetcher?: typeof fetch): AdminApi {
   }
   const proof = (value?: Proof) => value?.password === undefined ? {} : { password: value.password }
   return {
+    profile: async userId => await request(`/users/profile${qs({ userId })}`) as UserProfile,
+    updateProfile: async (userId, patch) => await request('/users/profile', { userId,
+      ...patch.name === undefined ? {} : { name: patch.name }, ...patch.phone === undefined ? {} : { phone: patch.phone },
+      ...patch.employeeId === undefined ? {} : { employeeId: patch.employeeId }, ...patch.department === undefined ? {} : { department: patch.department },
+      ...patch.jobTitle === undefined ? {} : { jobTitle: patch.jobTitle } }) as UserProfile,
     invites: async () => (await request('/invites') as { invites: AdminInvite[] }).invites,
     createInvite: async (ttlHours, note) => await request('/invites', { ttlHours, ...note ? { note } : {} }) as { id: string; code: string; expiresAt: number },
     revokeInvite: async id => { await request('/invites/revoke', { id }) },

@@ -7,7 +7,8 @@ import type {} from '@deepseek-ai/dsh-client-locale/client'
 import { createAccountApi, loadProfile, type AccountApi, type AccountProfile } from './me.ts'
 import { createKbApi, type KbApi } from './kb-api.ts'
 import { PersonalCenter, personalDictionaries } from './personal.tsx'
-import { ADMIN_PANEL, AdminIcon, PROFILE_PANEL, ProfileIcon, navDictionaries } from './nav.tsx'
+import { ADMIN_PANEL, AdminIcon, LIBRARY_PANEL, LibraryIcon, PROFILE_PANEL, ProfileIcon, navDictionaries } from './nav.tsx'
+import { LibraryPage, libraryDictionaries } from './library.tsx'
 import { AdminMenu, AdminPage, adminDictionaries, createSectionState } from './admin.tsx'
 import { createAdminApi, type AdminApi } from './admin-api.ts'
 import { OverLimitNotice } from './quota.tsx'
@@ -29,7 +30,10 @@ export function registerEntries(ctx: Context, profile: AccountProfile, api: Acco
   // Appearance and language live in the Harness settings dialog; pressing its own trigger opens it, so no settings UI is duplicated here.
   const openSettings = () => { globalThis.document?.querySelector<HTMLElement>(SETTINGS_TRIGGER)?.click() }
   const off = [
-    ctx.slots.register({ name: 'main', key: PROFILE_PANEL, locale: 'publicHarnessPersonal', inject: () => ({ profile, api, kb, openSettings }) }, PersonalCenter),
+    ctx.slots.register({ name: 'main', key: LIBRARY_PANEL, locale: 'publicHarnessLibrary', inject: () => ({ api: kb,
+      ...profile.role === 'admin' ? { admin, adminT: ctx.locale.bind(ADMIN_NS) } : {} }) }, LibraryPage),
+    ctx.slots.register({ name: 'sidebar.panellist', id: LIBRARY_PANEL, order: 70, locale: NS, label: () => t('library') }, LibraryIcon),
+    ctx.slots.register({ name: 'main', key: PROFILE_PANEL, locale: 'publicHarnessPersonal', inject: () => ({ profile, api, openSettings }) }, PersonalCenter),
     ctx.slots.register({ name: 'sidebar.panellist', id: PROFILE_PANEL, order: 80, locale: NS, label: () => t('profile') }, ProfileIcon),
     ctx.slots.register({ name: 'shell.overlay', id: 'team.over-limit', locale: 'publicHarness', inject: () => ({ api }) }, OverLimitNotice),
   ]
@@ -64,6 +68,7 @@ export function registerEntries(ctx: Context, profile: AccountProfile, api: Acco
 export function installShell(ctx: Context, load: () => Promise<AccountProfile | undefined> = loadProfile): Promise<void> {
   ctx.effect(() => ctx.locale.register(NS, navDictionaries), 'public-harness: navigation copy')
   ctx.effect(() => ctx.locale.register('publicHarnessPersonal', personalDictionaries), 'public-harness: personal center copy')
+  ctx.effect(() => ctx.locale.register('publicHarnessLibrary', libraryDictionaries), 'public-harness: library copy')
   ctx.effect(() => ctx.locale.register(ADMIN_NS, adminDictionaries), 'public-harness: administration copy')
   let off: Array<() => void> = [], live = true
   ctx.effect(() => () => { live = false; for (const dispose of off) dispose(); off = [] }, 'public-harness: navigation entries')

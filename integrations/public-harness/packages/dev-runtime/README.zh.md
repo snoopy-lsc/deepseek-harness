@@ -25,6 +25,8 @@ kind: "package-library"
 
 向 `createDevInstanceManager` 传入绝对存储根目录、已校验的固定测试用户 ID、已构建的 `dsh` 命令及参数、Web token overlay 路径，以及正数的启动和停止超时。ID 忽略大小写后必须唯一，且不能使用 Windows 保留设备名。管理器在启动子进程前拒绝除 `127.0.0.1` 外的绑定地址，也拒绝除 `development` 外的模式。设置 `maxActive` 可限制同时运行的子进程数（默认等于用户数）；超出上限的启动以 `CapacityError` 失败，`suspend` 会停止用户并在 `reactivate` 之前以 `AccountSuspendedError` 拒绝再次启动。`stopIdle(idleMs)` 停止在该时长内没有路由请求的子进程。调用 `close()` 等待子进程关闭。
 
+本地身份服务可以使用空用户列表和显式的 `maxActive` 启动，并在新用户通过认证后调用 `register(userId)`。注册检查目录名的跨平台约束及大小写唯一性，已有 ID 的重复注册没有副作用。该方法本身不负责认证调用方；认证仍由企业路由器负责。
+
 <a id="understand-the-implementation"></a>
 ## 了解实现
 

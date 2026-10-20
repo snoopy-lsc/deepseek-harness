@@ -61,6 +61,8 @@ describe('enterprise SSO sign-in', () => {
     expect(String(second.reply.headers.location)).toBe('/account/')
     expect(JSON.parse((await lookup(config.sessionSocket, sessionCookie(second.reply)!)).body).userId).toBe(userId)
     expect(userCount(config.databaseFile)).toBe(1)
+    const profile = await call(config.publicSocket, 'GET', '/account/api/me/profile', undefined, { cookie: sessionCookie(second.reply)! })
+    expect(JSON.parse(profile.body)).toMatchObject({ name: 'Alice R', managedBy: 'sso', email: 'alice@corp.example' })
     const db = await openIdentityDatabase(config.databaseFile)
     try {
       expect(db.sso.findSubject('oidc', 'emp-001')).toBe(userId)

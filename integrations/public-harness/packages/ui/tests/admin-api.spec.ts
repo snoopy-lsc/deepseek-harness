@@ -24,6 +24,18 @@ describe('administration client', () => {
     expect(JSON.parse(String(r.calls[3]!.init.body))).toEqual({ mode: 'grace', gracePercent: 15, password: 'pw' })
   })
 
+  it('loads_the_target_profile_and_posts_only_admin_editable_fields', async () => {
+    const r = recorder(200, { name: 'Ann', email: 'ann@example.test', managedBy: 'local' })
+    await r.api.profile('user &1')
+    const patch = { name: 'Ann B', phone: '123', employeeId: '42', department: 'Product', jobTitle: 'Lead', email: 'other@example.test', role: 'admin' }
+    await r.api.updateProfile('user &1', patch)
+    expect(r.calls[0]!.url).toBe('/api/admin/users/profile?userId=user+%261')
+    expect(r.calls[0]!.init).toMatchObject({ credentials: 'same-origin' })
+    expect(r.calls[1]!.url).toBe('/api/admin/users/profile')
+    expect(r.calls[1]!.init).toMatchObject({ method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' } })
+    expect(JSON.parse(String(r.calls[1]!.init.body))).toEqual({ userId: 'user &1', name: 'Ann B', phone: '123', employeeId: '42', department: 'Product', jobTitle: 'Lead' })
+  })
+
   it('group_calls_use_the_documented_paths_and_bodies', async () => {
     const r = recorder(200, { group: { id: 'local:1' }, groups: [], members: [] })
     await r.api.groups()

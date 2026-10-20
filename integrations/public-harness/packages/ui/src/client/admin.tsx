@@ -2,18 +2,19 @@
  * browser in the same sidebar (no second column), with a row that returns to the conversation. Sections: invites, users, audit log,
  * SSO configuration (read-only) and daily allowances. Built from Harness primitives and the settings-row geometry; only colours come from the theme.
  * Every refusal comes from the server; disable, role changes and allowance changes may ask the administrator to re-authenticate. */
+import { AdminSelect } from './admin-select.tsx'
 import { Button, IconChecklistOutlineRegular, IconChevronLeftOutlineRegular, IconGaugeOutlineRegular, IconLinkOutlineRegular, IconPlusOutlineRegular,
-  IconDatabaseOutlineRegular, IconSearchOutlineRegular, IconShareOutlineRegular, IconUsersOutlineRegular, IconWorkspaceTreeOutlineRegular, Input, Modal, SegmentedControl, Tag, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
+  IconSearchOutlineRegular, IconUsersOutlineRegular, IconWorkspaceTreeOutlineRegular, Input, Modal, SegmentedControl, Tag, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import { useCallback, useEffect, useState, useSyncExternalStore, type CSSProperties, type FormEvent, type ReactNode } from 'react'
 import { groupAdminCopy } from './admin-kb-copy.ts'
 import { groupName, Groups } from './admin-groups.tsx'
-import { KbRequests } from './admin-kb.tsx'
-import { KbInventory } from './admin-kb-inventory.tsx'
 import { KbLimitsCard } from './admin-kb-limits.tsx'
 import { KbBudgetsCard } from './admin-kb-budget.tsx'
 import { userOverrides } from './admin-kb-units.ts'
-import { card, column, date, errorText, field, fill, hint, label, Note, page, Row, Card, select, type T, useReauth } from './admin-kit.tsx'
+import { AdminProfileDialog } from './profile-form.tsx'
+import { profileCopy } from './profile-copy.ts'
+import { card, column, date, errorText, field, fill, hint, label, Note, page, Row, Card, type T, useReauth } from './admin-kit.tsx'
 import { type AdminApi, type AdminAuditPage, type AdminInvite, type AdminQuota, type AdminSso, type AdminUser, type AdminUserPage, type OverLimitMode, type Proof } from './admin-api.ts'
 
 /** Locale-owned administration copy. */
@@ -47,7 +48,7 @@ export const adminDictionaries = {
     modeHint_warn: 'The personal limit is advisory: requests keep running with a warning. The site daily limit still refuses.',
     gracePercent: 'Grace (% of the limit)', invalidGrace: 'Enter a whole percentage from 1 to 100.',
     exportCsv: 'Export CSV', exportHint: 'Exports the entries matching these filters (newest first, at most 50,000 rows). The export is recorded in this log.',
-    ...groupAdminCopy.en,
+    ...groupAdminCopy.en, ...profileCopy.en,
   },
   zh: {
     title: '系统管理', back: '返回会话', menu: '系统管理分区',
@@ -78,7 +79,7 @@ export const adminDictionaries = {
     modeHint_warn: '个人额度仅作提醒：请求继续并提示用户；站点每日额度仍会拒绝。',
     gracePercent: '宽限比例（额度的 %）', invalidGrace: '请输入 1 到 100 之间的整数百分比。',
     exportCsv: '导出 CSV', exportHint: '导出符合当前筛选条件的记录（最新在前，最多 50,000 条）。导出操作本身也会记录在此日志中。',
-    ...groupAdminCopy.zh,
+    ...groupAdminCopy.zh, ...profileCopy.zh,
   },
 }
 
@@ -89,7 +90,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 }
 
 /** Administration sections, in menu order. */
-export const ADMIN_SECTIONS = ['users', 'groups', 'kb', 'kbRequests', 'invites', 'audit', 'sso', 'quota'] as const
+export const ADMIN_SECTIONS = ['users', 'groups', 'invites', 'audit', 'sso', 'quota'] as const
 export type AdminSection = typeof ADMIN_SECTIONS[number]
 
 /** The selected section, shared by the sidebar submenu and the main panel. */
@@ -105,13 +106,12 @@ const PROVIDERS: Record<string, string> = { oidc: 'OIDC', saml: 'SAML', ldap: 'L
 const ICONS: Record<AdminSection, (size: number) => ReactNode> = {
   users: size => <IconUsersOutlineRegular size={size} />, invites: size => <IconPlusOutlineRegular size={size} />, audit: size => <IconChecklistOutlineRegular size={size} />,
   sso: size => <IconLinkOutlineRegular size={size} />, quota: size => <IconGaugeOutlineRegular size={size} />, groups: size => <IconWorkspaceTreeOutlineRegular size={size} />,
-  kbRequests: size => <IconShareOutlineRegular size={size} />, kb: size => <IconDatabaseOutlineRegular size={size} />,
 }
 /* Sidebar submenu: rows share the sidebar's panel-row geometry (36px, 12px radius, hover surface). */
 function MenuRow({ icon, label, active, onClick, wide, testId }: { icon: ReactNode; label: string; active?: boolean; onClick: () => void; wide: boolean; testId: string }) {
   const [hover, setHover] = useState(false)
-  const style: CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, margin: '0 2px 0 6px', minHeight: 36, padding: wide ? '7px 8px' : 0, boxSizing: 'border-box', border: 'none',
-    width: wide ? undefined : 36, height: wide ? undefined : 36, justifyContent: wide ? 'flex-start' : 'center',
+  const style: CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, margin: wide ? '0 2px 0 6px' : 0, minHeight: 36, flexShrink: 0, padding: wide ? '7px 8px' : 0, boxSizing: 'border-box', border: 'none',
+    width: wide ? undefined : '100%', height: wide ? undefined : 36, justifyContent: wide ? 'flex-start' : 'center',
     borderRadius: 'var(--dsw-radius-md)', background: active || hover ? 'var(--dsw-alias-interactive-bg-hover)' : 'transparent', color: 'var(--dsw-alias-label-primary)',
     font: 'inherit', lineHeight: '22px', textAlign: 'left', cursor: 'pointer' }
   return <button type="button" data-team-admin-menu={testId} aria-current={active ? 'page' : undefined} aria-label={label} title={wide ? undefined : label} style={style}
@@ -126,7 +126,7 @@ function MenuRow({ icon, label, active, onClick, wide, testId }: { icon: ReactNo
  */
 export function AdminMenu({ wide, section, back, t }: { wide: boolean; section: SectionState; back: () => void } & PropsLocale<'publicHarnessAdmin'>) {
   const current = useSection(section)
-  return <nav aria-label={t('menu')} data-team-admin-submenu style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingTop: 4 }}>
+  return <nav aria-label={t('menu')} data-team-admin-submenu style={{ display: 'flex', flex: 1, minHeight: 0, overflowY: 'auto', flexDirection: 'column', gap: 4, paddingTop: 4 }}>
     <MenuRow wide={wide} testId="back" icon={<IconChevronLeftOutlineRegular size={wide ? 16 : 18} />} label={t('back')} onClick={back} />
     {wide && <div style={{ margin: '10px 10px 4px 14px', fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-label-secondary)' }}>{t('title')}</div>}
     {ADMIN_SECTIONS.map(name => <MenuRow key={name} wide={wide} testId={name} icon={ICONS[name](wide ? 16 : 18)} label={t(name)} active={current === name} onClick={() => section.set(name)} />)}
@@ -175,6 +175,7 @@ function Invites({ api, t }: { api: AdminApi; t: T }) {
 
 const PAGE = 20
 function Users({ api, t }: { api: AdminApi; t: T }) {
+  const [editing, setEditing] = useState<AdminUser>()
   const [q, setQ] = useState(''), [role, setRole] = useState<'all' | 'admin' | 'member'>('all'), [status, setStatus] = useState<'all' | 'active' | 'disabled'>('all'), [offset, setOffset] = useState(0)
   const [result, setResult] = useState<AdminUserPage | null>(), [note, setNote] = useState<{ ok: boolean; text: string }>(), [disabling, setDisabling] = useState<AdminUser>(), [reason, setReason] = useState('')
   const load = useCallback(() => { api.users({ q, role: role === 'all' ? undefined : role, status: status === 'all' ? undefined : status, offset, limit: PAGE } as never).then(setResult, () => setResult(null)) }, [api, q, role, status, offset])
@@ -195,7 +196,7 @@ function Users({ api, t }: { api: AdminApi; t: T }) {
       {result === undefined ? <Row title={t('loading')} end /> : result === null ? <Row title={t('failed')} end /> : result.users.length === 0 ? <Row title={t('noUsers')} end />
         : result.users.map((user, index) => {
           const self = user.id === result.self
-          return <div key={user.id} data-team-admin-user={user.email}><Row end={index === result.users.length - 1}
+          return <div key={user.id} data-team-admin-user={user.email}><Row wrap end={index === result.users.length - 1}
             title={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>{user.name}<span style={{ color: 'var(--dsw-alias-label-secondary)' }}>{user.email}</span>
               {self && <Tag tone="solid">{t('you')}</Tag>}</span>}
             detail={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -205,6 +206,7 @@ function Users({ api, t }: { api: AdminApi; t: T }) {
               <span>{user.lastLoginAt === null ? t('neverLogin') : fill(t('lastLogin'), { date: date(user.lastLoginAt) })}</span>
               {user.disabledReason !== null && <span>· {user.disabledReason}</span>}
               {(user.groups?.length ?? 0) > 0 && <span data-team-admin-user-groups>· {fill(t('userGroups'), { groups: user.groups!.map(id => groupNames.get(id) ?? id).join(', ') })}</span>}</span>}>
+            <Button variant="outline" size="sm" data-team-admin-profile={user.email} onClick={() => setEditing(user)}>{t('profileEdit')}</Button>
             {user.role === 'member' && user.status === 'active' && <Button variant="outline" size="sm" onClick={() => act(proof => api.setRole(user.id, 'admin', proof))}>{t('makeAdmin')}</Button>}
             {user.roleSource === 'grant' && <Button variant="outline" size="sm" onClick={() => act(proof => api.setRole(user.id, 'member', proof))}>{t('removeAdmin')}</Button>}
             {user.status === 'active'
@@ -224,6 +226,7 @@ function Users({ api, t }: { api: AdminApi; t: T }) {
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}><Button variant="outline" onClick={() => setDisabling(undefined)}>{t('cancel')}</Button><Button type="submit" variant="primary">{t('confirmDisable')}</Button></div>
       </form>
     </Modal>}
+    {editing !== undefined && <AdminProfileDialog key={editing.id} userId={editing.id} api={api} t={t} onClose={() => setEditing(undefined)} onSaved={() => load()} />}
     {dialog}
   </>
 }
@@ -242,9 +245,7 @@ function Audit({ api, t }: { api: AdminApi; t: T }) {
   const tone = (o: string) => o === 'ok' ? 'success' : o === 'denied' ? 'warning' : 'danger'
   return <>
     <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-      <select aria-label={t('event')} style={select} value={event} onChange={e => setEvent(e.target.value)}>
-        <option value="">{t('allEvents')}</option>{EVENTS.map(name => <option key={name} value={name}>{name}</option>)}
-      </select>
+      <AdminSelect label={t('event')} value={event} onChange={setEvent} options={[{ value: '', label: t('allEvents') }, ...EVENTS.map(name => ({ value: name, label: name }))]} />
       <SegmentedControl id="team-admin-outcome" label={t('outcome')} value={outcome} onChange={setOutcome}
         options={[{ value: '', label: t('all') }, { value: 'ok', label: t('ok') }, { value: 'denied', label: t('denied') }, { value: 'error', label: t('error') }]} />
       <Input style={{ minWidth: 240 }} icon={<IconSearchOutlineRegular size={16} />} placeholder={t('filter')} aria-label={t('filter')} value={q} onChange={e => setQ(e.target.value)} />
@@ -334,7 +335,7 @@ function Quota({ api, t }: { api: AdminApi; t: T }) {
       }}>
         <div style={label}>{t('addOverride')}</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1fr) auto', gap: 12, alignItems: 'end', marginTop: 10 }}>
-          <label style={field}>{t('user')}<select style={select} value={userId} onChange={e => setUserId(e.target.value)}><option value="">—</option>{users.map(user => <option key={user.id} value={user.id}>{user.email}</option>)}</select></label>
+          <label style={field}>{t('user')}<AdminSelect label={t('user')} value={userId} onChange={setUserId} options={[{ value: '', label: '—' }, ...users.map(user => ({ value: user.id, label: user.email }))]} /></label>
           <label style={field}>{t('dailyTokens')}<Input inputMode="numeric" value={userValue} onChange={e => setUserValue(e.target.value.replace(/\D/g, ''))} /></label>
           <Button type="submit" variant="primary">{t('save')}</Button>
         </div>
@@ -374,14 +375,14 @@ function OverLimitCard({ quota, t, onSave }: { quota: AdminQuota; t: T; onSave: 
  */
 export function AdminPage({ api, section, t }: { api: AdminApi; section: SectionState } & PropsLocale<'publicHarnessAdmin'>) {
   const current = useSection(section)
-  return <div style={page} data-team-admin={current}>
+  return <div style={current === 'users' ? { ...page, padding: '40px clamp(16px, 5vw, 56px) 64px' } : page} data-team-admin={current}>
     <div style={column}>
       <header style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span aria-hidden="true" style={{ display: 'inline-flex', color: 'var(--dsw-alias-label-secondary)' }}>{ICONS[current](20)}</span>
         <h1 style={{ margin: 0, fontSize: 20, lineHeight: '28px', fontWeight: 600 }}>{t(current)}</h1>
         <span style={{ ...hint, marginTop: 0 }}>· {t('title')}</span>
       </header>
-      {current === 'groups' ? <Groups api={api} t={t} /> : current === 'kbRequests' ? <KbRequests api={api} t={t} /> : current === 'kb' ? <KbInventory api={api} t={t} /> : current === 'invites' ? <Invites api={api} t={t} /> : current === 'users' ? <Users api={api} t={t} /> : current === 'audit' ? <Audit api={api} t={t} />
+      {current === 'groups' ? <Groups api={api} t={t} /> : current === 'invites' ? <Invites api={api} t={t} /> : current === 'users' ? <Users api={api} t={t} /> : current === 'audit' ? <Audit api={api} t={t} />
         : current === 'sso' ? <Sso api={api} t={t} /> : <Quota api={api} t={t} />}
     </div>
   </div>
