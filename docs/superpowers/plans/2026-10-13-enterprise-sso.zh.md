@@ -51,6 +51,12 @@
 ## 共享接口
 
 ```ts
+export interface AuditEvent {
+  event: 'sso-sign-in' | 'emergency-sign-in' | 'emergency-enroll' | 'emergency-revoke'
+    | 'sso-disable' | 'sso-enable' | 'sso-reconcile'
+  outcome: 'ok' | 'denied' | 'error'
+  userId?: string; email?: string; ip?: string; detail?: string
+}
 export interface SsoIdentity { subject: string; email: string; name: string; groups: string[] }
 export interface SsoProvider {
   readonly kind: 'oidc'

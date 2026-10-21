@@ -31,27 +31,29 @@
 
 ## 文件结构
 
-- `packages/ui/src/client/theme/tokens.ts`：`team-enterprise` 的浅色/深色 token 对。
-- `packages/ui/src/client/theme/glass.css`：插件自有的毛玻璃与桌面背景样式表，含降低透明度回退。
-- `packages/ui/src/client/theme/index.ts`：在插件生命周期内注册 token 层与样式表。
-- `packages/ui/src/client/nav.tsx`：个人入口和系统管理入口及其占位页面。
-- `packages/ui/src/client/me.ts`：读取 `/account/api/me`。
-- `packages/ui/src/identity-theme.ts`：由同一组 token 取值生成的身份页面样式表。
-- `packages/contracts/src/web-rows.ts`：共享的 Web 补丁行（默认模型、隐藏官方提供方）。
-- 修改：`packages/identity/src/{config,server,pages}.ts`、`packages/team-dev/src/quota.ts`、`packages/provisioner/src/runtime.ts` 及相关 README。
+以下路径相对于 `integrations/public-harness/` 内的 `packages` 目录。
+
+- `ui/src/theme/palette.ts`：`team-enterprise` 的浅色/深色 token 对。
+- `ui/src/client/theme.ts`：插件自有的毛玻璃与桌面背景样式表，含降低透明度回退。
+- `ui/src/client/index.tsx`：在插件生命周期内注册 token 层与样式表。
+- `ui/src/client/nav.tsx`：个人入口和系统管理入口及其占位页面。
+- `ui/src/client/me.ts`：读取 `/account/api/me`。
+- `ui/src/theme/identity.ts`：由同一组 token 取值生成的身份页面样式表。
+- `contracts/src/web-rows.ts`：共享的 Web 补丁行（默认模型、隐藏官方提供方）。
+- 修改：`identity/src/{config,server,pages}.ts`、`team-dev/src/quota.ts`、`provisioner/src/runtime.ts` 及相关 README。
 
 ## 第 1 阶段：主题插件与统一外壳
 
 ### 任务 1.1：Token 层
 
 - [ ] 测试：客户端包通过 `ctx.theme.overrideTokens` 注册 `team-enterprise` 覆盖，每个 token 都有 `{ light, dark }` 一对取值，卸载时释放。
-- [ ] 依据 `d4-theme.css` 的 A 部分实现 `tokens.ts`；只使用 `--dsw-*` 名称。
+- [ ] 依据 `d4-theme.css` 的 A 部分实现 `ui/src/theme/palette.ts`；只使用 `--dsw-*` 名称。
 - [ ] 提交。
 
 ### 任务 1.2：毛玻璃样式表
 
 - [ ] 测试：样式表以 `<style data-plugin>` 元素挂载，释放时移除，包含 `prefers-reduced-transparency` 块，且不匹配 `[A-Za-z0-9-]{4,}_[A-Za-z]` 哈希类名模式。
-- [ ] 用稳定选择器实现 `glass.css`：`body` 桌面背景、用 `div:has(> [data-slot="sidebar"])` 选择侧栏列及其外框、`[data-composer-card]`、`[data-composer-seat]`、`[role="dialog"][aria-modal="true"]`。
+- [ ] 用稳定选择器实现 `ui/src/client/theme.ts`：`body` 桌面背景、用 `div:has(> [data-slot="sidebar"])` 选择侧栏列及其外框、`[data-composer-card]`、`[data-composer-seat]`、`[role="dialog"][aria-modal="true"]`。
 - [ ] 提交。
 
 ### 任务 1.3：对比度检查

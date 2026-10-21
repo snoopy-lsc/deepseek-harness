@@ -72,6 +72,39 @@ describe('unique object-name prefix search', () => {
 })
 
 describe('maintained repository reference policy', () => {
+  it.each(['uv.lock', 'python/sdk/uv.lock'])('accepts archive byte counts in %s even when their digits match a commit prefix', (file) => {
+    const digits = '1'.repeat(7)
+    const source = `[[package]]\nname = "fixture"\nsdist = { url = "https://example.invalid/source.tar.gz", size = ${digits} }\nwheels = [\n  { url = "https://example.invalid/fixture.whl", size = ${digits} },\n]\n`
+    expect(findRepositoryReferences(file, source, new Set([digits]))).toEqual([])
+  })
+
+  it('still rejects uv commit references in strings, comments and other numeric fields', () => {
+    const digits = '1'.repeat(7)
+    const source = `[[package]]\nname = "fixture"\nrevision = "${digits}"\n# commit ${digits}\nsize = ${digits}\nsdist = { url = "size = ${digits}", size = 1 }\nwheels = [{ url = "https://example.invalid/commit/${digits}", size = 1 }]\n`
+    expect(findRepositoryReferences('python/sdk/uv.lock', source, new Set([digits]))).toEqual(
+      [3, 4, 5, 6, 7].map(line => ({ file: 'python/sdk/uv.lock', line, kind: 'commit-hash' })),
+    )
+  })
+
+  it('does not exempt malformed lockfiles or archive-size strings', () => {
+    const digits = '1'.repeat(7)
+    for (const source of [`sdist = { size = "${digits}" }`, `sdist = { size = '${digits}' }`, `sdist = { size = ${digits} }\ninvalid`]) {
+      expect(findRepositoryReferences('python/sdk/uv.lock', `[[package]]\n${source}`, new Set([digits]))).toHaveLength(1)
+    }
+    expect(findRepositoryReferences('source.md', `sdist = { size = ${digits} }`, new Set([digits]))).toHaveLength(1)
+  })
+
+  it('keeps commit references checked when a lockfile contains an escaped sentinel string', () => {
+    const digits = '1'.repeat(7)
+    const source = String.raw`[[package]]
+sdist = { size = "\u005f_dsh_archive_byte_size__" }
+# commit ${digits}
+`
+    expect(findRepositoryReferences('python/sdk/uv.lock', source, new Set([digits]))).toEqual([
+      { file: 'python/sdk/uv.lock', line: 3, kind: 'commit-hash' },
+    ])
+  })
+
   it('permits only the independent kit repository and its source URLs', () => {
     for (const suffix of ['', '.git', '/tree/main/packages/entry']) {
       expect(findRepositoryReferences('package.json', `${organizationUrl}/libreoffice-kit${suffix}`, new Set())).toEqual([])

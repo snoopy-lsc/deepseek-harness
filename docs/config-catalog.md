@@ -914,7 +914,7 @@ export type Config = BrowserMcpConfig
 
 - `inject`: `browserUse` · `agents` · `tools` · `systemPrompt`
 - `refs`: `ModelConfig` (`@browserbasehq/stagehand`)
-- `source`: [`packages/experimental/browser-use-stagehand-native/src/index.ts:28`](../packages/experimental/browser-use-stagehand-native/src/index.ts)
+- `source`: [`packages/experimental/browser-use-stagehand-native/src/index.ts:30`](../packages/experimental/browser-use-stagehand-native/src/index.ts)
 
 ```ts config-catalog
 /** Profile-owned browser connection and independent Stagehand model credentials. */

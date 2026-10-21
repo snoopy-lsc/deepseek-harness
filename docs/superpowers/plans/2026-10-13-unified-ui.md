@@ -31,27 +31,29 @@ English | [中文](2026-10-13-unified-ui.zh.md)
 
 ## File Structure
 
-- `packages/ui/src/client/theme/tokens.ts`: the `team-enterprise` light/dark token pairs.
-- `packages/ui/src/client/theme/glass.css`: the plugin-owned glass and backdrop stylesheet with the reduced-transparency fallback.
-- `packages/ui/src/client/theme/index.ts`: registers the token layer and the stylesheet for the plugin lifetime.
-- `packages/ui/src/client/nav.tsx`: personal and administration panel entries and their placeholder pages.
-- `packages/ui/src/client/me.ts`: reads `/account/api/me`.
-- `packages/ui/src/identity-theme.ts`: identity page stylesheet built from the same token values.
-- `packages/contracts/src/web-rows.ts`: shared Web patch rows (default model, hidden official provider).
-- Modified: `packages/identity/src/{config,server,pages}.ts`, `packages/team-dev/src/quota.ts`, `packages/provisioner/src/runtime.ts`, package READMEs.
+Paths below are relative to the `packages` directory in `integrations/public-harness/`.
+
+- `ui/src/theme/palette.ts`: the `team-enterprise` light/dark token pairs.
+- `ui/src/client/theme.ts`: the plugin-owned glass and backdrop stylesheet with the reduced-transparency fallback.
+- `ui/src/client/index.tsx`: registers the token layer and the stylesheet for the plugin lifetime.
+- `ui/src/client/nav.tsx`: personal and administration panel entries and their placeholder pages.
+- `ui/src/client/me.ts`: reads `/account/api/me`.
+- `ui/src/theme/identity.ts`: identity page stylesheet built from the same token values.
+- `contracts/src/web-rows.ts`: shared Web patch rows (default model, hidden official provider).
+- Modified: `identity/src/{config,server,pages}.ts`, `team-dev/src/quota.ts`, `provisioner/src/runtime.ts`, package READMEs.
 
 ## Phase 1: Theme Plugin and Unified Shell
 
 ### Task 1.1: Token layer
 
 - [ ] Test: the client bundle registers `team-enterprise` overrides through `ctx.theme.overrideTokens` with a `{ light, dark }` pair for every token, and disposes them on unload.
-- [ ] Implement `tokens.ts` from `d4-theme.css` section A; only `--dsw-*` names.
+- [ ] Implement `ui/src/theme/palette.ts` from `d4-theme.css` section A; only `--dsw-*` names.
 - [ ] Commit.
 
 ### Task 1.2: Glass stylesheet
 
 - [ ] Test: the stylesheet is mounted as a `<style data-plugin>` element, removed on dispose, contains a `prefers-reduced-transparency` block, and matches no `[A-Za-z0-9-]{4,}_[A-Za-z]` hashed class pattern.
-- [ ] Implement `glass.css` with stable selectors: `body` backdrop, `div:has(> [data-slot="sidebar"])` for the sidebar column and its frame, `[data-composer-card]`, `[data-composer-seat]`, `[role="dialog"][aria-modal="true"]`.
+- [ ] Implement `ui/src/client/theme.ts` with stable selectors: `body` backdrop, `div:has(> [data-slot="sidebar"])` for the sidebar column and its frame, `[data-composer-card]`, `[data-composer-seat]`, `[role="dialog"][aria-modal="true"]`.
 - [ ] Commit.
 
 ### Task 1.3: Contrast check

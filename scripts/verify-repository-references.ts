@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { lstatSync, readFileSync, readlinkSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { parse as parseToml, TomlDate, TomlError, type TomlTable, type TomlValue } from 'smol-toml'
 import { canonicalReferenceText } from './verify-public-repository-links.ts'
 
 const root = resolve(import.meta.dirname, '..')
@@ -31,12 +32,36 @@ function isMaintained(file: string): boolean {
   return !excludedPrefixes.some(prefix => file.startsWith(prefix))
 }
 
+function isTable(value: TomlValue | undefined): value is TomlTable {
+  return value !== undefined && typeof value === 'object' && !Array.isArray(value) && !(value instanceof TomlDate)
+}
+
+// A parsed sentinel distinguishes numeric archive sizes from digits inside strings, keys or comments.
+function isUvArchiveSize(file: string, source: string, offset: number, candidate: string): boolean {
+  if ((file !== 'uv.lock' && !file.endsWith('/uv.lock')) || !/^\d+$/.test(candidate)) return false
+  try {
+    const original = JSON.stringify(parseToml(source))
+    let marker = '__dsh_archive_byte_size__'
+    while (original.includes(marker)) marker += '_'
+    const document = parseToml(`${source.slice(0, offset)}"${marker}"${source.slice(offset + candidate.length)}`)
+    if (!Array.isArray(document.package)) return false
+    return document.package.some((pkg) => {
+      if (!isTable(pkg)) return false
+      const archives = [pkg.sdist, ...Array.isArray(pkg.wheels) ? pkg.wheels : []]
+      return archives.some(archive => isTable(archive) && archive.size === marker)
+    })
+  } catch (error) {
+    if (error instanceof TomlError) return false
+    throw error
+  }
+}
+
 /**
  * Inspect a maintained source file against known commit identifiers.
  * @param file - Repository-relative path used in diagnostics and exclusions.
  * @param source - File text or a symlink's stored target.
  * @param commits - Lowercase, unambiguous full or abbreviated commit identifiers.
- * @returns One finding per line and reference kind; digests and other Git object types are accepted.
+ * @returns One finding per line and reference kind; digests, uv archive byte counts and other Git object types are accepted.
  */
 export function findRepositoryReferences(
   file: string,
@@ -45,13 +70,17 @@ export function findRepositoryReferences(
 ): RepositoryReference[] {
   if (!isMaintained(file)) return []
   const references: RepositoryReference[] = []
+  let offset = 0
   for (const [index, line] of source.split('\n').entries()) {
     if (organizationUrl.test(canonicalReferenceText(line).replace(kitRepositoryUrl, ''))) {
       references.push({ file, line: index + 1, kind: 'organization-url' })
     }
-    if ([...line.matchAll(commitCandidate)].some(match => commits.has(match[0].toLowerCase()))) {
+    if ([...line.matchAll(commitCandidate)].some(match =>
+      commits.has(match[0].toLowerCase()) && !isUvArchiveSize(file, source, offset + match.index, match[0]))
+    ) {
       references.push({ file, line: index + 1, kind: 'commit-hash' })
     }
+    offset += line.length + 1
   }
   return references
 }
