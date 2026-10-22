@@ -102,7 +102,7 @@ These facts were read from the repository and shape the design.
    --CONNECT--> dsh-plugins-egress (allowlist, private-range check) --> npm registries, intranet git (https)
                                                                             v
  instance (account uid) -- pluginMarket.indexes ----> http://<host>:<marketPort>/index.json
-                        -- pnpm (@corp registry) ---> http://<host>:<marketPort>/npm/   (bearer token from npmrc)
+                        -- pnpm (@corp-dsh scope) --> http://<host>:<marketPort>/npm/   (bearer token from npmrc)
                         -- plugin-sync -------------> http://<host>:<marketPort>/sync
  provisioner (root): per-instance patch and npmrc, firewall element, pre-start reconcile unit as the account
 ```
@@ -128,7 +128,7 @@ These facts were read from the repository and shape the design.
   "format": 1,
   "title": { "en": "Company market" },
   "plugins": [{
-    "name": "@corp/dsh-example",
+    "name": "@corp-dsh/dsh-example",
     "versions": [{
       "version": "1.4.2",
       "publishTimestamp": 1792000000,
@@ -293,7 +293,7 @@ CREATE TABLE plugin_audit_outbox (
 `dsh-plugins` has no capabilities, so it cannot start units as another user; the KB needs its root helper for the same reason. Fetching therefore uses socket activation, which needs neither root nor polkit:
 
 - `dsh-plugins-fetch.socket`: `ListenStream=/run/dsh-plugins/fetch.sock`, `Accept=yes`, `SocketUser=root`, `SocketGroup=dsh-plugins`, `SocketMode=0660`.
-- `dsh-plugins-fetch@.service`: `User=dsh-plugins-fetch`, `StandardInput=socket`, `IPAddressDeny=any`, `IPAddressAllow=localhost`, `Environment=HTTPS_PROXY=http://127.0.0.1:<egressPort>`, no other environment, `PrivateTmp=yes`, `ProtectSystem=strict`, `ProtectHome=yes`, no writable path outside its private tmp, empty capabilities, `MemoryMax`, `TasksMax`, and `RuntimeMaxSec=900`.
+- `dsh-plugins-fetch@.service`: `User=dsh-plugins-fetch`, `StandardInput=socket`, `IPAddressDeny=any`, `IPAddressAllow=localhost`, `Environment=HTTPS_PROXY=http://127.0.0.1:<egressPort>`, no other environment, `PrivateTmp=yes`, `ProtectSystem=strict`, `ProtectHome=yes`, no writable path outside its private tmp, empty capabilities, `MemoryMax`, `TasksMax`, and `RuntimeMaxSec=900`. `IPAddressAllow=localhost` alone would still reach other loopback services, so an nft output rule lets the `dsh-plugins-fetch` UID connect only to `127.0.0.1:<egressPort>`; quota, identity, and every other local port are refused.
 - One request per connection, framed like the KB root helper: a JSON header `{verb, args, input}` followed by `input` bytes, and one reply `{ok, bytes}` followed by the result archive and a JSON report. `dsh-plugins` writes the result into `staging/` and then the store; the fetch service writes nothing outside its private tmp.
 - Fixed verbs, each with an argument allowlist:
   - `npm-version {registry, name, version}`: registry must be in `egress.allow`, name a valid npm name, version exact SemVer.
@@ -317,7 +317,7 @@ No host egress proxy exists today, so this design builds one, `dsh-plugins-egres
 ### Mirroring a version
 
 1. **Resolve the source.** npm: read the packument from the source registry, take the exact version's `dist.tarball` and `dist.integrity`; the tarball host must be the registry's host, a version without integrity is refused. git: https only; fetch the pinned commit with the generator's rules (depth 1, hooks and file-system monitor off, no submodules) and `-c http.followRedirects=false`; build a tarball from the package directory's blobs. A user submission is fetched without credentials, so it can read only repositories readable anonymously from the host. Upload: the `.tgz` is unpacked safely, refusing absolute paths, `..`, symbolic and hard links, device files, more than 10,000 entries, or more than 200 MiB unpacked.
-2. **Check the package.** The tarball's `package.json` must name the package and version. git and upload sources must use a configured company scope such as `@corp/`, and the name must not exist on any configured upstream registry. A bundle must declare `dsh.bundle` with a patch; a skill package holds only `SKILL.md` folders and assets.
+2. **Check the package.** The tarball's `package.json` must name the package and version. git and upload sources must use a configured company scope such as `@corp-dsh/`, and the name must not exist on any configured upstream registry. A bundle must declare `dsh.bundle` with a patch; a skill package holds only `SKILL.md` folders and assets.
 3. **Resolve the closure.** First scan the package's own dependency specs statically and refuse anything that is not a SemVer range (git, URL, `file:`, `link:`, `workspace:`, `npm:` alias) before any request is made. Then run `pnpm install --lockfile-only --ignore-scripts --ignore-pnpmfile --config.registry=<source registry>` for the single dependency in an empty directory, with `@deepseek-ai/dsh` and `@deepseek-ai/dsh-*` excluded as provided peers. Parse the lockfile: every entry must be a SemVer version resolved from the configured registry with integrity; anything else is refused with 409 `closure-source`. Download every tarball through the proxy and verify its integrity.
 4. **Detect install scripts.** A closure package has an install script when its manifest has `preinstall`, `install`, `postinstall`, or `prepare`, sets `gypfile`, or ships a top-level `binding.gyp` (pnpm runs `node-gyp rebuild` implicitly). Each is recorded in `plugin_closure.install_script`.
 5. **Choose the mode and build the artifact.**
@@ -339,20 +339,23 @@ No host egress proxy exists today, so this design builds one, `dsh-plugins-egres
 
 ### Listener and port
 
-- `plugin_endpoint` maps ports and users one to one: a port from `ports.market` belongs to at most one user, and a user has at most one port. The range must lie in 1024-32767, must not overlap `ports.web`, `ports.quota`, or `ports.sidecar`, and is capped at 4,096 ports. A user keeps the port across starts, so the URL in Settings and the model context does not change. A port is reassigned only after its row has been deleted. Rows are deleted when the account is deleted, and when the provisioner starts and finds a row whose account no longer exists.
+- `plugin_endpoint` maps ports and users one to one: a port from `ports.market` belongs to at most one user, and a user has at most one port. The range must lie in 1024-32767, must not overlap `ports.web`, `ports.quota`, or `ports.sidecar`, and is capped at 4,096 ports. A user keeps the port across starts, so the URL in Settings and the model context does not change. Ports are held per account for as long as the account exists, unlike the quota ports allocated per running instance, so the cap of 4,096 is the maximum number of accounts that can use the market. The config validator also checks that `ports.web`, `ports.quota`, `ports.sidecar`, and `ports.market` all fit below 32768 without overlap. A port is reassigned only after its row has been deleted. Rows are deleted when the account is deleted, and when the provisioner starts and finds a row whose account no longer exists.
 - **The whole range is held by systemd.** The installer generates `dsh-plugins.socket` with one `ListenStream=127.0.0.1:<port>` line per port in `ports.market` and `Service=dsh-plugins.service`. The socket unit starts before any tenant unit or container, so no other process can bind a market port. The listeners stay open while `dsh-plugins` restarts or is stopped. `dsh-plugins` takes the descriptors through `LISTEN_FDS`, maps each to its port, and answers the common 404 on a port with no row.
 - When the provisioner starts an instance it calls `open(userId, instanceId, uid)` on the control socket. `dsh-plugins` assigns or confirms the user's port, draws a fresh npm bearer token, stores its SHA-256, and returns the port and token. `close(instanceId)` clears the token when the instance stops. After a restart `dsh-plugins` keeps accepting the stored token hash for rows that still have an `instance_id`.
 
 ### Who can connect
 
-Two firewall rules guard the market range in both runtimes. They come before every per-instance rule, so they do not depend on the order of the instance list:
+Two firewall rules guard the market range in both runtimes. Natively they live in a dedicated base chain, `market_input` (`type filter hook input priority filter - 2`), which runs before `dsh_native input`. `renderInputDispatch` flushes and refills `dsh_native input` on every instance install and removal, so rules placed there would be lost; in their own chain they survive it and do not depend on the instance order. In containers they sit in `dsh-public.nft` ahead of the existing rules.
 
-- **Receiving socket.** On input, `iif "lo" tcp dport $MARKET_PORTS` is dropped unless the receiving socket's cgroup is the one that holds the systemd listener or `dsh-plugins.service`: `socket cgroupv2 level <n> != <allowed> drop`. A process in a tenant cgroup cannot receive market traffic even if the socket unit has been stopped. Phase 0 measures which cgroup a PID 1-created listening socket carries.
-- **Sender owns the port.** `map market_owner { type inet_service : mark; }` (native) or `set market_owner { type uid . inet_service; }` (container) holds exactly the `port → uid` rows of `plugin_endpoint`.
-  - Native: `iif "lo" tcp dport $MARKET_PORTS ct mark . tcp dport != @market_owner drop`. This works because the output chain stamps every loopback connection with `ct mark set meta skuid`, for every UID.
+- **Receiving socket.** `iif "lo" tcp dport $MARKET_PORTS jump market_listener`. The subchain `market_listener` holds `socket cgroupv2 level 1 "init.scope" return` followed by `drop`.
+  - Only `init.scope` is matched. systemd (PID 1) creates the listening sockets there, and accepted connections inherit the listener's cgroup, so the rule holds whether `dsh-plugins` is running, stopped, or restarted.
+  - The rule never names `dsh-plugins.service`. nft resolves `socket cgroupv2` paths when the rule loads (`network.ts`): with the service down, the missing cgroup would fail the whole `network.install` transaction and block every instance start, and after a restart the service would have a new cgroup id.
+  - A process in a tenant cgroup therefore cannot receive market traffic even if the socket unit has been stopped. Phase 0 item 8 confirms the listener cgroup.
+- **Sender owns the port.** `set market_owner` holds exactly the `uid . port` pairs of `plugin_endpoint`: `type mark . inet_service` natively and `type uid . inet_service` in containers. Both rules use a `!=` set lookup, so every pair not in the set is dropped, including any unmapped port. A map lookup is not used, because a port missing from the map would not match and would fail open.
+  - Native: `iif "lo" tcp dport $MARKET_PORTS ct mark . tcp dport != @market_owner drop` in `market_input`. This works because the output chain stamps every loopback connection with `ct mark set meta skuid`, for every UID.
   - Container: `oif "lo" tcp dport $MARKET_PORTS meta skuid . tcp dport != @market_owner drop` in the output chain, placed before the rule that accepts UIDs outside the instance range.
-  - Unmapped ports, root, and host service accounts such as `dsh-router` and `dsh-identity` are therefore refused too.
-- The provisioner adds the map entry before the instance starts and deletes it with the endpoint row. The existing per-instance `ct mark <uid> ... tcp dport <port> accept` rule from `network.ts` is not used for the market range.
+  - Unmapped ports, root, and host service accounts such as `dsh-router` and `dsh-identity` are therefore refused too. Health checks by the provisioner and the probe use the control socket, never a market port.
+- The provisioner adds the set element before the instance starts and deletes it with the endpoint row. The existing per-instance `ct mark <uid> ... tcp dport <port> accept` rule from `network.ts` is not used for the market range.
 - This changes the recorded decision that the container firewall has no per-user rules, only for the market range.
 - Isolation rests on these two rules. The npm bearer token is defence in depth.
 
@@ -368,7 +371,7 @@ Two firewall rules guard the market range in both runtimes. They come before eve
 
 - **Native**: the unit gets a second patch, `--patch /run/dsh-public/instance-market/<account>.yml`, root-owned and readable only by the account's group, written atomically by the provisioner before the unit starts. It also gets `NPM_CONFIG_GLOBALCONFIG=/run/dsh-public/instance-market/<account>.npmrc`. The shared `paths.launchPatch` stays untouched. `config.ts` validates the new `paths.instanceMarketDir` as a root-owned directory outside the tenant's writable paths.
 - **Container**: `webPatch` gains the same rows. The npmrc is mounted read-only as `<marketDir>/<account>:/run/dsh-market:ro`, a volume added to the `assertSafeRunArgv` allowlist, with `NPM_CONFIG_GLOBALCONFIG=/run/dsh-market/npmrc`.
-- The npmrc holds `@corp:registry=http://<host>:<port>/npm/` and `//<host>:<port>/npm/:_authToken=<token>`. Under `market_only` it also sets `registry=http://<host>:<port>/npm/`, so a plugin manager repair or a plain `pnpm install` resolves public-name artifacts from the mirror too.
+- The npmrc holds `@corp-dsh:registry=http://<host>:<port>/npm/` and `//<host>:<port>/npm/:_authToken=<token>`. Under `market_only` it also sets `registry=http://<host>:<port>/npm/`, so a plugin manager repair or a plain `pnpm install` resolves public-name artifacts from the mirror too. `NPM_CONFIG_GLOBALCONFIG` applies to every npm and pnpm run in the instance, so this also sends the user's own workspace installs to the mirror, where public packages are not available; open question 1 states this. The company scope is a dedicated name such as `@corp-dsh/`, so the mapping does not capture a scope the company already uses for its own development packages (open question 6).
 - Token exposure: the token is not in any URL, in the patch, in the lockfile, in `plugin_market` output, or in access logs. Any process running as the account can read the npmrc, including model-run shell commands; that is the account's own trust domain, and the token only reaches that account's own port.
 - The patch rows, built by a new `pluginMarketRows` in `contracts/src/web-rows.ts`:
   - insert `plugin-market` and `ui-plugin-market` as the experimental bundle's `cordis.patch.yml` does;
@@ -427,12 +430,12 @@ Two firewall rules guard the market range in both runtimes. They come before eve
 
 - Discover installs `<name>@<version>` with the entry's registry, the user's mirror. The plugin manager asks that registry alone, so a company package never falls through to a public registry.
 - The `plugin_market` tool returns the same target and registry, which carry no secret; `plugin_manager` `install_bundle` keeps its approval requirement.
-- The npmrc maps the company scope to the mirror, so `dsh plugin add @corp/x@1.2.3` resolves there too. Other specs behave as today unless `market_only` applies.
+- The npmrc maps the company scope to the mirror, so `dsh plugin add @corp-dsh/x@1.2.3` resolves there too. Other specs behave as today unless `market_only` applies.
 
 ### "Only allow installing from the market"
 
 - `market_only` is set in **System Admin > Plugin market > Policy** for the company or per department; a user is under it when any of their effective groups or the global row turns it on.
-- When on, the per-instance patch sets the plugin manager's `registry` to the mirror and `fallbackRegistries` to `[]`, and the npmrc sets `registry=` to the mirror. Registry specs then resolve only against approved artifacts; anything else fails with not-found in the existing dialog.
+- When on, the per-instance patch sets the plugin manager's `registry` to the mirror and `fallbackRegistries` to `[]`, and the npmrc sets `registry=` to the mirror. Because that npmrc is global to the instance, the user's own project installs then resolve against the mirror too. Registry specs then resolve only against approved artifacts; anything else fails with not-found in the existing dialog.
 - Whether a user's Settings change overrides these rows depends on the patch order the CLI applies, which phase 0 verifies (see [Serving instances](#serving-instances)).
 - This is policy, not a boundary. Git and tarball URLs still leave through public `443`, and a user controls their own instance and npmrc. The optional `egress_lock` makes it a boundary:
   - native: `network.ts` omits the public `80` and `443` accept for that account;
@@ -464,18 +467,23 @@ Two firewall rules guard the market range in both runtimes. They come before eve
 
 - `public-harness-plugin-sync`, a new small plugin in `integrations/public-harness/packages/plugin-sync`, is inserted into every company instance by the per-instance patch.
 - It polls `GET /sync` at start and every 5 minutes, with jitter. The answer is a list of `{ name, version, fromVersion, sha512, action }` with actions `install`, `update`, or `downgrade`, plus the allowed builds. The plan is a request, not an order; the local checks below decide.
-- **Local op log.** The plugin keeps `~/.dsh-market/sync-log.jsonl` in the account's home. Each operation writes an `intent` record with a snapshot of `package.json` and `pnpm-lock.yaml` under `~/.dsh-market/snapshots/<op>/` before it starts, and a `done`, `failed`, or `recovered` record after it ends. The plugin also subscribes to `plugin-manager/changed` and records every change it did not cause as `foreign`.
+- **Local op log.** The plugin keeps `~/.dsh-market/sync-log.jsonl` in the account's home. Each operation writes an `intent` record with a snapshot of `package.json` and `pnpm-lock.yaml` under `~/.dsh-market/snapshots/<op>/` before it starts, and a `done`, `removed`, `failed`, or `recovered` record after it ends. The log is the only source for deciding what the user removed. `plugin-manager/changed` is not used for that: CLI changes and hand edits applied by the HMR watcher emit no event, and the event names no package. Sync uses the event only to check again sooner.
+- **User removal rule.** A package counts as removed by the user when the log has a `done` install of it by sync, the package is now absent from `package.json`, and the log has no sync `removed` record after that install. Sync then writes a `user-removed` record. The rule covers removals through Discover, `dsh plugin remove`, and hand edits alike, and reconcile applies the same rule.
 - **Preconditions, checked against a fresh read.** Immediately before each operation the plugin takes the profile lock, the same `package.json.lock` `withFileLock` that the plugin manager uses. Under the lock it re-reads `package.json` and the lockfile, checks the conditions, writes the `intent` record, and releases the lock:
   - `update` and `downgrade` run only if the package is still installed at exactly `fromVersion`.
-  - `install` runs only if the package is absent and the op log has no user removal of it since the last reset or re-enable.
+  - `install` runs only if the package is absent and is not `user-removed` since the last reset or re-enable.
+  - Any removal by sync requires the package to exist. `removeBundle` itself refuses with `not-removable` otherwise, and sync then abandons the entry.
   - Otherwise the entry is skipped and reported as `skipped` with the reason.
-- **Apply.** Only while the instance is idle, through the plugin manager's own `installBundle(name@version, { registry })`, or `removeBundle` then `installBundle` with HMR. The plugin manager's lock is not re-entrant and `change()` is private, so sync cannot hold the lock across the call. The window between the fresh read and the manager taking the lock again is closed afterwards:
-  - after the call, sync re-reads under the lock and compares with the `intent` snapshot;
-  - if a `foreign` removal arrived in the window and no other package is missing, the removal was of this package: sync removes what it just installed and records a user removal;
-  - if another package is missing, the user removed that one, and the result stands.
-  - Phase 0 asks upstream whether a precondition option on `installBundle` can replace this check.
-- **Recovery.** If `removeBundle` succeeded and `installBundle` failed, sync reinstalls `fromVersion` from the mirror at once. If that fails too, it restores both files from the snapshot. It then leaves the `intent` record open as `failed`, and the next reconcile completes the restore before the instance starts. After an install it also compares the lockfile integrity for the package with `sha512`; on mismatch it rolls back the same way.
-- **Reports.** `POST /sync/report` sends results, the installed bundle list, and the op-log entries since the last report. The server derives `opted-out` only from a removal the log shows as `foreign`, that is, made by the user. A package absent because a sync operation failed or is open stays `failed`. It also derives `user-managed` and the installed count used for `max_installed`.
+- **Apply: install disabled, check, then enable.** Only while the instance is idle:
+  1. `update` and `downgrade` first call `removeBundle(name)`; `not-removable` means the user removed it, and sync stops. With HMR the plugin manager refuses to install over an installed package (`already-installed`), so `install` stops on that answer too.
+  2. `installBundle(name@version, { registry, enabled: false, approvedBuilds })` installs the bundle without selecting it, so none of its plugins start.
+  3. Sync takes the lock again and re-reads: the package is present at `version`, the lockfile integrity equals `sha512`, and no user removal has been recorded since the `intent`.
+  4. If every check passes, `setBundleEnabled(name, true)` starts it; that call itself fails if the package disappeared in between. If a check fails, sync calls `removeBundle(name)` on the never-enabled bundle. After an integrity failure in an update it reinstalls `fromVersion`; after a user removal it leaves the package absent.
+- **Why this is enough for phase 1.** The plugin manager's lock is not re-entrant and `change()` is private, so sync cannot hold the lock across `installBundle`. Under HMR, an `installBundle` without `enabled: false` selects the bundle and reloads inside its own lock, so the plugin would be active, and could register tools for an agent turn, before sync could check anything. With the disabled install, at most the install scripts an administrator allowed for that version can have run during the window, as the account; the plugin itself starts only after the checks pass. Phase 1 accepts this after-the-fact check as a listed risk, without changing upstream or holding a lock for the whole operation.
+- **Without HMR.** Changes take effect at the next start anyway, so the check runs before any plugin code does. But `removeBundle` refuses (`stop-profile`) to remove a bundle that already started in this process, so a failed check is left to the next reconcile, which restores the snapshot before the instance starts.
+- **Optional upstream proposal.** A precondition option on `installBundle` would close the window inside the lock. It stays an optional proposal in phase 0 item 7; the design does not depend on it.
+- **Recovery.** If `removeBundle` succeeded and `installBundle` failed, sync reinstalls `fromVersion` from the mirror at once. If that fails too, it restores both files from the snapshot. It then leaves the `intent` record open as `failed`, and the next reconcile completes the restore before the instance starts.
+- **Reports.** `POST /sync/report` sends results, the installed bundle list, and the op-log entries since the last report. The server derives `opted-out` only from `user-removed` records. A package absent because a sync operation failed or is open stays `failed`. It also derives `user-managed` and the installed count used for `max_installed`.
 - The sync plugin runs inside the tenant's own instance, so its reports are trusted only for that user's own state and soft limits, never for security decisions.
 - Administrators see per package how many users are applied, pending, skipped, or failed.
 
@@ -493,7 +501,7 @@ When the instance was stopped at approval time, or sync could not apply an updat
   - the instance's `MemoryMax` and `TasksMax`, and `RuntimeMaxSec=300`.
 - **Unit (container)**: a one-shot `runsc` container with the instance's image, volumes, user namespace, and `--network` argument, checked by an `assertSafeReconcileArgv` that mirrors `assertSafeRunArgv`, after the `market_owner` element is added.
 - **Environment allowlist**: exactly `HOME`, `DSH_HOME`, `XDG_CACHE_HOME`, `TMPDIR` as in the instance unit, `PATH` of the toolchain, and `NPM_CONFIG_GLOBALCONFIG`. Nothing is inherited from root: no `npm_config_*`, no proxy variables, no model key. `DSH_MODEL_API_KEY` is absent, as it is from instance units today.
-- **Input**: the provisioner gets the plan from `dsh-plugins` `reconcile-plan(userId)` over the control socket, the only source of the plan. Each entry must be `name@exact-semver` with a sha512, and the registry must be the user's own port in `ports.market` on `127.0.0.1` or `hostAddress`; anything else aborts reconcile. The reconcile entry applies the same preconditions and op log as sync, and first completes any open `failed` sync record from its snapshot.
+- **Input**: the provisioner gets the plan from `dsh-plugins` `reconcile-plan(userId)` over the control socket, the only source of the plan. Each entry must be `name@exact-semver` with a sha512, and the registry must be the user's own port in `ports.market` on `127.0.0.1` or `hostAddress`; anything else aborts reconcile. The reconcile entry applies the same preconditions, user removal rule, and op log as sync, and first completes any open `failed` sync record from its snapshot.
 - **pnpm**: the reconcile entry, shipped in the release, runs the profile's pnpm as `dsh plugin` does, with `--ignore-pnpmfile`, `--config.registry=<mirror>`, `--config.userconfig=/dev/null`, and one `--allow-build=<pkg>` per allowed build. It relies on pnpm 11's default of running no dependency build that is not allowed and never sets `ignore-scripts`, which would also block the allowed builds. An update or downgrade is a single `pnpm add name@version`, since no live plugin manager holds the package.
 - **Tenant files**: the root provisioner opens no tenant path. The reconcile entry, running as the account, reads `package.json` and `pnpm-lock.yaml` with `O_NOFOLLOW`, accepts only regular files of at most 4 MiB, and writes the snapshot into the account's own `~/.dsh-market/snapshots/<id>/`. Only the hashes go to `plugin_profile_snapshot`. Tenant-controlled config (project `.npmrc`, `pnpm-workspace.yaml`, including its `allowBuilds`) can at worst change that account's own profile, because the process has only that account's rights and only loopback network.
 - **Failure**: 120 s per package and 300 s in total. On any failure or timeout the entry restores both files from the snapshot and runs `pnpm install --frozen-lockfile --offline`, as `operations.ts` repairs a failed install. If the offline install fails because the store lacks a package, it runs the same install online against the user's mirror only. If that fails too, it leaves the restored files and the partial install in place, records `plugin-reconcile` with outcome `error`, and marks the state `failed`. The instance starts anyway.
@@ -620,23 +628,23 @@ Control socket verbs for the provisioner: `open`, `close`, `instance-config` (pa
 ### Native deployment (`integrations/public-harness/deploy/native/`)
 
 - `systemd/dsh-plugins.socket`, generated by the installer from `ports.market`: one `ListenStream=127.0.0.1:<port>` per port, `Service=dsh-plugins.service`, ordered before the provisioner and every instance unit.
-- `systemd/dsh-plugins.service`: user `dsh-plugins`, `Sockets=dsh-plugins.socket`, `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6`, `IPAddressDeny=any`, `IPAddressAllow=localhost`, `ReadWritePaths=/var/lib/dsh-plugins /run/dsh-plugins`, the hardening set of `dsh-quota.service`, `CapabilityBoundingSet=`. It differs from `dsh-kb.service`, which has `PrivateNetwork=yes` and only `AF_UNIX`, because it accepts loopback connections.
+- `systemd/dsh-plugins.service`: user `dsh-plugins`, `Sockets=dsh-plugins.socket`, `LimitNOFILE=16384` for the up to 4,096 inherited listeners, `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6`, `IPAddressDeny=any`, `IPAddressAllow=localhost`, `ReadWritePaths=/var/lib/dsh-plugins /run/dsh-plugins`, the hardening set of `dsh-quota.service`, `CapabilityBoundingSet=`. It differs from `dsh-kb.service`, which has `PrivateNetwork=yes` and only `AF_UNIX`, because it accepts loopback connections.
 - `systemd/dsh-plugins-fetch.socket` and `systemd/dsh-plugins-fetch@.service`, as described in [Fetch service](#store-and-mirror).
 - `systemd/dsh-plugins-egress.service`: user `dsh-plugins-egress`, outbound network allowed, no state, `ProtectSystem=strict`, empty capabilities.
-- `systemd/sysusers.conf`: `dsh-plugins`, `dsh-plugins-fetch`, `dsh-plugins-egress`, group `dsh-plugins-clients`. `systemd/tmpfiles.conf`: `/var/lib/dsh-plugins`, `/run/dsh-plugins`, `/run/dsh-public/instance-market` (root 0711).
+- `systemd/sysusers.conf`: users `dsh-plugins`, `dsh-plugins-fetch`, `dsh-plugins-egress`, and group `dsh-plugins-clients`. The `dsh-plugins` group, which owns `/var/lib/dsh-plugins` (0750) and the fetch socket, has `dsh-plugins` as its only member; `dsh-plugins-fetch` and `dsh-identity` are not in it. `dsh-plugins-clients` has `dsh-identity` as its only member; the provisioner runs as root. `systemd/tmpfiles.conf`: `/var/lib/dsh-plugins`, `/run/dsh-plugins`, `/run/dsh-public/instance-market` (root 0711).
 - `config/plugins.json.example`: database and store paths, `ports.market`, `egressPort`, `egress.allow`, `egress.intranet`, company scopes, size caps, request TTL. `config/native.json.example` gains `paths.instanceMarketDir`; `config/provisioner.json.example` gains `ports.market`.
 - `runtime-systemd`:
   - `units.ts` adds the second `--patch` and `NPM_CONFIG_GLOBALCONFIG`;
-  - `network.ts` adds, ahead of the per-instance dispatch, the receiving-socket rule and the `market_owner` map rule for `$MARKET_PORTS`, and under `egress_lock` drops the public accept;
-  - `probe.ts` checks both market rules and that every endpoint row has its map entry;
-  - `runtime.ts` adds the reconcile step between `network.install` and the unit start, writes the per-instance files, and adds and deletes the map entry.
-- A firewall rule lets only the `dsh-plugins-fetch` UID reach `egressPort`.
+  - `network.ts` adds the `market_input` base chain at priority `filter - 2` with the `market_listener` subchain and the `market_owner` set, which `renderInputDispatch` never flushes, and under `egress_lock` drops the public accept;
+  - `probe.ts` checks both market rules and that every endpoint row has its set element;
+  - `runtime.ts` adds the reconcile step between `network.install` and the unit start, writes the per-instance files, and adds and deletes the set element.
+- Firewall rules let only the `dsh-plugins-fetch` UID reach `egressPort`, and let that UID reach nothing else.
 
 ### Production container deployment (`integrations/public-harness/deploy/production/`)
 
 - `systemd/`: `dsh-plugins.socket`, `dsh-plugins.service`, `dsh-plugins-fetch.socket`, `dsh-plugins-fetch@.service`, and `dsh-plugins-egress.service` with the same sandbox as above; `sysusers.conf` and `tmpfiles.conf` gain the same accounts and directories.
 - `config/plugins.example.json`; `config/provisioner.example.json` gains `ports.market` and `paths.marketDir`.
-- `nftables/dsh-public.nft`: `define MARKET_PORTS`, the `market_owner` and `egress_locked` sets with their rules, the receiving-socket rule on input, and the `egressPort` rule for `dsh-plugins-fetch`. The `market_owner` drop sits before the rule that accepts UIDs outside the instance range.
+- `nftables/dsh-public.nft`: `define MARKET_PORTS`, the `market_owner` and `egress_locked` sets with their rules, the `market_listener` subchain on input, and the rules that keep `dsh-plugins-fetch` to `egressPort` only. The `market_owner` drop sits before the rule that accepts UIDs outside the instance range.
 - `provisioner/src/runtime.ts`: `webPatch` adds `pluginMarketRows` with `hostAddress`; `assertSafeRunArgv` admits the read-only market volume; the provisioner adds and removes set elements and runs the one-shot reconcile container. `provisioner/src/config.ts` validates `ports.market`.
 - `README.md` records the changed decision: per-user firewall elements exist for the market range.
 
@@ -659,12 +667,12 @@ Control socket verbs for the provisioner: `open`, `close`, `instance-config` (pa
 ### Risks
 
 - **Unsigned index until phase 2.** Trust rests on the channel: loopback, the systemd-held listeners, the receiving-socket and port-owner firewall rules in both runtimes, and the npm token. A compromised host defeats all of it.
-- **`market_only` is soft** without `egress_lock`, and its strength also depends on the patch order phase 0 verifies.
+- **`market_only` is soft** without `egress_lock`, and its strength also depends on the patch order phase 0 verifies. Its global npmrc also sends the user's own project installs to the mirror.
 - **Fallback mode is weaker.** If a version is served in fallback mode, transitive dependencies are limited to reviewed tarballs but not pinned, and Discover and manual installs get no lockfile check.
 - **Closure drift.** A closure is frozen at review; a dependency's later security fix needs a new version and review.
 - **Repacked artifacts.** A company artifact for a public npm name has a different integrity from the public tarball. Under `market_only` the npmrc points `registry=` at the mirror, so repairs resolve there. Without it, a later reinstall of that unscoped name from the public registry fails the lockfile integrity check. It fails safely, and sync or reconcile reinstalls from the mirror; a user's own manual repair needs `--registry=<mirror>`, which My plugins shows.
-- **Sync race window.** Without a precondition option in `installBundle`, a user removal can land between the fresh read and the apply; the post-apply check repairs it, but for a moment the package may be back.
-- **Large socket unit.** One `ListenStream` per market port; the range is capped at 4,096 and phase 0 checks start time and descriptor limits.
+- **Sync race window.** Sync cannot hold the plugin manager's lock across `installBundle`, so phase 1 relies on after-the-fact checks: the bundle is installed disabled and enabled only after a second check. During the window at most the administrator-allowed install scripts of that version can have run. Without HMR a started bundle cannot be removed and waits for reconcile.
+- **Account cap.** One `ListenStream` per market port and one port per account, so at most 4,096 accounts can use the market (open question 9). `dsh-plugins` runs with `LimitNOFILE=16384`; phase 0 checks start time.
 - **Allowlist upkeep.** A registry that moves its tarballs to a new CDN host fails fetches until `egress.allow` is updated.
 - **In-instance sync is tenant-controlled.** A user can disable or alter it; this only affects their own defaults and soft limits.
 - **Changed firewall decision.** The container firewall gains per-user elements, which the provisioner must keep in step; stale elements are removed at stop and at provisioner start.
@@ -675,9 +683,10 @@ Control socket verbs for the provisioner: `open`, `close`, `instance-config` (pa
 - **pnpm 11 behaviour.** That standard tarball paths with a scope-mapped registry keep tarball URLs out of `pnpm-lock.yaml` across port changes; that `NPM_CONFIG_GLOBALCONFIG` supplies the auth token; whether peer auto-install asks the mirror for `@deepseek-ai/dsh*`; how a repair resolves a repacked public name with and without `registry=` in the npmrc.
 - **Pinned artifacts.** That pnpm 11 installs an artifact with `bundleDependencies` correctly, and whether `allowBuilds` governs scripts of bundled packages. Until shown, versions with install scripts use fallback mode.
 - **Build defaults.** That pnpm 11 runs no dependency build outside `--allow-build` and `allowBuilds` in both sync and reconcile.
-- **Listener cgroup.** Which cgroup a listening socket created by PID 1 carries, for the receiving-socket rule.
+- **Listener cgroup.** That listening sockets created by PID 1 sit in `init.scope` and accepted connections inherit it, for the `market_listener` subchain.
+- **Disabled installs.** That `installBundle` with `enabled: false` under HMR starts none of the bundle's plugins, and `setBundleEnabled` then starts them.
 - **Idle detection.** Which existing signal tells the sync plugin that no agent turn is running.
-- **Install preconditions.** Whether upstream would accept a precondition option on `installBundle` to close the sync race window.
+- **Install preconditions.** Whether upstream would accept an optional precondition option on `installBundle`; the design does not need it.
 - **Container reconcile.** The one-shot `runsc` container with the instance's volumes and network.
 - **Git tarballs.** That a tarball built from git blobs installs like `npm pack` output, including `files` and `.npmignore` selection.
 - **Client-side integrity for Discover.** Not available until upstream defines an integrity member.
@@ -700,7 +709,7 @@ No test uses real model keys or model calls. All listeners bind `127.0.0.1` or U
   - Upload unpacking: absolute paths, `..`, symbolic and hard links, devices, entry and size caps.
   - Install-script detection: each of `preinstall`, `install`, `postinstall`, `prepare`, `gypfile`, and `binding.gyp`; a closure with a script is never built in bundle mode unless the phase-0 flag allows it.
   - Fetch service framing: unknown verbs, extra arguments, and arguments outside each allowlist are refused before any network use.
-  - Sync preconditions: `update` skipped when the package is gone or at another version; `install` skipped after a user removal; `opted-out` derived only from `foreign` removals.
+  - Sync preconditions: `update` skipped when the package is gone or at another version; `install` skipped after a user removal; a package sync installed, now absent with no sync `removed` record, counts as user-removed; `opted-out` comes only from such records.
 - **Integration.**
   - Identity gateway: whitelist, reauth on the listed routes, `PLUGIN_EVENTS` drained, self-approval refused.
   - Egress and SSRF: a closure with git, tarball URL, `file:`, `link:`, or alias dependencies is refused before pnpm runs; a `dist.tarball` on another host is refused; a redirect to an unlisted host fails; an allowlisted name with any A or AAAA record in a forbidden range is refused, including `::ffff:127.0.0.1`, `64:ff9b::` and `2002::` forms; an IP-literal target is refused; a name that re-resolves to another address between check and connect still reaches the checked address; only the fetch UID can reach the proxy.
@@ -714,14 +723,14 @@ No test uses real model keys or model calls. All listeners bind `127.0.0.1` or U
   - A department user sees a department listing; others do not, and its artifacts answer 404 to them.
   - Discover installs a market plugin with public egress closed in the test network; the lockfile holds no tarball URL and still installs after an instance restart, a port change, and a `dsh-plugins` restart.
   - Default push: approve a new default version while the instance runs; sync applies it when idle; integrity mismatch rolls back.
-  - Sync races: a user removes the package between the fresh read and the apply, and sync undoes its install; `removeBundle` succeeds and `installBundle` fails, and the old version is back, or the next reconcile restores it.
+  - Sync races: a user removes the package between the fresh read and the enable step, and the never-enabled bundle is deleted without any of its plugins starting; an integrity mismatch leaves the plugin never started; `removeBundle` succeeds and `installBundle` fails, and the old version is back, or the next reconcile restores it; without HMR a failed check is restored by reconcile.
   - Reconcile: runs in the instance slice after the firewall rules, with the exact environment allowlist, ignores a planted `.pnpmfile.cjs` and hostile `.npmrc`, times out and rolls back, falls back to the online mirror install when the offline repair lacks a package, and the instance still starts.
   - Snapshots: a symbolic link planted as `package.json` is refused; restore runs only at the next start and only for the owner's snapshot.
-  - Opt-out: the user removes a default; neither sync nor reconcile reinstalls it until reset or re-enable.
+  - Opt-out: the user removes a default through Discover, through `dsh plugin remove`, or by editing `package.json` by hand; in each case neither sync nor reconcile reinstalls it until reset or re-enable.
   - Revoke: the full flow, including the My plugins flag for a hand-installed revoked version.
   - Build scripts: an allowed build runs in sync and reconcile; a non-allowed one does not run.
   - `market_only` makes a registry spec outside the market fail with not-found; `egress_lock` blocks public `443` but not model calls.
-- **Firewall rendering.** `network.ts` and `dsh-public.nft` rule tests: the market rules come before the per-instance dispatch and the out-of-range accept; map and set element add and remove; the probe detects a missing market rule or map entry. Config validators reject overlapping, out-of-range, or oversized `ports.market`.
+- **Firewall rendering.** `network.ts` and `dsh-public.nft` rule tests: the market chain runs before the per-instance dispatch and the container rules before the out-of-range accept; the market rules survive instance install and removal; `network.install` succeeds while `dsh-plugins` is stopped; an unmapped port is dropped by the `!=` set lookup; the fetch UID reaches only `egressPort`; set element add and remove; the probe detects a missing market rule or set element. Config validators reject overlapping, out-of-range, or oversized `ports.market`.
 - **Regression.** The upstream plugin-market and plugin-manager tests run unchanged.
 
 <a id="phased-implementation-plan"></a>
@@ -737,8 +746,8 @@ Phase 1 is the first release (一期); phase 2 is the second (二期), as the us
 4. The reconcile transient unit in the instance slice with `IPAddressAllow=localhost`; that `--ignore-pnpmfile` and `--config.userconfig` hold.
 5. Container: `meta skuid . tcp dport` matching through pasta, and a one-shot reconcile container.
 6. A tarball built from git blobs compared with `npm pack` output.
-7. An idle signal for the sync plugin, and whether upstream accepts a precondition option on `installBundle`.
-8. `dsh-plugins.socket` with the full range: start time, descriptor limits, and the cgroup of the listening sockets for the receiving-socket rule.
+7. An idle signal for the sync plugin; that `installBundle(..., { enabled: false })` starts no plugin under HMR. Optionally, propose a precondition option on `installBundle` upstream.
+8. `dsh-plugins.socket` with the full range: start time with `LimitNOFILE=16384`; that the listening sockets sit in `init.scope` and accepted connections inherit it; that the `market_listener` subchain loads while `dsh-plugins` is stopped.
 
 ### Phase 1 (一期)
 
@@ -766,7 +775,7 @@ Milestone 1C, review flow:
 Milestone 1D, defaults and updates:
 
 1. Defaults, reset, and re-enable.
-2. The sync plugin with preconditions, op log, recovery, integrity check, and reports.
+2. The sync plugin with preconditions, disabled install and enable, the user removal rule, op log, recovery, integrity check, and reports.
 3. Pre-start reconcile with snapshots, rollback, online fallback, and queued restore.
 
 Milestone 1E, policy, limits, and containers:
@@ -790,23 +799,29 @@ Milestone 1E, policy, limits, and containers:
 <a id="open-questions"></a>
 ## Open questions and recommended defaults
 
-Questions 1 to 6 need a user decision; the rest have defaults that can be confirmed with the review.
+Questions 1 to 9 need a user decision; the rest have defaults that can be confirmed with the review.
 
-1. **Strength of "only allow installing from the market".** Recommended default: policy only; `egress_lock` stays an explicit per-department choice, because it breaks browsing, git, pip, and public npm. Without it a user can change the registry back in Settings or their npmrc.
-2. **When signature verification lands.** Recommended default: phase 2 (二期), as decided. The doc now places it there.
+1. **Strength of "only allow installing from the market".** Recommended default: policy only; `egress_lock` stays an explicit per-department choice, because it breaks browsing, git, pip, and public npm. Without it a user can change the registry back in their npmrc, and git and tarball installs keep working. Two effects to accept: under `market_only` the global npmrc sends every npm install in the instance to the mirror, including the user's own projects; and because the CLI applies patches after the profile, a user's own `indexes` and registry edits in Settings may be overwritten at each start (phase 0 confirms).
+2. **When signature verification lands.** Recommended default: phase 2 (二期), as decided. The doc places it there; please confirm.
 3. **What "pushed automatically" means for defaults.** Recommended default: live push by the sync plugin within about 5 minutes while the instance is idle; next start as fallback, with a "restart to apply" notice and an admin view of how many users are pending.
 4. **Runtimes in phase 1.** Recommended default: both, with containers in milestone 1E. If the user prefers, phase 1 supports native only and containers move to phase 2.
 5. **Can an administrator approve their own path-A submission?** Recommended default: no; they use path B, which is audited as an upload.
-6. **Mandatory company scope for git and upload sources.** Recommended default: yes, a configured scope such as `@corp/`, and the name must not exist upstream.
-7. **Install scripts.** Recommended default: refused unless an administrator allows each such package, `prepare` and `binding.gyp` included.
-8. **Is an opt-out permanent?** Recommended default: yes, until an administrator resets the default or the user re-enables it in My plugins.
-9. **Limit values.** Recommended default: global `max_installed` 50, `max_submissions` 20, `max_submission_bytes` 1 GiB; one version's artifact at most 200 MiB; one uploaded tarball at most 50 MiB.
-10. **Git sources that need a build step.** Recommended default: unsupported; commit built output or publish to npm.
-11. **Can a submitter delist their own plugin?** Recommended default: no; they can request a delist.
-12. **Mirror retention.** Recommended default: keep every artifact a listing history refers to; revoked versions stop being served at once and are purged by an explicit administrator action after 90 days.
-13. **Credentials for git sources.** Recommended default: user submissions are fetched without credentials; a read-only deploy token is used only for administrator uploads.
-14. **Pure-skill packages.** Recommended default: yes, in phase 2.
-15. **Single-user scope.** Recommended default: not offered; departments and the whole company only.
+6. **Mandatory company scope for git and upload sources, and its name.** Recommended default: yes, with a dedicated scope such as `@corp-dsh/` that no in-house development package uses, and the name must not exist upstream.
+7. **Overturning the production README decision.** The container firewall had no per-user rules; the market range now has per-user set elements and a receiving-socket rule, and root, `dsh-router`, `dsh-identity`, and other host accounts are kept off market ports. Recommended default: accept, for the market range only.
+8. **Residual risks accepted for phase 1.** Recommended default: accept all three:
+   - versions with install scripts, or every version if phase 0 rejects bundle mode, use fallback mode: transitive dependencies are limited to reviewed tarballs but not pinned, and Discover and manual installs get no lockfile check;
+   - the default-push race window: with install-disabled-then-enable, at most the administrator-allowed install scripts can have run in it;
+   - the index is unsigned until phase 2.
+9. **Scale.** Each account holds one market port for as long as it exists; the cap is 4,096, so at most 4,096 accounts can use the market. Recommended default: 4,096; otherwise give the expected number of accounts.
+10. **Install scripts.** Recommended default: refused unless an administrator allows each such package, `prepare` and `binding.gyp` included.
+11. **Is an opt-out permanent?** Recommended default: yes, until an administrator resets the default or the user re-enables it in My plugins.
+12. **Limit values.** Recommended default: global `max_installed` 50, `max_submissions` 20, `max_submission_bytes` 1 GiB; one version's artifact at most 200 MiB; one uploaded tarball at most 50 MiB.
+13. **Git sources that need a build step.** Recommended default: unsupported; commit built output or publish to npm.
+14. **Can a submitter delist their own plugin?** Recommended default: no; they can request a delist.
+15. **Mirror retention.** Recommended default: keep every artifact a listing history refers to; revoked versions stop being served at once and are purged by an explicit administrator action after 90 days.
+16. **Credentials for git sources.** Recommended default: user submissions are fetched without credentials; a read-only deploy token is used only for administrator uploads.
+17. **Pure-skill packages.** Recommended default: yes, in phase 2.
+18. **Single-user scope.** Recommended default: not offered; departments and the whole company only.
 
 <a id="sources"></a>
 ## Sources

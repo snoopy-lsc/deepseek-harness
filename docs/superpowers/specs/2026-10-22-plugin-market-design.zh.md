@@ -102,7 +102,7 @@
    --CONNECT--> dsh-plugins-egress (allowlist, private-range check) --> npm registries, intranet git (https)
                                                                             v
  instance (account uid) -- pluginMarket.indexes ----> http://<host>:<marketPort>/index.json
-                        -- pnpm (@corp registry) ---> http://<host>:<marketPort>/npm/   (bearer token from npmrc)
+                        -- pnpm (@corp-dsh scope) --> http://<host>:<marketPort>/npm/   (bearer token from npmrc)
                         -- plugin-sync -------------> http://<host>:<marketPort>/sync
  provisioner (root): per-instance patch and npmrc, firewall element, pre-start reconcile unit as the account
 ```
@@ -128,7 +128,7 @@
   "format": 1,
   "title": { "en": "Company market" },
   "plugins": [{
-    "name": "@corp/dsh-example",
+    "name": "@corp-dsh/dsh-example",
     "versions": [{
       "version": "1.4.2",
       "publishTimestamp": 1792000000,
@@ -293,7 +293,7 @@ CREATE TABLE plugin_audit_outbox (
 `dsh-plugins` 没有任何 capability，无法以其他用户身份启动单元；KB 需要 root helper 也是同一个原因。因此拉取改用 socket 激活，既不需要 root 也不需要 polkit：
 
 - `dsh-plugins-fetch.socket`：`ListenStream=/run/dsh-plugins/fetch.sock`、`Accept=yes`、`SocketUser=root`、`SocketGroup=dsh-plugins`、`SocketMode=0660`。
-- `dsh-plugins-fetch@.service`：`User=dsh-plugins-fetch`、`StandardInput=socket`、`IPAddressDeny=any`、`IPAddressAllow=localhost`、`Environment=HTTPS_PROXY=http://127.0.0.1:<egressPort>`，不设其他环境变量，`PrivateTmp=yes`、`ProtectSystem=strict`、`ProtectHome=yes`，除私有 tmp 外没有可写路径，capability 为空，并设 `MemoryMax`、`TasksMax` 和 `RuntimeMaxSec=900`。
+- `dsh-plugins-fetch@.service`：`User=dsh-plugins-fetch`、`StandardInput=socket`、`IPAddressDeny=any`、`IPAddressAllow=localhost`、`Environment=HTTPS_PROXY=http://127.0.0.1:<egressPort>`，不设其他环境变量，`PrivateTmp=yes`、`ProtectSystem=strict`、`ProtectHome=yes`，除私有 tmp 外没有可写路径，capability 为空，并设 `MemoryMax`、`TasksMax` 和 `RuntimeMaxSec=900`。仅靠 `IPAddressAllow=localhost` 仍能访问其他回环服务，因此再加一条 nft output 规则，只允许 `dsh-plugins-fetch` UID 连接 `127.0.0.1:<egressPort>`；quota、identity 及其他所有本地端口一律拒绝。
 - 每个连接一个请求，帧格式与 KB root helper 相同：一个 JSON 头 `{verb, args, input}`，后跟 `input` 字节；一个回复 `{ok, bytes}`，后跟结果归档和一份 JSON 报告。由 `dsh-plugins` 把结果写入 `staging/`，再写入存储；拉取服务在私有 tmp 之外什么也不写。
 - 固定的动词，每个都有参数白名单：
   - `npm-version {registry, name, version}`：registry 必须在 `egress.allow` 中，name 必须是合法 npm 包名，version 必须是精确 SemVer。
@@ -317,7 +317,7 @@ CREATE TABLE plugin_audit_outbox (
 ### 镜像一个版本
 
 1. **解析来源。** npm：从来源 registry 读取 packument，取该精确版本的 `dist.tarball` 和 `dist.integrity`；tarball 主机必须是该 registry 的主机，没有完整性值的版本被拒绝。git：只允许 https；按生成器规则（深度 1、关闭 hook 和文件系统监视器、不拉子模块）并加 `-c http.followRedirects=false` 获取固定提交；用包目录中的 blob 构建 tarball。用户提交不带凭据拉取，因此只能读到宿主机可匿名读取的仓库。上传：安全解包 `.tgz`，拒绝绝对路径、`..`、符号链接和硬链接、设备文件、超过 10,000 个条目或解压后超过 200 MiB。
-2. **检查包。** tarball 中的 `package.json` 必须与包名和版本一致。git 和上传来源必须使用配置的公司 scope（如 `@corp/`），且包名不得存在于任何已配置的上游 registry。bundle 必须声明带 patch 的 `dsh.bundle`；技能包只能包含 `SKILL.md` 目录和资源文件。
+2. **检查包。** tarball 中的 `package.json` 必须与包名和版本一致。git 和上传来源必须使用配置的公司 scope（如 `@corp-dsh/`），且包名不得存在于任何已配置的上游 registry。bundle 必须声明带 patch 的 `dsh.bundle`；技能包只能包含 `SKILL.md` 目录和资源文件。
 3. **解析依赖闭包。** 先静态扫描包自身的依赖声明，在发出任何请求之前拒绝一切非 SemVer 范围的声明（git、URL、`file:`、`link:`、`workspace:`、`npm:` 别名）。然后于空目录为这一个依赖运行 `pnpm install --lockfile-only --ignore-scripts --ignore-pnpmfile --config.registry=<来源 registry>`，把 `@deepseek-ai/dsh` 和 `@deepseek-ai/dsh-*` 作为已提供的 peer 排除。解析 lockfile：每一项都必须是从已配置 registry 解析出的、带完整性的 SemVer 版本，否则以 409 `closure-source` 拒绝。通过代理下载每个 tarball 并校验完整性。
 4. **检测安装脚本。** 闭包中的包只要 manifest 含 `preinstall`、`install`、`postinstall` 或 `prepare`，设置了 `gypfile`，或在顶层带有 `binding.gyp`（pnpm 会隐式运行 `node-gyp rebuild`），就视为带安装脚本。每一项都记入 `plugin_closure.install_script`。
 5. **选择模式并构建产物。**
@@ -339,20 +339,23 @@ CREATE TABLE plugin_audit_outbox (
 
 ### 监听与端口
 
-- `plugin_endpoint` 让端口与用户一一对应：`ports.market` 中的一个端口最多属于一个用户，一个用户最多有一个端口。该段必须位于 1024-32767，不得与 `ports.web`、`ports.quota` 或 `ports.sidecar` 重叠，且最多 4,096 个端口。用户在多次启动之间保留端口，因此设置页和模型上下文中的 URL 不变。只有端口所在的行被删除后，端口才会重新分配。账户被删除时删除其行；provisioner 启动时发现某行的账户已不存在，也会删除该行。
+- `plugin_endpoint` 让端口与用户一一对应：`ports.market` 中的一个端口最多属于一个用户，一个用户最多有一个端口。该段必须位于 1024-32767，不得与 `ports.web`、`ports.quota` 或 `ports.sidecar` 重叠，且最多 4,096 个端口。用户在多次启动之间保留端口，因此设置页和模型上下文中的 URL 不变。与按运行实例分配的 quota 端口不同，市场端口在账户存在期间一直由该账户占用，因此 4,096 的上限就是能使用市场的账户数上限。配置校验还会检查 `ports.web`、`ports.quota`、`ports.sidecar` 和 `ports.market` 全部位于 32768 以下且互不重叠。只有端口所在的行被删除后，端口才会重新分配。账户被删除时删除其行；provisioner 启动时发现某行的账户已不存在，也会删除该行。
 - **整个端口段由 systemd 持有。** 安装程序生成 `dsh-plugins.socket`，`ports.market` 中每个端口一行 `ListenStream=127.0.0.1:<port>`，并设 `Service=dsh-plugins.service`。socket 单元先于任何租户单元或容器启动，因此其他进程无法绑定市场端口。`dsh-plugins` 重启或停止期间，这些监听保持打开。`dsh-plugins` 通过 `LISTEN_FDS` 接收描述符，把每个描述符对应到端口，对没有行的端口返回统一的 404。
 - provisioner 启动实例时通过控制 socket 调用 `open(userId, instanceId, uid)`。`dsh-plugins` 分配或确认该用户的端口，生成新的 npm bearer 令牌并保存其 SHA-256，返回端口和令牌。实例停止时 `close(instanceId)` 清除令牌。重启后，`dsh-plugins` 对仍带 `instance_id` 的行继续接受已保存的令牌哈希。
 
 ### 谁能连接
 
-两种运行时都用两条防火墙规则保护市场端口段。它们位于所有按实例的规则之前，因此不依赖实例列表的顺序：
+两种运行时都用两条防火墙规则保护市场端口段。在原生运行时中，它们位于一条专用的 base chain `market_input`（`type filter hook input priority filter - 2`），先于 `dsh_native input` 执行。`renderInputDispatch` 在每次安装和移除实例时都会清空并重建 `dsh_native input`，放在那里的规则会丢失；放在独立的链中，它们不受重建影响，也不依赖实例顺序。在容器中，它们位于 `dsh-public.nft` 现有规则之前。
 
-- **接收方 socket。** 在 input 上，`iif "lo" tcp dport $MARKET_PORTS` 的流量会被丢弃，除非接收 socket 的 cgroup 是持有 systemd 监听的那个 cgroup 或 `dsh-plugins.service`：`socket cgroupv2 level <n> != <allowed> drop`。即使 socket 单元被停止，租户 cgroup 中的进程也收不到市场流量。第 0 阶段会测量由 PID 1 创建的监听 socket 属于哪个 cgroup。
-- **发送方拥有该端口。** `map market_owner { type inet_service : mark; }`（原生）或 `set market_owner { type uid . inet_service; }`（容器）恰好保存 `plugin_endpoint` 中的 `port → uid` 行。
-  - 原生：`iif "lo" tcp dport $MARKET_PORTS ct mark . tcp dport != @market_owner drop`。这条规则成立，是因为 output 链对每个 UID 的每条回环连接都打上了 `ct mark set meta skuid`。
+- **接收方 socket。** `iif "lo" tcp dport $MARKET_PORTS jump market_listener`。子链 `market_listener` 先是 `socket cgroupv2 level 1 "init.scope" return`，然后是 `drop`。
+  - 只匹配 `init.scope`。systemd（PID 1）在那里创建监听 socket，accept 出来的连接继承监听 socket 的 cgroup，因此无论 `dsh-plugins` 正在运行、已停止还是已重启，这条规则都成立。
+  - 规则从不引用 `dsh-plugins.service`。nft 在加载规则时解析 `socket cgroupv2` 路径（`network.ts`）：服务停止时，缺失的 cgroup 会让整个 `network.install` 事务失败，从而阻止所有实例启动；服务重启后，其 cgroup id 也会改变。
+  - 因此即使 socket 单元被停止，租户 cgroup 中的进程也收不到市场流量。第 0 阶段第 8 项确认监听 socket 的 cgroup。
+- **发送方拥有该端口。** `set market_owner` 恰好保存 `plugin_endpoint` 中的 `uid . port` 组合：原生为 `type mark . inet_service`，容器为 `type uid . inet_service`。两边的规则都用 `!=` 查集合，因此不在集合中的组合一律丢弃，包括任何未映射的端口。不使用 map 查找，因为 map 中不存在的端口不会命中规则，会变成放行。
+  - 原生：在 `market_input` 中加入 `iif "lo" tcp dport $MARKET_PORTS ct mark . tcp dport != @market_owner drop`。这条规则成立，是因为 output 链对每个 UID 的每条回环连接都打上了 `ct mark set meta skuid`。
   - 容器：在 output 链中加入 `oif "lo" tcp dport $MARKET_PORTS meta skuid . tcp dport != @market_owner drop`，位置在放行实例范围外 UID 的规则之前。
-  - 因此未映射的端口、root，以及 `dsh-router`、`dsh-identity` 等宿主机服务账户也会被拒绝。
-- provisioner 在实例启动前添加映射元素，并随端点行一起删除它。`network.ts` 中现有的按实例 `ct mark <uid> ... tcp dport <port> accept` 规则不用于市场端口段。
+  - 因此未映射的端口、root，以及 `dsh-router`、`dsh-identity` 等宿主机服务账户也会被拒绝。provisioner 和探测的健康检查走控制 socket，从不使用市场端口。
+- provisioner 在实例启动前添加 set 元素，并随端点行一起删除它。`network.ts` 中现有的按实例 `ct mark <uid> ... tcp dport <port> accept` 规则不用于市场端口段。
 - 这改变了"容器防火墙不放按用户规则"的既有决定，但只针对市场端口段。
 - 隔离依靠这两条规则。npm bearer 令牌是纵深防御。
 
@@ -368,7 +371,7 @@ CREATE TABLE plugin_audit_outbox (
 
 - **原生**：单元增加第二个 patch `--patch /run/dsh-public/instance-market/<account>.yml`，由 root 拥有、只有该账户的组可读，在单元启动前由 provisioner 原子写入。单元还获得 `NPM_CONFIG_GLOBALCONFIG=/run/dsh-public/instance-market/<account>.npmrc`。共用的 `paths.launchPatch` 保持不变。`config.ts` 校验新增的 `paths.instanceMarketDir` 是 root 拥有、且位于租户可写路径之外的目录。
 - **容器**：`webPatch` 增加同样的行。npmrc 以只读卷 `<marketDir>/<account>:/run/dsh-market:ro` 挂载，该卷加入 `assertSafeRunArgv` 的白名单，并设 `NPM_CONFIG_GLOBALCONFIG=/run/dsh-market/npmrc`。
-- npmrc 包含 `@corp:registry=http://<host>:<port>/npm/` 和 `//<host>:<port>/npm/:_authToken=<token>`。在 `market_only` 下它还设置 `registry=http://<host>:<port>/npm/`，使插件管理器的修复或普通的 `pnpm install` 也从镜像解析公共包名的产物。
+- npmrc 包含 `@corp-dsh:registry=http://<host>:<port>/npm/` 和 `//<host>:<port>/npm/:_authToken=<token>`。在 `market_only` 下它还设置 `registry=http://<host>:<port>/npm/`，使插件管理器的修复或普通的 `pnpm install` 也从镜像解析公共包名的产物。`NPM_CONFIG_GLOBALCONFIG` 作用于实例中的每一次 npm 和 pnpm 运行，因此用户自己 workspace 中的安装也会指向镜像，而镜像里没有公共包；开放问题 1 写明了这一点。公司 scope 使用专用名称（如 `@corp-dsh/`），使映射不会劫持公司内部开发已在使用的 scope（开放问题 6）。
 - 令牌暴露面：令牌不出现在任何 URL、patch、lockfile、`plugin_market` 输出或访问日志中。以该账户身份运行的任何进程（包括模型执行的 shell 命令）都能读取 npmrc；这属于账户自己的信任域，而且该令牌只能访问该账户自己的端口。
 - patch 行由 `contracts/src/web-rows.ts` 中新增的 `pluginMarketRows` 生成：
   - 像实验性组合包的 `cordis.patch.yml` 那样插入 `plugin-market` 和 `ui-plugin-market`；
@@ -427,12 +430,12 @@ CREATE TABLE plugin_audit_outbox (
 
 - Discover 用条目的 registry（即该用户的镜像）安装 `<name>@<version>`。插件管理器只单独询问该 registry，因此公司包永远不会回退到公共 registry。
 - `plugin_market` 工具返回相同的 target 和 registry，其中不含秘密；`plugin_manager` `install_bundle` 保留其审批要求。
-- npmrc 把公司 scope 映射到镜像，因此 `dsh plugin add @corp/x@1.2.3` 也会在那里解析。除非适用 `market_only`，其他 spec 的行为与现在相同。
+- npmrc 把公司 scope 映射到镜像，因此 `dsh plugin add @corp-dsh/x@1.2.3` 也会在那里解析。除非适用 `market_only`，其他 spec 的行为与现在相同。
 
 ### "仅允许从市场安装"
 
 - `market_only` 在 **系统管理 > 插件市场 > 策略** 中按全公司或部门设置；只要用户的任一有效组或全局行开启了它，该用户就受其约束。
-- 开启后，每实例 patch 把插件管理器的 `registry` 设为镜像，`fallbackRegistries` 设为 `[]`，npmrc 也把 `registry=` 设为镜像。此后 registry spec 只会对获批产物解析；其他一律在现有对话框中以未找到失败。
+- 开启后，每实例 patch 把插件管理器的 `registry` 设为镜像，`fallbackRegistries` 设为 `[]`，npmrc 也把 `registry=` 设为镜像。由于该 npmrc 对整个实例生效，用户自己项目的安装此后也会从镜像解析。此后 registry spec 只会对获批产物解析；其他一律在现有对话框中以未找到失败。
 - 用户在设置页的修改能否覆盖这些行，取决于 CLI 应用 patch 的顺序，由第 0 阶段验证（见[为实例提供服务](#serving-instances)）。
 - 这是策略，不是边界。git 和 tarball URL 仍可经公网 `443` 出去，而且用户控制自己的实例和 npmrc。可选的 `egress_lock` 才使它成为边界：
   - 原生：`network.ts` 不再为该账户渲染公网 `80` 和 `443` 的放行规则；
@@ -464,18 +467,23 @@ CREATE TABLE plugin_audit_outbox (
 
 - `public-harness-plugin-sync` 是 `integrations/public-harness/packages/plugin-sync` 中新增的小插件，由每实例 patch 插入每个公司实例。
 - 它在启动时以及之后每 5 分钟（带随机抖动）轮询 `GET /sync`。返回 `{ name, version, fromVersion, sha512, action }` 列表，动作为 `install`、`update` 或 `downgrade`，并附允许构建列表。计划只是请求，不是命令；由下面的本地检查决定是否执行。
-- **本地操作日志。** 插件在账户 home 中维护 `~/.dsh-market/sync-log.jsonl`。每个操作开始前写一条 `intent` 记录，并在 `~/.dsh-market/snapshots/<op>/` 下保存 `package.json` 和 `pnpm-lock.yaml` 的快照；结束后写 `done`、`failed` 或 `recovered` 记录。插件还订阅 `plugin-manager/changed`，把每个不是它引起的变更记为 `foreign`。
+- **本地操作日志。** 插件在账户 home 中维护 `~/.dsh-market/sync-log.jsonl`。每个操作开始前写一条 `intent` 记录，并在 `~/.dsh-market/snapshots/<op>/` 下保存 `package.json` 和 `pnpm-lock.yaml` 的快照；结束后写 `done`、`removed`、`failed` 或 `recovered` 记录。判断用户卸载了什么，只以这份日志为准。不用 `plugin-manager/changed` 来判断：CLI 的变更和由 HMR watcher 应用的手工编辑都不会发出事件，而且事件不带包名。同步插件只用该事件来提前重新检查。
+- **用户卸载规则。** 如果日志中有同步插件对某个包的 `done` 安装记录，该包现在不在 `package.json` 中，且那次安装之后日志中没有同步插件的 `removed` 记录，就认定该包是被用户卸载的。同步插件随即写一条 `user-removed` 记录。这条规则同样覆盖通过 Discover、`dsh plugin remove` 和手工编辑所做的卸载，对账也采用同一条规则。
 - **基于重新读取的前置条件。** 每个操作之前，插件立即获取 profile 锁，即插件管理器使用的同一个 `package.json.lock` `withFileLock`。在锁内它重新读取 `package.json` 和 lockfile，检查条件，写入 `intent` 记录，然后释放锁：
   - `update` 和 `downgrade` 只在该包仍以恰好 `fromVersion` 安装时执行。
-  - `install` 只在该包不存在、且自上次重置或重新启用以来操作日志中没有用户卸载它的记录时执行。
+  - `install` 只在该包不存在、且自上次重置或重新启用以来不是 `user-removed` 时执行。
+  - 同步插件的任何卸载都要求该包存在。否则 `removeBundle` 本身就以 `not-removable` 拒绝，同步插件随即放弃该项。
   - 否则跳过该项，并以 `skipped` 报告原因。
-- **应用。** 只在实例空闲时，通过插件管理器自己的 `installBundle(name@version, { registry })` 执行，启用 HMR 时先 `removeBundle` 再 `installBundle`。插件管理器的锁不可重入，`change()` 又是私有方法，因此同步插件无法在调用期间一直持有该锁。从重新读取到插件管理器再次拿到锁之间的窗口，在事后补上：
-  - 调用结束后，同步插件在锁内重新读取，并与 `intent` 快照比较；
-  - 如果窗口内到达了一条 `foreign` 卸载，且没有其他包缺失，那么被卸载的就是这个包：同步插件卸载它刚安装的东西，并记录一次用户卸载；
-  - 如果缺失的是其他包，说明用户卸载的是那个包，结果保持不变。
-  - 第 0 阶段询问上游能否为 `installBundle` 增加前置条件选项来取代这一检查。
-- **恢复。** 如果 `removeBundle` 成功而 `installBundle` 失败，同步插件立即从镜像重新安装 `fromVersion`。如果这也失败，就从快照恢复这两个文件，并把 `intent` 记录以 `failed` 保持未结，下一次对账会在实例启动前完成恢复。安装后它还会把 lockfile 中该包的完整性值与 `sha512` 比较；不一致则以同样方式回滚。
-- **报告。** `POST /sync/report` 发送结果、已安装组合包列表，以及自上次报告以来的操作日志条目。服务端只根据日志中标为 `foreign`（即用户所做）的卸载推导 `opted-out`。因同步操作失败或未结而缺失的包保持 `failed`。服务端还据此推导 `user-managed`，以及用于 `max_installed` 的安装计数。
+- **应用：先装成禁用，检查后再启用。** 只在实例空闲时：
+  1. `update` 和 `downgrade` 先调用 `removeBundle(name)`；返回 `not-removable` 说明用户已卸载，同步插件停止。启用 HMR 时，插件管理器拒绝在已安装的包上再次安装（`already-installed`），所以 `install` 遇到这个返回也停止。
+  2. `installBundle(name@version, { registry, enabled: false, approvedBuilds })` 安装该组合包但不选中它，因此它的插件都不会启动。
+  3. 同步插件再次获取锁并重新读取：该包存在且版本为 `version`，lockfile 的完整性值等于 `sha512`，且 `intent` 之后没有记录到用户卸载。
+  4. 全部检查通过时，`setBundleEnabled(name, true)` 启动它；如果包在此期间消失，这个调用本身就会失败。任一检查失败时，同步插件对这个从未启用的组合包调用 `removeBundle(name)`。升级中完整性校验失败后，它重新安装 `fromVersion`；因用户卸载而失败时，它让该包保持不存在。
+- **为什么这对一期已经足够。** 插件管理器的锁不可重入，`change()` 又是私有方法，因此同步插件无法在 `installBundle` 的整个过程中持锁。启用 HMR 时，不带 `enabled: false` 的 `installBundle` 会在它自己的锁内选中该组合包并重新加载，于是在同步插件检查任何东西之前，插件就已激活，并可能为某个 agent 轮次注册工具。采用禁用安装后，窗口内最多只有管理员为该版本允许的安装脚本以账户身份运行过；插件本身只在检查通过后才启动。一期把这种事后检查作为已列出的风险接受，不修改上游，也不在整个操作期间持锁。
+- **没有 HMR 时。** 变更本来就要到下次启动才生效，因此检查发生在任何插件代码运行之前。但 `removeBundle` 拒绝删除在本进程中已经启动的组合包（`stop-profile`），所以检查失败时交给下一次对账，由它在实例启动前按快照恢复。
+- **可选的上游提案。** 为 `installBundle` 增加前置条件选项，可以在锁内关闭这个窗口。它作为可选提案保留在第 0 阶段第 7 项；本设计不依赖它。
+- **恢复。** 如果 `removeBundle` 成功而 `installBundle` 失败，同步插件立即从镜像重新安装 `fromVersion`。如果这也失败，就从快照恢复这两个文件，并把 `intent` 记录以 `failed` 保持未结，下一次对账会在实例启动前完成恢复。
+- **报告。** `POST /sync/report` 发送结果、已安装组合包列表，以及自上次报告以来的操作日志条目。服务端只根据 `user-removed` 记录推导 `opted-out`。因同步操作失败或未结而缺失的包保持 `failed`。服务端还据此推导 `user-managed`，以及用于 `max_installed` 的安装计数。
 - 同步插件运行在租户自己的实例内，因此其报告只用于该用户自身的状态和软限额，从不用于安全决策。
 - 管理员可按包看到已应用、待应用、已跳过和失败的用户数。
 
@@ -493,7 +501,7 @@ CREATE TABLE plugin_audit_outbox (
   - 实例的 `MemoryMax` 和 `TasksMax`，以及 `RuntimeMaxSec=300`。
 - **单元（容器）**：在添加 `market_owner` 元素之后，运行一个一次性 `runsc` 容器，使用实例的镜像、卷、用户命名空间和 `--network` 参数，由仿照 `assertSafeRunArgv` 的 `assertSafeReconcileArgv` 检查。
 - **环境变量白名单**：恰好是与实例单元一致的 `HOME`、`DSH_HOME`、`XDG_CACHE_HOME`、`TMPDIR`，工具链的 `PATH`，以及 `NPM_CONFIG_GLOBALCONFIG`。不从 root 继承任何东西：没有 `npm_config_*`、没有代理变量、没有模型密钥。`DSH_MODEL_API_KEY` 不存在，与目前的实例单元一致。
-- **输入**：provisioner 通过控制 socket 从 `dsh-plugins` 的 `reconcile-plan(userId)` 获取计划，这是计划的唯一来源。每一项必须是带 sha512 的 `name@精确semver`，registry 必须是该用户自己在 `ports.market` 中的端口，地址为 `127.0.0.1` 或 `hostAddress`；否则中止对账。对账入口采用与同步相同的前置条件和操作日志，并先用快照完成任何未结的 `failed` 同步记录。
+- **输入**：provisioner 通过控制 socket 从 `dsh-plugins` 的 `reconcile-plan(userId)` 获取计划，这是计划的唯一来源。每一项必须是带 sha512 的 `name@精确semver`，registry 必须是该用户自己在 `ports.market` 中的端口，地址为 `127.0.0.1` 或 `hostAddress`；否则中止对账。对账入口采用与同步相同的前置条件、用户卸载规则和操作日志，并先用快照完成任何未结的 `failed` 同步记录。
 - **pnpm**：release 中附带的对账入口像 `dsh plugin` 那样运行 profile 的 pnpm，并加 `--ignore-pnpmfile`、`--config.registry=<mirror>`、`--config.userconfig=/dev/null`，以及每个允许构建一个 `--allow-build=<pkg>`。它依靠 pnpm 11 默认不运行未被允许的依赖构建，从不设置 `ignore-scripts`，因为那会把允许的构建也一并阻止。升级或降级只是一次 `pnpm add name@version`，因为此时没有运行中的插件管理器持有该包。
 - **租户文件**：root 身份的 provisioner 不打开任何租户路径。以账户身份运行的对账入口用 `O_NOFOLLOW` 读取 `package.json` 和 `pnpm-lock.yaml`，只接受不超过 4 MiB 的普通文件，并把快照写入账户自己的 `~/.dsh-market/snapshots/<id>/`。只有哈希写入 `plugin_profile_snapshot`。租户可控的配置（项目 `.npmrc`、`pnpm-workspace.yaml`，包括其中的 `allowBuilds`）最多只能改变该账户自己的 profile，因为进程只有该账户的权限，网络也只有回环。
 - **失败处理**：每个包 120 秒，总计 300 秒。任何失败或超时时，入口从快照恢复这两个文件并运行 `pnpm install --frozen-lockfile --offline`，与 `operations.ts` 修复失败安装的做法相同。如果离线安装因存储中缺少某个包而失败，就只针对该用户的镜像在线运行同样的安装。如果这也失败，就保留已恢复的文件和部分安装的状态，记录 outcome 为 `error` 的 `plugin-reconcile`，并把状态标为 `failed`。实例照常启动。
@@ -620,23 +628,23 @@ provisioner 使用的控制 socket 动词：`open`、`close`、`instance-config`
 ### 原生部署（`integrations/public-harness/deploy/native/`）
 
 - `systemd/dsh-plugins.socket`：由安装程序根据 `ports.market` 生成，每个端口一行 `ListenStream=127.0.0.1:<port>`，`Service=dsh-plugins.service`，排在 provisioner 和所有实例单元之前。
-- `systemd/dsh-plugins.service`：用户 `dsh-plugins`，`Sockets=dsh-plugins.socket`，`RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6`，`IPAddressDeny=any`，`IPAddressAllow=localhost`，`ReadWritePaths=/var/lib/dsh-plugins /run/dsh-plugins`，采用 `dsh-quota.service` 的加固参数，`CapabilityBoundingSet=`。它与 `PrivateNetwork=yes`、只用 `AF_UNIX` 的 `dsh-kb.service` 不同，因为它要接受回环连接。
+- `systemd/dsh-plugins.service`：用户 `dsh-plugins`，`Sockets=dsh-plugins.socket`，为最多 4,096 个继承来的监听设 `LimitNOFILE=16384`，`RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6`，`IPAddressDeny=any`，`IPAddressAllow=localhost`，`ReadWritePaths=/var/lib/dsh-plugins /run/dsh-plugins`，采用 `dsh-quota.service` 的加固参数，`CapabilityBoundingSet=`。它与 `PrivateNetwork=yes`、只用 `AF_UNIX` 的 `dsh-kb.service` 不同，因为它要接受回环连接。
 - `systemd/dsh-plugins-fetch.socket` 和 `systemd/dsh-plugins-fetch@.service`，见[拉取服务](#store-and-mirror)。
 - `systemd/dsh-plugins-egress.service`：用户 `dsh-plugins-egress`，允许出站网络，无状态，`ProtectSystem=strict`，无 capability。
-- `systemd/sysusers.conf`：`dsh-plugins`、`dsh-plugins-fetch`、`dsh-plugins-egress`，以及组 `dsh-plugins-clients`。`systemd/tmpfiles.conf`：`/var/lib/dsh-plugins`、`/run/dsh-plugins`、`/run/dsh-public/instance-market`（root 0711）。
+- `systemd/sysusers.conf`：用户 `dsh-plugins`、`dsh-plugins-fetch`、`dsh-plugins-egress`，以及组 `dsh-plugins-clients`。`dsh-plugins` 组拥有 `/var/lib/dsh-plugins`（0750）和拉取 socket，其唯一成员是 `dsh-plugins`；`dsh-plugins-fetch` 和 `dsh-identity` 都不在该组中。`dsh-plugins-clients` 的唯一成员是 `dsh-identity`；provisioner 以 root 运行。`systemd/tmpfiles.conf`：`/var/lib/dsh-plugins`、`/run/dsh-plugins`、`/run/dsh-public/instance-market`（root 0711）。
 - `config/plugins.json.example`：数据库和存储路径、`ports.market`、`egressPort`、`egress.allow`、`egress.intranet`、公司 scope、大小上限、请求有效期。`config/native.json.example` 增加 `paths.instanceMarketDir`；`config/provisioner.json.example` 增加 `ports.market`。
 - `runtime-systemd`：
   - `units.ts` 增加第二个 `--patch` 和 `NPM_CONFIG_GLOBALCONFIG`；
-  - `network.ts` 在按实例分发之前，为 `$MARKET_PORTS` 加入接收方 socket 规则和 `market_owner` 映射规则，并在 `egress_lock` 下去掉公网放行；
-  - `probe.ts` 检查这两条市场规则，以及每个端点行都有对应的映射元素；
-  - `runtime.ts` 在 `network.install` 和单元启动之间加入对账步骤，写入每实例文件，并添加和删除映射元素。
-- 防火墙规则只允许 `dsh-plugins-fetch` UID 访问 `egressPort`。
+  - `network.ts` 增加优先级为 `filter - 2` 的 `market_input` base chain，含 `market_listener` 子链和 `market_owner` set，`renderInputDispatch` 从不清空它们；并在 `egress_lock` 下去掉公网放行；
+  - `probe.ts` 检查这两条市场规则，以及每个端点行都有对应的 set 元素；
+  - `runtime.ts` 在 `network.install` 和单元启动之间加入对账步骤，写入每实例文件，并添加和删除 set 元素。
+- 防火墙规则只允许 `dsh-plugins-fetch` UID 访问 `egressPort`，并且该 UID 不能访问其他任何地址。
 
 ### Production 容器部署（`integrations/public-harness/deploy/production/`）
 
 - `systemd/`：`dsh-plugins.socket`、`dsh-plugins.service`、`dsh-plugins-fetch.socket`、`dsh-plugins-fetch@.service` 和 `dsh-plugins-egress.service`，沙箱与上面相同；`sysusers.conf` 和 `tmpfiles.conf` 增加同样的账户和目录。
 - `config/plugins.example.json`；`config/provisioner.example.json` 增加 `ports.market` 和 `paths.marketDir`。
-- `nftables/dsh-public.nft`：`define MARKET_PORTS`、`market_owner` 和 `egress_locked` 两个 set 及其规则、input 上的接收方 socket 规则，以及 `dsh-plugins-fetch` 访问 `egressPort` 的规则。`market_owner` 的丢弃规则位于放行实例范围外 UID 的规则之前。
+- `nftables/dsh-public.nft`：`define MARKET_PORTS`、`market_owner` 和 `egress_locked` 两个 set 及其规则、input 上的 `market_listener` 子链，以及把 `dsh-plugins-fetch` 限定为只能访问 `egressPort` 的规则。`market_owner` 的丢弃规则位于放行实例范围外 UID 的规则之前。
 - `provisioner/src/runtime.ts`：`webPatch` 用 `hostAddress` 加入 `pluginMarketRows`；`assertSafeRunArgv` 放行只读市场卷；provisioner 添加和删除 set 元素，并运行一次性对账容器。`provisioner/src/config.ts` 校验 `ports.market`。
 - `README.md` 记录改变后的决定：市场端口段存在按用户的防火墙元素。
 
@@ -659,12 +667,12 @@ provisioner 使用的控制 socket 动词：`open`、`close`、`instance-config`
 ### 风险
 
 - **二期之前索引未签名。** 信任来自通道：回环、由 systemd 持有的监听、两种运行时中的接收方 socket 规则和端口所有者规则，以及 npm 令牌。主机被攻破则全部失效。
-- **没有 `egress_lock` 时 `market_only` 是软约束**，其强度还取决于第 0 阶段要验证的 patch 顺序。
+- **没有 `egress_lock` 时 `market_only` 是软约束**，其强度还取决于第 0 阶段要验证的 patch 顺序。它的全局 npmrc 还会让用户自己项目的安装也指向镜像。
 - **兜底模式更弱。** 以兜底模式提供的版本，其传递依赖只限于审核过的 tarball，但不固定组合；Discover 和手动安装没有 lockfile 检查。
 - **依赖闭包漂移。** 依赖闭包在审核时冻结；依赖以后的安全修复需要新版本和新审核。
 - **重新打包的产物。** 公开 npm 包名的公司产物与公开 tarball 的完整性值不同。在 `market_only` 下 npmrc 把 `registry=` 指向镜像，因此修复也在镜像中解析。没有它时，以后若从公共 registry 重新安装这个无 scope 的包名，会在 lockfile 完整性校验时失败。失败是安全的，同步或对账会从镜像重新安装；用户自己手动修复需要加 `--registry=<mirror>`，"我的插件"会给出提示。
-- **同步竞争窗口。** `installBundle` 没有前置条件选项时，用户的卸载可能落在重新读取和应用之间；事后检查会修复它，但该包可能短暂地重新出现。
-- **socket 单元较大。** 每个市场端口一行 `ListenStream`；端口段上限为 4,096，第 0 阶段检查启动时间和描述符上限。
+- **同步竞争窗口。** 同步插件无法在 `installBundle` 的整个过程中持有插件管理器的锁，因此一期依靠事后检查：组合包先装成禁用，第二次检查通过后才启用。窗口内最多只有管理员为该版本允许的安装脚本运行过。没有 HMR 时，已启动的组合包无法删除，要等对账处理。
+- **账户数上限。** 每个市场端口一行 `ListenStream`，每个账户一个端口，因此最多 4,096 个账户能使用市场（开放问题 9）。`dsh-plugins` 以 `LimitNOFILE=16384` 运行；第 0 阶段检查启动时间。
 - **白名单维护。** registry 把 tarball 迁到新的 CDN 主机后，在更新 `egress.allow` 之前拉取会失败。
 - **实例内同步受租户控制。** 用户可以禁用或修改它；这只影响其自己的默认安装和软限额。
 - **防火墙决定改变。** 容器防火墙增加按用户的元素，provisioner 必须保持同步；过期元素在实例停止和 provisioner 启动时清除。
@@ -675,9 +683,10 @@ provisioner 使用的控制 socket 动词：`open`、`close`、`instance-config`
 - **pnpm 11 的行为。** 标准 tarball 路径加 scope 映射的 registry 能否在端口变化后仍让 `pnpm-lock.yaml` 中没有 tarball URL；`NPM_CONFIG_GLOBALCONFIG` 能否提供认证令牌；peer 自动安装是否会向镜像请求 `@deepseek-ai/dsh*`；npmrc 中有无 `registry=` 时，修复如何解析重新打包的公共包名。
 - **固定产物。** pnpm 11 能否正确安装带 `bundleDependencies` 的产物，以及 `allowBuilds` 是否管控被打包依赖的脚本。证明之前，带安装脚本的版本使用兜底模式。
 - **构建默认值。** pnpm 11 在同步和对账中是否不运行 `--allow-build` 和 `allowBuilds` 之外的任何依赖构建。
-- **监听的 cgroup。** 由 PID 1 创建的监听 socket 属于哪个 cgroup，供接收方 socket 规则使用。
+- **监听的 cgroup。** 由 PID 1 创建的监听 socket 是否位于 `init.scope`，以及 accept 出来的连接是否继承它，供 `market_listener` 子链使用。
+- **禁用安装。** 启用 HMR 时，带 `enabled: false` 的 `installBundle` 是否不启动该组合包的任何插件，之后 `setBundleEnabled` 是否能启动它们。
 - **空闲检测。** 哪个现有信号能告诉同步插件当前没有 agent 轮次在运行。
-- **安装前置条件。** 上游是否接受为 `installBundle` 增加前置条件选项，以关闭同步竞争窗口。
+- **安装前置条件。** 上游是否接受为 `installBundle` 增加可选的前置条件选项；本设计不需要它。
 - **容器对账。** 使用实例卷和网络的一次性 `runsc` 容器。
 - **git tarball。** 由 git blob 构建的 tarball 能否与 `npm pack` 产物安装方式相同，包括 `files` 和 `.npmignore` 的文件选择。
 - **Discover 的客户端完整性校验。** 在上游定义完整性成员之前无法实现。
@@ -700,7 +709,7 @@ provisioner 使用的控制 socket 动词：`open`、`close`、`instance-config`
   - 上传解包：绝对路径、`..`、符号链接和硬链接、设备文件、条目数和大小上限。
   - 安装脚本检测：`preinstall`、`install`、`postinstall`、`prepare`、`gypfile` 和 `binding.gyp` 逐项覆盖；除非第 0 阶段的开关允许，带脚本的闭包从不以打包模式构建。
   - 拉取服务帧格式：未知动词、多余参数和超出白名单的参数都在使用网络之前被拒绝。
-  - 同步前置条件：包已不存在或处于其他版本时跳过 `update`；用户卸载后跳过 `install`；`opted-out` 只从 `foreign` 卸载推导。
+  - 同步前置条件：包已不存在或处于其他版本时跳过 `update`；用户卸载后跳过 `install`；同步插件安装过、现在不存在且没有同步 `removed` 记录的包算作用户卸载；`opted-out` 只来自这类记录。
 - **集成测试。**
   - Identity 网关：白名单、所列路由的重新认证、`PLUGIN_EVENTS` 被取走、自审被拒绝。
   - 出网与 SSRF：闭包含 git、tarball URL、`file:`、`link:` 或别名依赖时在运行 pnpm 之前被拒绝；`dist.tarball` 指向其他主机时被拒绝；重定向到未列出的主机失败；白名单域名的任一 A 或 AAAA 记录落在禁止地址段时被拒绝，包括 `::ffff:127.0.0.1`、`64:ff9b::` 和 `2002::` 形式；以 IP 字面量为目标被拒绝；域名在检查与连接之间重新解析到其他地址时，仍然只连到已检查的地址；只有拉取 UID 能访问代理。
@@ -714,14 +723,14 @@ provisioner 使用的控制 socket 动词：`open`、`close`、`instance-config`
   - 部门用户能看到部门上架项；其他人看不到，其产物对他们返回 404。
   - 在测试网络关闭公网出站的情况下，Discover 安装市场插件；lockfile 中没有 tarball URL，并且在实例重启、端口变化和 `dsh-plugins` 重启之后仍可安装。
   - 默认推送：实例运行时批准一个新的默认版本；同步在空闲时应用；完整性不一致时回滚。
-  - 同步竞争：用户在重新读取和应用之间卸载该包，同步撤销自己的安装；`removeBundle` 成功而 `installBundle` 失败时，旧版本被恢复，或由下一次对账恢复。
+  - 同步竞争：用户在重新读取和启用之间卸载该包，这个从未启用的组合包被删除，其插件一个也没有启动；完整性不一致时插件从未启动；`removeBundle` 成功而 `installBundle` 失败时，旧版本被恢复，或由下一次对账恢复；没有 HMR 时，检查失败由对账恢复。
   - 对账：在防火墙规则就位后于实例 slice 中运行，环境变量严格符合白名单，忽略预置的 `.pnpmfile.cjs` 和恶意 `.npmrc`，超时后回滚，离线修复缺包时改为在线从镜像安装，实例仍能启动。
   - 快照：被替换成符号链接的 `package.json` 被拒绝；恢复只在下次启动时执行，且只针对所有者自己的快照。
-  - 卸载：用户卸载默认插件；在重置或重新启用之前，同步和对账都不会重新安装。
+  - 卸载：用户通过 Discover、`dsh plugin remove` 或手工编辑 `package.json` 卸载默认插件；每种情况下，在重置或重新启用之前，同步和对账都不会重新安装。
   - 撤销：完整流程，包括手动安装的已撤销版本在"我的插件"中的标记。
   - 构建脚本：允许的构建在同步和对账中运行；未允许的不运行。
   - `market_only` 使市场外的 registry spec 以未找到失败；`egress_lock` 阻断公网 `443` 但不影响模型调用。
-- **防火墙渲染。** `network.ts` 和 `dsh-public.nft` 的规则测试：市场规则位于按实例分发和范围外放行之前；映射和 set 元素的添加和删除；探测能发现缺失的市场规则或映射元素。配置校验拒绝重叠、超出范围或过大的 `ports.market`。
+- **防火墙渲染。** `network.ts` 和 `dsh-public.nft` 的规则测试：市场链先于按实例分发执行，容器规则位于范围外放行之前；安装和移除实例后市场规则仍然存在；`dsh-plugins` 停止时 `network.install` 仍能成功；未映射的端口被 `!=` 集合查找丢弃；拉取 UID 只能访问 `egressPort`；set 元素的添加和删除；探测能发现缺失的市场规则或 set 元素。配置校验拒绝重叠、超出范围或过大的 `ports.market`。
 - **回归。** 上游 plugin-market 和 plugin-manager 测试原样运行。
 
 <a id="phased-implementation-plan"></a>
@@ -737,8 +746,8 @@ provisioner 使用的控制 socket 动词：`open`、`close`、`instance-config`
 4. 在实例 slice 中以 `IPAddressAllow=localhost` 运行的对账临时单元；确认 `--ignore-pnpmfile` 和 `--config.userconfig` 生效。
 5. 容器：经 pasta 的 `meta skuid . tcp dport` 匹配，以及一次性对账容器。
 6. 用 git blob 构建 tarball，与 `npm pack` 产物比较。
-7. 为同步插件找到空闲信号，并询问上游是否接受为 `installBundle` 增加前置条件选项。
-8. 覆盖完整端口段的 `dsh-plugins.socket`：启动时间、描述符上限，以及接收方 socket 规则所需的监听 socket 所属 cgroup。
+7. 为同步插件找到空闲信号；确认启用 HMR 时 `installBundle(..., { enabled: false })` 不启动任何插件。可选：向上游提议为 `installBundle` 增加前置条件选项。
+8. 覆盖完整端口段的 `dsh-plugins.socket`：在 `LimitNOFILE=16384` 下的启动时间；监听 socket 位于 `init.scope` 且 accept 出来的连接继承它；`dsh-plugins` 停止时 `market_listener` 子链仍能加载。
 
 ### 第 1 阶段（一期）
 
@@ -766,7 +775,7 @@ provisioner 使用的控制 socket 动词：`open`、`close`、`instance-config`
 里程碑 1D，默认安装与更新：
 
 1. 默认安装、重置和重新启用。
-2. 同步插件：前置条件、操作日志、恢复、完整性检查和报告。
+2. 同步插件：前置条件、先禁用安装再启用、用户卸载规则、操作日志、恢复、完整性检查和报告。
 3. 启动前对账：快照、回滚、在线兜底和排队恢复。
 
 里程碑 1E，策略、限额与容器：
@@ -790,23 +799,29 @@ provisioner 使用的控制 socket 动词：`open`、`close`、`instance-config`
 <a id="open-questions"></a>
 ## 开放问题与推荐默认值
 
-问题 1 到 6 需要用户决定；其余问题已有默认值，可随评审一并确认。
+问题 1 到 9 需要用户决定；其余问题已有默认值，可随评审一并确认。
 
-1. **"仅允许从市场安装"的力度。** 推荐默认：只做策略；`egress_lock` 作为按部门的显式选择，因为它会断掉浏览、git、pip 和公共 npm。不开它时，用户可以在设置页或自己的 npmrc 中把 registry 改回去。
-2. **签名校验何时上线。** 推荐默认：按已定需求放在二期。文档现已放在那里。
+1. **"仅允许从市场安装"的力度。** 推荐默认：只做策略；`egress_lock` 作为按部门的显式选择，因为它会断掉浏览、git、pip 和公共 npm。不开它时，用户可以在自己的 npmrc 中把 registry 改回去，git 和 tarball 安装照常可用。需要接受两个影响：`market_only` 下全局 npmrc 会让实例中所有 npm 安装都走镜像，包括用户自己的项目；而且由于 CLI 在 profile 之后应用 patch，用户在设置页修改的 `indexes` 和 registry 可能在每次启动时被覆盖（第 0 阶段确认）。
+2. **签名校验何时上线。** 推荐默认：按已定需求放在二期。文档已放在那里，请确认。
 3. **默认插件的"自动推送"指什么。** 推荐默认：实例空闲时由同步插件在约 5 分钟内实时推送；下次启动作为兜底，并显示"重启后生效"提示，管理员可看到待生效人数。
 4. **一期支持哪些运行时。** 推荐默认：两种都支持，容器放在里程碑 1E。如果用户倾向，一期只支持原生，容器移到二期。
 5. **管理员能否批准自己通过路径 A 提交的插件。** 推荐默认：不能；他们改走路径 B，并以上传的形式被审计。
-6. **git 和上传来源是否必须使用公司 scope。** 推荐默认：是，使用配置的 scope（如 `@corp/`），且包名不得在上游存在。
-7. **安装脚本。** 推荐默认：除非管理员逐个允许这些包，否则拒绝，检测范围包括 `prepare` 和 `binding.gyp`。
-8. **卸载默认插件是否永久生效。** 推荐默认：是，直到管理员重置该默认安装，或用户在"我的插件"中重新启用。
-9. **限额值。** 推荐默认：全局 `max_installed` 50、`max_submissions` 20、`max_submission_bytes` 1 GiB；单个版本的产物不超过 200 MiB；单个上传 tarball 不超过 50 MiB。
-10. **需要构建步骤的 git 来源。** 推荐默认：不支持；须提交构建产物或发布到 npm。
-11. **提交者能否下架自己的插件。** 推荐默认：不能；可以申请下架。
-12. **镜像保留。** 推荐默认：保留上架历史引用的每个产物；已撤销版本立即停止提供，90 天后由管理员显式操作清除。
-13. **git 来源的凭据。** 推荐默认：用户提交不带凭据拉取；只读部署令牌只用于管理员上传。
-14. **纯技能包。** 推荐默认：支持，放在二期。
-15. **单用户范围。** 推荐默认：不提供；只有部门和全公司。
+6. **git 和上传来源是否必须使用公司 scope，以及 scope 名称。** 推荐默认：是，使用公司内部开发包都不用的专用 scope（如 `@corp-dsh/`），且包名不得在上游存在。
+7. **推翻 production README 的既有决定。** 容器防火墙原本不放按用户的规则；现在市场端口段增加按用户的 set 元素和接收方 socket 规则，并且 root、`dsh-router`、`dsh-identity` 等宿主机账户被挡在市场端口之外。推荐默认：接受，仅限市场端口段。
+8. **一期接受的剩余风险。** 推荐默认：三项都接受：
+   - 带安装脚本的版本（或第 0 阶段否定打包模式后的所有版本）使用兜底模式：传递依赖只限于审核过的 tarball 而不固定组合，Discover 和手动安装没有 lockfile 检查；
+   - 默认推送的竞争窗口：采用先禁用安装、检查后再启用之后，窗口内最多只有管理员允许的安装脚本运行过；
+   - 二期之前索引未签名。
+9. **规模。** 每个账户在存在期间占用一个市场端口；上限 4,096，即最多 4,096 个账户能使用市场。推荐默认：4,096；否则请给出预期账户数。
+10. **安装脚本。** 推荐默认：除非管理员逐个允许这些包，否则拒绝，检测范围包括 `prepare` 和 `binding.gyp`。
+11. **卸载默认插件是否永久生效。** 推荐默认：是，直到管理员重置该默认安装，或用户在"我的插件"中重新启用。
+12. **限额值。** 推荐默认：全局 `max_installed` 50、`max_submissions` 20、`max_submission_bytes` 1 GiB；单个版本的产物不超过 200 MiB；单个上传 tarball 不超过 50 MiB。
+13. **需要构建步骤的 git 来源。** 推荐默认：不支持；须提交构建产物或发布到 npm。
+14. **提交者能否下架自己的插件。** 推荐默认：不能；可以申请下架。
+15. **镜像保留。** 推荐默认：保留上架历史引用的每个产物；已撤销版本立即停止提供，90 天后由管理员显式操作清除。
+16. **git 来源的凭据。** 推荐默认：用户提交不带凭据拉取；只读部署令牌只用于管理员上传。
+17. **纯技能包。** 推荐默认：支持，放在二期。
+18. **单用户范围。** 推荐默认：不提供；只有部门和全公司。
 
 <a id="sources"></a>
 ## 来源
