@@ -345,19 +345,33 @@ CREATE TABLE plugin_audit_outbox (
 
 ### 谁能连接
 
-两种运行时都用两条防火墙规则保护市场端口段。在原生运行时中，它们位于一条专用的 base chain `market_input`（`type filter hook input priority filter - 2`），先于 `dsh_native input` 执行。`renderInputDispatch` 在每次安装和移除实例时都会清空并重建 `dsh_native input`，放在那里的规则会丢失；放在独立的链中，它们不受重建影响，也不依赖实例顺序。在容器中，它们位于 `dsh-public.nft` 现有规则之前。
+市场流量必须先通过两条丢弃规则，再命中一条放行规则。在 nftables 中，`accept` 只结束当前这条 base chain，包之后仍要经过后面的每一条 base chain；而任何地方的 `drop` 都是最终结果。因此两条丢弃规则放在独立的表中，放行规则则放在原有规则原本会丢弃这些流量的位置。
 
-- **接收方 socket。** `iif "lo" tcp dport $MARKET_PORTS jump market_listener`。子链 `market_listener` 先是 `socket cgroupv2 level 1 "init.scope" return`，然后是 `drop`。
-  - 只匹配 `init.scope`。systemd（PID 1）在那里创建监听 socket，accept 出来的连接继承监听 socket 的 cgroup，因此无论 `dsh-plugins` 正在运行、已停止还是已重启，这条规则都成立。
-  - 规则从不引用 `dsh-plugins.service`。nft 在加载规则时解析 `socket cgroupv2` 路径（`network.ts`）：服务停止时，缺失的 cgroup 会让整个 `network.install` 事务失败，从而阻止所有实例启动；服务重启后，其 cgroup id 也会改变。
-  - 因此即使 socket 单元被停止，租户 cgroup 中的进程也收不到市场流量。第 0 阶段第 8 项确认监听 socket 的 cgroup。
+- **独立的表，单独加载。** 两条丢弃规则位于独立的表 `inet dsh_market`，其 base chain 优先级为 `filter - 2`。
+  - 它不属于每个实例的 `network.install` 事务，也不属于 `dsh-public.nft`。`dsh-plugins.socket` 通过 `ExecStartPost=-<loader>` 加载它，因此每次 socket 单元启动都会重新加载。`-` 前缀使加载失败既不会让 socket 单元失败，也不会阻止任何实例启动。
+  - 加载程序在表和 `market_owner` set 不存在时创建它们。它只清空并重填链，从不清空 set，因此元素在重新加载后仍然保留。
+  - `renderInputDispatch` 在每次安装和移除实例时清空并重建 `dsh_native input`，但从不触碰这张表。
+- **接收方 socket。** `iif "lo" tcp dport $MARKET_PORTS jump market_listener`。子链 `market_listener` 先是 `socket cgroupv2 level <n> "<监听 cgroup>" return`，然后是 `drop`。
+  - 监听 socket 属于哪个 cgroup，在第 0 阶段第 8 项给出结论之前只是一个假设。最初的候选是 `init.scope`（level 1），理由是 socket 由 PID 1 创建。这很可能不成立：内核支持 BPF 防火墙时，systemd 会在 socket 单元自己的 cgroup 内用辅助进程创建 INET 监听，因此它们大概率位于 `system.slice/dsh-plugins.socket`。备选规则是 `socket cgroupv2 level 2 "system.slice/dsh-plugins.socket"`，加载程序按第 0 阶段实测的 cgroup 渲染。
+  - 无论哪种情况，accept 出来的连接都继承监听 socket 的 cgroup，因此这条规则不取决于 `dsh-plugins.service` 是否在运行或是否重启过。
+  - 规则从不引用 `dsh-plugins.service`。nft 在加载规则时解析 `socket cgroupv2` 路径（`network.ts`）。服务 cgroup 不存在会导致加载失败，服务重启后其 cgroup id 也会改变。
+  - socket 单元处于 active 状态期间其 cgroup 一直存在，而加载程序在它的 `ExecStartPost` 中运行，因此路径能够解析。如果 socket 单元停止，端口本来就不再被持有；过期的 cgroup id 会让规则丢弃所有市场流量，即失败时关闭。
 - **发送方拥有该端口。** `set market_owner` 恰好保存 `plugin_endpoint` 中的 `uid . port` 组合：原生为 `type mark . inet_service`，容器为 `type uid . inet_service`。两边的规则都用 `!=` 查集合，因此不在集合中的组合一律丢弃，包括任何未映射的端口。不使用 map 查找，因为 map 中不存在的端口不会命中规则，会变成放行。
-  - 原生：在 `market_input` 中加入 `iif "lo" tcp dport $MARKET_PORTS ct mark . tcp dport != @market_owner drop`。这条规则成立，是因为 output 链对每个 UID 的每条回环连接都打上了 `ct mark set meta skuid`。
-  - 容器：在 output 链中加入 `oif "lo" tcp dport $MARKET_PORTS meta skuid . tcp dport != @market_owner drop`，位置在放行实例范围外 UID 的规则之前。
-  - 因此未映射的端口、root，以及 `dsh-router`、`dsh-identity` 等宿主机服务账户也会被拒绝。provisioner 和探测的健康检查走控制 socket，从不使用市场端口。
-- provisioner 在实例启动前添加 set 元素，并随端点行一起删除它。`network.ts` 中现有的按实例 `ct mark <uid> ... tcp dport <port> accept` 规则不用于市场端口段。
+  - 原生，在 `dsh_market` 的 input 链中：`iif "lo" tcp dport $MARKET_PORTS ct mark . tcp dport != @market_owner drop`。这条规则成立，是因为 output 链对每个 UID 的每条回环连接都打上了 `ct mark set meta skuid`。
+  - 容器，在 `dsh_market` 的 output 链中：`oif "lo" tcp dport $MARKET_PORTS meta skuid . tcp dport != @market_owner drop`。由于它是独立的 base chain，这条丢弃在 `dsh_instances` 放行实例范围外的 UID 之前就生效。
+  - 因此未映射的端口、root，以及 `dsh-router`、`dsh-identity` 等宿主机服务账户都会被拒绝。provisioner 和探测的健康检查走控制 socket，从不使用市场端口。
+- **给属主的放行。** 通过两条丢弃规则的流量仍会被原有规则丢弃，因此每种运行时各加一条放行：
+  - 原生：`renderUserNetwork` 在 `in_<uid>` 最后的 `ct mark <uid> iif "lo" counter drop` 之前加入 `ct mark <uid> iif "lo" tcp dport $MARKET_PORTS accept`。
+  - 容器：`dsh-public.nft` 在 `oif "lo" drop` 之前加入 `oif "lo" ip daddr 127.0.0.1 tcp dport $MARKET_PORTS accept`。
+  - 两条都不引用 cgroup，因此都不会加载失败。
+- **合起来。** 市场端口段由这条放行加上 `dsh_market` 中的两条丢弃共同把关：放行让任何实例账户都能到达该端口段，两条丢弃再把它收窄到端口的属主和 systemd 监听。
+- **失败时关闭。** 放行规则覆盖整个端口段，因此一旦 `dsh_market` 表缺失，一个实例账户就能访问另一个账户的端口。
+  - 探测在每次实例启动前以及每分钟检查该表、两条链，以及每个端点的 set 元素。
+  - 只要有任何一项缺失，provisioner 就在控制 socket 上报告 `firewall-state down`。`dsh-plugins` 随即不读取任何内容就关闭每条市场连接，实例在没有市场行的情况下启动。
+  - `dsh-plugins` 启动时就处于这种状态，只有在 provisioner 报告 `up` 之后才提供服务。
+- provisioner 在实例启动前添加 set 元素，并随端点行一起删除它。
 - 这改变了"容器防火墙不放按用户规则"的既有决定，但只针对市场端口段。
-- 隔离依靠这两条规则。npm bearer 令牌是纵深防御。
+- 隔离依靠这些规则。npm bearer 令牌是纵深防御。
 
 ### 路由
 
@@ -552,7 +566,7 @@ CREATE TABLE plugin_audit_outbox (
 | `GET /plugins/snapshots`（个人） | 用户 | 否 | 我的 profile 快照 |
 | `POST /plugins/restore`（个人） | 用户 | 否 | 排队恢复我的快照 |
 
-provisioner 使用的控制 socket 动词：`open`、`close`、`instance-config`（patch 行、策略、npmrc 内容）和 `reconcile-plan`。错误沿用 KB 约定：400 输入无效，403 不允许（`not-owner`、`self-approval`），404 不存在，409 状态冲突（`pending-exists`、`not-pending`、`not-approved`、`mirror-not-ready`、`artifact-mismatch`、`install-scripts`、`closure-source`、`limit-reached`、`version-exists`、`name-taken`、`no-previous`），413 过大。
+provisioner 使用的控制 socket 动词：`open`、`close`、`instance-config`（patch 行、策略、npmrc 内容）、`reconcile-plan`，以及来自探测的 `firewall-state`（`up` 或 `down`）。错误沿用 KB 约定：400 输入无效，403 不允许（`not-owner`、`self-approval`），404 不存在，409 状态冲突（`pending-exists`、`not-pending`、`not-approved`、`mirror-not-ready`、`artifact-mismatch`、`install-scripts`、`closure-source`、`limit-reached`、`version-exists`、`name-taken`、`no-previous`），413 过大。
 
 <a id="permissions-and-audit"></a>
 ## 权限与审计
@@ -627,7 +641,7 @@ provisioner 使用的控制 socket 动词：`open`、`close`、`instance-config`
 
 ### 原生部署（`integrations/public-harness/deploy/native/`）
 
-- `systemd/dsh-plugins.socket`：由安装程序根据 `ports.market` 生成，每个端口一行 `ListenStream=127.0.0.1:<port>`，`Service=dsh-plugins.service`，排在 provisioner 和所有实例单元之前。
+- `systemd/dsh-plugins.socket`：由安装程序根据 `ports.market` 生成，每个端口一行 `ListenStream=127.0.0.1:<port>`，`Service=dsh-plugins.service`，用 `ExecStartPost=-<loader>` 加载 `dsh_market` 表，排在 provisioner 和所有实例单元之前。
 - `systemd/dsh-plugins.service`：用户 `dsh-plugins`，`Sockets=dsh-plugins.socket`，为最多 4,096 个继承来的监听设 `LimitNOFILE=16384`，`RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6`，`IPAddressDeny=any`，`IPAddressAllow=localhost`，`ReadWritePaths=/var/lib/dsh-plugins /run/dsh-plugins`，采用 `dsh-quota.service` 的加固参数，`CapabilityBoundingSet=`。它与 `PrivateNetwork=yes`、只用 `AF_UNIX` 的 `dsh-kb.service` 不同，因为它要接受回环连接。
 - `systemd/dsh-plugins-fetch.socket` 和 `systemd/dsh-plugins-fetch@.service`，见[拉取服务](#store-and-mirror)。
 - `systemd/dsh-plugins-egress.service`：用户 `dsh-plugins-egress`，允许出站网络，无状态，`ProtectSystem=strict`，无 capability。
@@ -635,8 +649,9 @@ provisioner 使用的控制 socket 动词：`open`、`close`、`instance-config`
 - `config/plugins.json.example`：数据库和存储路径、`ports.market`、`egressPort`、`egress.allow`、`egress.intranet`、公司 scope、大小上限、请求有效期。`config/native.json.example` 增加 `paths.instanceMarketDir`；`config/provisioner.json.example` 增加 `ports.market`。
 - `runtime-systemd`：
   - `units.ts` 增加第二个 `--patch` 和 `NPM_CONFIG_GLOBALCONFIG`；
-  - `network.ts` 增加优先级为 `filter - 2` 的 `market_input` base chain，含 `market_listener` 子链和 `market_owner` set，`renderInputDispatch` 从不清空它们；并在 `egress_lock` 下去掉公网放行；
-  - `probe.ts` 检查这两条市场规则，以及每个端点行都有对应的 set 元素；
+  - 新增的 `market-firewall.ts` 为 socket 单元的加载程序渲染 `dsh_market` 表（优先级为 `filter - 2` 的 input 链、`market_listener` 子链和 `market_owner` set）；它不在 `network.install` 之内；
+  - `network.ts` 在 `in_<uid>` 最后的丢弃之前加入 `ct mark <uid> iif "lo" tcp dport $MARKET_PORTS accept`，并在 `egress_lock` 下去掉公网放行；
+  - `probe.ts` 检查 `dsh_market` 表、两条链和每个端点的 set 元素，provisioner 把 `firewall-state` 报告给 `dsh-plugins`；
   - `runtime.ts` 在 `network.install` 和单元启动之间加入对账步骤，写入每实例文件，并添加和删除 set 元素。
 - 防火墙规则只允许 `dsh-plugins-fetch` UID 访问 `egressPort`，并且该 UID 不能访问其他任何地址。
 
@@ -644,7 +659,8 @@ provisioner 使用的控制 socket 动词：`open`、`close`、`instance-config`
 
 - `systemd/`：`dsh-plugins.socket`、`dsh-plugins.service`、`dsh-plugins-fetch.socket`、`dsh-plugins-fetch@.service` 和 `dsh-plugins-egress.service`，沙箱与上面相同；`sysusers.conf` 和 `tmpfiles.conf` 增加同样的账户和目录。
 - `config/plugins.example.json`；`config/provisioner.example.json` 增加 `ports.market` 和 `paths.marketDir`。
-- `nftables/dsh-public.nft`：`define MARKET_PORTS`、`market_owner` 和 `egress_locked` 两个 set 及其规则、input 上的 `market_listener` 子链，以及把 `dsh-plugins-fetch` 限定为只能访问 `egressPort` 的规则。`market_owner` 的丢弃规则位于放行实例范围外 UID 的规则之前。
+- `nftables/dsh-public.nft`：`define MARKET_PORTS`、位于 `oif "lo" drop` 之前的 `oif "lo" ip daddr 127.0.0.1 tcp dport $MARKET_PORTS accept`、`egress_locked` set 及其规则，以及把 `dsh-plugins-fetch` 限定为只能访问 `egressPort` 的规则。
+- `nftables/dsh-market.nft`：`dsh_market` 表，含 `market_listener` input 子链、`market_owner` set，以及优先级为 `filter - 2` 的 output 链中的属主丢弃规则；由 socket 单元的 `ExecStartPost=-` 加载，从不随 `dsh-public.nft` 一起加载。
 - `provisioner/src/runtime.ts`：`webPatch` 用 `hostAddress` 加入 `pluginMarketRows`；`assertSafeRunArgv` 放行只读市场卷；provisioner 添加和删除 set 元素，并运行一次性对账容器。`provisioner/src/config.ts` 校验 `ports.market`。
 - `README.md` 记录改变后的决定：市场端口段存在按用户的防火墙元素。
 
@@ -675,6 +691,7 @@ provisioner 使用的控制 socket 动词：`open`、`close`、`instance-config`
 - **账户数上限。** 每个市场端口一行 `ListenStream`，每个账户一个端口，因此最多 4,096 个账户能使用市场（开放问题 9）。`dsh-plugins` 以 `LimitNOFILE=16384` 运行；第 0 阶段检查启动时间。
 - **白名单维护。** registry 把 tarball 迁到新的 CDN 主机后，在更新 `egress.allow` 之前拉取会失败。
 - **实例内同步受租户控制。** 用户可以禁用或修改它；这只影响其自己的默认安装和软限额。
+- **单独加载的市场表。** 如果 `dsh_market` 加载失败，只靠覆盖整个端口段的放行规则，任何实例账户都能访问任何市场端口；探测和 `firewall-state` 闸门让 `dsh-plugins` 保持关闭，直到该表恢复。
 - **防火墙决定改变。** 容器防火墙增加按用户的元素，provisioner 必须保持同步；过期元素在实例停止和 provisioner 启动时清除。
 
 ### 未验证项
@@ -683,7 +700,7 @@ provisioner 使用的控制 socket 动词：`open`、`close`、`instance-config`
 - **pnpm 11 的行为。** 标准 tarball 路径加 scope 映射的 registry 能否在端口变化后仍让 `pnpm-lock.yaml` 中没有 tarball URL；`NPM_CONFIG_GLOBALCONFIG` 能否提供认证令牌；peer 自动安装是否会向镜像请求 `@deepseek-ai/dsh*`；npmrc 中有无 `registry=` 时，修复如何解析重新打包的公共包名。
 - **固定产物。** pnpm 11 能否正确安装带 `bundleDependencies` 的产物，以及 `allowBuilds` 是否管控被打包依赖的脚本。证明之前，带安装脚本的版本使用兜底模式。
 - **构建默认值。** pnpm 11 在同步和对账中是否不运行 `--allow-build` 和 `allowBuilds` 之外的任何依赖构建。
-- **监听的 cgroup。** 由 PID 1 创建的监听 socket 是否位于 `init.scope`，以及 accept 出来的连接是否继承它，供 `market_listener` 子链使用。
+- **监听的 cgroup。** 监听 socket 位于 `system.slice/dsh-plugins.socket`（支持 BPF 防火墙时很可能如此）还是 `init.scope`；accept 出来的连接是否继承它；socket 单元重启后 `dsh_market` 规则是否需要重新加载。
 - **禁用安装。** 启用 HMR 时，带 `enabled: false` 的 `installBundle` 是否不启动该组合包的任何插件，之后 `setBundleEnabled` 是否能启动它们。
 - **空闲检测。** 哪个现有信号能告诉同步插件当前没有 agent 轮次在运行。
 - **安装前置条件。** 上游是否接受为 `installBundle` 增加可选的前置条件选项；本设计不需要它。
@@ -717,7 +734,9 @@ provisioner 使用的控制 socket 动词：`open`、`close`、`instance-config`
   - 存储被篡改：被修改的 blob 被隔离并返回 503。
   - `pluginMarket` 从监听端口读取个性化索引，包括 `maxBytes` 和不重定向。
 - **端到端**（原生栈，扩展 kb-stack e2e 测试框架；运行时在范围内时也覆盖容器栈）：
+  - 属主可达：两种运行时中属主账户都能连上自己的市场端口，并取得自己的索引和 packument；这是放行规则的正向用例。
   - 跨租户：两种运行时中其他账户都无法连接某用户的端口；错误令牌得到 404。
+  - 防火墙闸门：删除 `dsh_market` 后实例仍能启动，`dsh-plugins` 关闭每条市场连接，该表重新加载后恢复服务。
   - 端口劫持：`dsh-plugins` 停止时，其他账户无法绑定市场端口；socket 单元也停止时，绑定了用户 B 端口的账户收不到来自 B 的任何连接。测试覆盖实例列表的每种顺序。
   - 宿主机账户：root、`dsh-router`、`dsh-identity` 以及未映射的端口都被端口所有者规则拒绝。
   - 部门用户能看到部门上架项；其他人看不到，其产物对他们返回 404。
@@ -730,7 +749,7 @@ provisioner 使用的控制 socket 动词：`open`、`close`、`instance-config`
   - 撤销：完整流程，包括手动安装的已撤销版本在"我的插件"中的标记。
   - 构建脚本：允许的构建在同步和对账中运行；未允许的不运行。
   - `market_only` 使市场外的 registry spec 以未找到失败；`egress_lock` 阻断公网 `443` 但不影响模型调用。
-- **防火墙渲染。** `network.ts` 和 `dsh-public.nft` 的规则测试：市场链先于按实例分发执行，容器规则位于范围外放行之前；安装和移除实例后市场规则仍然存在；`dsh-plugins` 停止时 `network.install` 仍能成功；未映射的端口被 `!=` 集合查找丢弃；拉取 UID 只能访问 `egressPort`；set 元素的添加和删除；探测能发现缺失的市场规则或 set 元素。配置校验拒绝重叠、超出范围或过大的 `ports.market`。
+- **防火墙渲染。** `network.ts` 和 `dsh-public.nft` 的规则测试：市场链先于按实例分发执行，容器规则位于范围外放行之前；安装和移除实例后市场规则仍然存在；`dsh-plugins` 停止时 `network.install` 仍能成功，且从不加载 `dsh_market`；属主放行规则位于 `in_<uid>` 最后的丢弃之前和 `oif "lo" drop` 之前；加载程序在重新加载时保留 set 元素；未映射的端口被 `!=` 集合查找丢弃；拉取 UID 只能访问 `egressPort`；set 元素的添加和删除；探测能发现缺失的市场规则或 set 元素。配置校验拒绝重叠、超出范围或过大的 `ports.market`。
 - **回归。** 上游 plugin-market 和 plugin-manager 测试原样运行。
 
 <a id="phased-implementation-plan"></a>
@@ -747,7 +766,7 @@ provisioner 使用的控制 socket 动词：`open`、`close`、`instance-config`
 5. 容器：经 pasta 的 `meta skuid . tcp dport` 匹配，以及一次性对账容器。
 6. 用 git blob 构建 tarball，与 `npm pack` 产物比较。
 7. 为同步插件找到空闲信号；确认启用 HMR 时 `installBundle(..., { enabled: false })` 不启动任何插件。可选：向上游提议为 `installBundle` 增加前置条件选项。
-8. 覆盖完整端口段的 `dsh-plugins.socket`：在 `LimitNOFILE=16384` 下的启动时间；监听 socket 位于 `init.scope` 且 accept 出来的连接继承它；`dsh-plugins` 停止时 `market_listener` 子链仍能加载。
+8. 覆盖完整端口段的 `dsh-plugins.socket`：在 `LimitNOFILE=16384` 下的启动时间；监听 socket 属于哪个 cgroup，`init.scope` 和 `system.slice/dsh-plugins.socket` 两种都测；accept 出来的连接是否继承它；`dsh-plugins` 停止时 `dsh_market` 加载程序能否在 `ExecStartPost` 中正常工作；以及 socket 单元重启后规则是否需要重新加载。
 
 ### 第 1 阶段（一期）
 
@@ -761,7 +780,7 @@ provisioner 使用的控制 socket 动词：`open`、`close`、`instance-config`
 里程碑 1B，服务：
 
 1. `dsh-plugins.socket`、一一对应的端口、路由、令牌。
-2. 原生：第二个 patch、npmrc、接收方 socket 规则和端口所有者规则、探测、配置校验。
+2. 原生：第二个 patch、npmrc、单独加载的 `dsh_market` 表、`in_<uid>` 中的属主放行、探测和 `firewall-state` 闸门、配置校验。
 3. `pluginMarketRows`，以及 provisioner 的 `open` 和 `close` 调用。
 
 里程碑 1C，审核流程：

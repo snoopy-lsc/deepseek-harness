@@ -345,19 +345,33 @@ No host egress proxy exists today, so this design builds one, `dsh-plugins-egres
 
 ### Who can connect
 
-Two firewall rules guard the market range in both runtimes. Natively they live in a dedicated base chain, `market_input` (`type filter hook input priority filter - 2`), which runs before `dsh_native input`. `renderInputDispatch` flushes and refills `dsh_native input` on every instance install and removal, so rules placed there would be lost; in their own chain they survive it and do not depend on the instance order. In containers they sit in `dsh-public.nft` ahead of the existing rules.
+Market traffic must pass two drop rules and then reach one accept. In nftables an `accept` ends only the current base chain, and a packet then still traverses every later base chain, while a `drop` anywhere is final. So the drops live in their own table, and the accept sits where the existing rules would otherwise drop the traffic.
 
-- **Receiving socket.** `iif "lo" tcp dport $MARKET_PORTS jump market_listener`. The subchain `market_listener` holds `socket cgroupv2 level 1 "init.scope" return` followed by `drop`.
-  - Only `init.scope` is matched. systemd (PID 1) creates the listening sockets there, and accepted connections inherit the listener's cgroup, so the rule holds whether `dsh-plugins` is running, stopped, or restarted.
-  - The rule never names `dsh-plugins.service`. nft resolves `socket cgroupv2` paths when the rule loads (`network.ts`): with the service down, the missing cgroup would fail the whole `network.install` transaction and block every instance start, and after a restart the service would have a new cgroup id.
-  - A process in a tenant cgroup therefore cannot receive market traffic even if the socket unit has been stopped. Phase 0 item 8 confirms the listener cgroup.
+- **Own table, loaded on its own.** Both drops live in a separate table, `inet dsh_market`, with base chains at priority `filter - 2`.
+  - It is not part of the per-instance `network.install` transaction, and not part of `dsh-public.nft`. `dsh-plugins.socket` loads it with `ExecStartPost=-<loader>`, so it is loaded again on every socket unit start. The `-` prefix keeps a load failure from failing the socket unit or any instance start.
+  - The loader creates the table and the `market_owner` set if they are absent. It flushes and refills only the chains and never flushes the set, so the elements survive a reload.
+  - `renderInputDispatch`, which flushes and refills `dsh_native input` on every instance install and removal, never touches it.
+- **Receiving socket.** `iif "lo" tcp dport $MARKET_PORTS jump market_listener`. The subchain `market_listener` holds `socket cgroupv2 level <n> "<listener cgroup>" return`, followed by `drop`.
+  - Which cgroup holds the listening sockets is an assumption until phase 0 item 8 settles it. The candidate first assumed was `init.scope` (level 1), on the reasoning that PID 1 creates the sockets. It is likely wrong: with BPF firewall support, systemd creates INET listeners in a helper inside the socket unit's own cgroup, so they probably sit in `system.slice/dsh-plugins.socket`. The alternative rule is `socket cgroupv2 level 2 "system.slice/dsh-plugins.socket"`, and the loader is rendered with whichever cgroup phase 0 measures.
+  - Either way, accepted connections inherit the listener's cgroup, so the rule does not depend on whether `dsh-plugins.service` is running or has restarted.
+  - The rule never names `dsh-plugins.service`. nft resolves `socket cgroupv2` paths when the rule loads (`network.ts`). A missing service cgroup would fail the load, and a restarted service would get a new cgroup id.
+  - The socket unit's cgroup exists while the unit is active, and the loader runs from its `ExecStartPost`, so the path resolves. If the socket unit stops, its ports are no longer held, and a stale cgroup id makes the rule drop all market traffic: it fails closed.
 - **Sender owns the port.** `set market_owner` holds exactly the `uid . port` pairs of `plugin_endpoint`: `type mark . inet_service` natively and `type uid . inet_service` in containers. Both rules use a `!=` set lookup, so every pair not in the set is dropped, including any unmapped port. A map lookup is not used, because a port missing from the map would not match and would fail open.
-  - Native: `iif "lo" tcp dport $MARKET_PORTS ct mark . tcp dport != @market_owner drop` in `market_input`. This works because the output chain stamps every loopback connection with `ct mark set meta skuid`, for every UID.
-  - Container: `oif "lo" tcp dport $MARKET_PORTS meta skuid . tcp dport != @market_owner drop` in the output chain, placed before the rule that accepts UIDs outside the instance range.
-  - Unmapped ports, root, and host service accounts such as `dsh-router` and `dsh-identity` are therefore refused too. Health checks by the provisioner and the probe use the control socket, never a market port.
-- The provisioner adds the set element before the instance starts and deletes it with the endpoint row. The existing per-instance `ct mark <uid> ... tcp dport <port> accept` rule from `network.ts` is not used for the market range.
+  - Native, in the `dsh_market` input chain: `iif "lo" tcp dport $MARKET_PORTS ct mark . tcp dport != @market_owner drop`. This works because the output chain stamps every loopback connection with `ct mark set meta skuid`, for every UID.
+  - Container, in the `dsh_market` output chain: `oif "lo" tcp dport $MARKET_PORTS meta skuid . tcp dport != @market_owner drop`. Being a separate base chain, its drop applies before `dsh_instances` accepts UIDs outside the instance range.
+  - Unmapped ports, root, and host service accounts such as `dsh-router` and `dsh-identity` are therefore refused. Health checks by the provisioner and the probe use the control socket, never a market port.
+- **The accept for the owner.** Traffic that passes both drops would still be dropped by the existing rules, so each runtime adds one accept:
+  - Native: `renderUserNetwork` adds `ct mark <uid> iif "lo" tcp dport $MARKET_PORTS accept` to `in_<uid>`, before its final `ct mark <uid> iif "lo" counter drop`.
+  - Container: `dsh-public.nft` adds `oif "lo" ip daddr 127.0.0.1 tcp dport $MARKET_PORTS accept` before `oif "lo" drop`.
+  - Neither names a cgroup, so neither can fail to load.
+- **Together.** The market range is guarded jointly by this accept and the two drops in `dsh_market`: the accept admits any instance account to the range, and the drops narrow it to the owner of the port and to the systemd listener.
+- **Fail closed.** The accepts admit the whole range, so a missing `dsh_market` table would let one instance account reach another's port.
+  - The probe checks for the table, both chains, and every endpoint's set element before each instance start and every minute.
+  - While anything is missing, the provisioner reports `firewall-state down` on the control socket. `dsh-plugins` then closes every market connection without reading it, and instances start without the market rows.
+  - `dsh-plugins` starts in that state and serves only after the provisioner reports `up`.
+- The provisioner adds the set element before the instance starts and deletes it with the endpoint row.
 - This changes the recorded decision that the container firewall has no per-user rules, only for the market range.
-- Isolation rests on these two rules. The npm bearer token is defence in depth.
+- Isolation rests on these rules. The npm bearer token is defence in depth.
 
 ### Routes
 
@@ -552,7 +566,7 @@ Admin routes sit under `/api/admin` and personal routes under `/account/api/me`,
 | `GET /plugins/snapshots` (me) | user | no | My profile snapshots |
 | `POST /plugins/restore` (me) | user | no | Queue a restore of my snapshot |
 
-Control socket verbs for the provisioner: `open`, `close`, `instance-config` (patch rows, policies, npmrc content), and `reconcile-plan`. Errors use the KB convention: 400 invalid input, 403 not allowed (`not-owner`, `self-approval`), 404 not found, 409 state conflict (`pending-exists`, `not-pending`, `not-approved`, `mirror-not-ready`, `artifact-mismatch`, `install-scripts`, `closure-source`, `limit-reached`, `version-exists`, `name-taken`, `no-previous`), 413 too large.
+Control socket verbs for the provisioner: `open`, `close`, `instance-config` (patch rows, policies, npmrc content), `reconcile-plan`, and `firewall-state` (`up` or `down`, from the probe). Errors use the KB convention: 400 invalid input, 403 not allowed (`not-owner`, `self-approval`), 404 not found, 409 state conflict (`pending-exists`, `not-pending`, `not-approved`, `mirror-not-ready`, `artifact-mismatch`, `install-scripts`, `closure-source`, `limit-reached`, `version-exists`, `name-taken`, `no-previous`), 413 too large.
 
 <a id="permissions-and-audit"></a>
 ## Permissions and audit
@@ -627,7 +641,7 @@ Control socket verbs for the provisioner: `open`, `close`, `instance-config` (pa
 
 ### Native deployment (`integrations/public-harness/deploy/native/`)
 
-- `systemd/dsh-plugins.socket`, generated by the installer from `ports.market`: one `ListenStream=127.0.0.1:<port>` per port, `Service=dsh-plugins.service`, ordered before the provisioner and every instance unit.
+- `systemd/dsh-plugins.socket`, generated by the installer from `ports.market`: one `ListenStream=127.0.0.1:<port>` per port, `Service=dsh-plugins.service`, `ExecStartPost=-<loader>` for the `dsh_market` table, ordered before the provisioner and every instance unit.
 - `systemd/dsh-plugins.service`: user `dsh-plugins`, `Sockets=dsh-plugins.socket`, `LimitNOFILE=16384` for the up to 4,096 inherited listeners, `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6`, `IPAddressDeny=any`, `IPAddressAllow=localhost`, `ReadWritePaths=/var/lib/dsh-plugins /run/dsh-plugins`, the hardening set of `dsh-quota.service`, `CapabilityBoundingSet=`. It differs from `dsh-kb.service`, which has `PrivateNetwork=yes` and only `AF_UNIX`, because it accepts loopback connections.
 - `systemd/dsh-plugins-fetch.socket` and `systemd/dsh-plugins-fetch@.service`, as described in [Fetch service](#store-and-mirror).
 - `systemd/dsh-plugins-egress.service`: user `dsh-plugins-egress`, outbound network allowed, no state, `ProtectSystem=strict`, empty capabilities.
@@ -635,8 +649,9 @@ Control socket verbs for the provisioner: `open`, `close`, `instance-config` (pa
 - `config/plugins.json.example`: database and store paths, `ports.market`, `egressPort`, `egress.allow`, `egress.intranet`, company scopes, size caps, request TTL. `config/native.json.example` gains `paths.instanceMarketDir`; `config/provisioner.json.example` gains `ports.market`.
 - `runtime-systemd`:
   - `units.ts` adds the second `--patch` and `NPM_CONFIG_GLOBALCONFIG`;
-  - `network.ts` adds the `market_input` base chain at priority `filter - 2` with the `market_listener` subchain and the `market_owner` set, which `renderInputDispatch` never flushes, and under `egress_lock` drops the public accept;
-  - `probe.ts` checks both market rules and that every endpoint row has its set element;
+  - a new `market-firewall.ts` renders the `dsh_market` table (input chain at priority `filter - 2`, the `market_listener` subchain, and the `market_owner` set) for the socket unit's loader; it is outside `network.install`;
+  - `network.ts` adds `ct mark <uid> iif "lo" tcp dport $MARKET_PORTS accept` to `in_<uid>` before its final drop, and under `egress_lock` drops the public accept;
+  - `probe.ts` checks the `dsh_market` table, both chains, and every endpoint's set element, and the provisioner reports `firewall-state` to `dsh-plugins`;
   - `runtime.ts` adds the reconcile step between `network.install` and the unit start, writes the per-instance files, and adds and deletes the set element.
 - Firewall rules let only the `dsh-plugins-fetch` UID reach `egressPort`, and let that UID reach nothing else.
 
@@ -644,7 +659,8 @@ Control socket verbs for the provisioner: `open`, `close`, `instance-config` (pa
 
 - `systemd/`: `dsh-plugins.socket`, `dsh-plugins.service`, `dsh-plugins-fetch.socket`, `dsh-plugins-fetch@.service`, and `dsh-plugins-egress.service` with the same sandbox as above; `sysusers.conf` and `tmpfiles.conf` gain the same accounts and directories.
 - `config/plugins.example.json`; `config/provisioner.example.json` gains `ports.market` and `paths.marketDir`.
-- `nftables/dsh-public.nft`: `define MARKET_PORTS`, the `market_owner` and `egress_locked` sets with their rules, the `market_listener` subchain on input, and the rules that keep `dsh-plugins-fetch` to `egressPort` only. The `market_owner` drop sits before the rule that accepts UIDs outside the instance range.
+- `nftables/dsh-public.nft`: `define MARKET_PORTS`, `oif "lo" ip daddr 127.0.0.1 tcp dport $MARKET_PORTS accept` before `oif "lo" drop`, the `egress_locked` set with its rule, and the rules that keep `dsh-plugins-fetch` to `egressPort` only.
+- `nftables/dsh-market.nft`: the `dsh_market` table with the `market_listener` input subchain, the `market_owner` set, and the owner drop in an output chain at priority `filter - 2`, loaded by the socket unit's `ExecStartPost=-` and never by the `dsh-public.nft` load.
 - `provisioner/src/runtime.ts`: `webPatch` adds `pluginMarketRows` with `hostAddress`; `assertSafeRunArgv` admits the read-only market volume; the provisioner adds and removes set elements and runs the one-shot reconcile container. `provisioner/src/config.ts` validates `ports.market`.
 - `README.md` records the changed decision: per-user firewall elements exist for the market range.
 
@@ -675,6 +691,7 @@ Control socket verbs for the provisioner: `open`, `close`, `instance-config` (pa
 - **Account cap.** One `ListenStream` per market port and one port per account, so at most 4,096 accounts can use the market (open question 9). `dsh-plugins` runs with `LimitNOFILE=16384`; phase 0 checks start time.
 - **Allowlist upkeep.** A registry that moves its tarballs to a new CDN host fails fetches until `egress.allow` is updated.
 - **In-instance sync is tenant-controlled.** A user can disable or alter it; this only affects their own defaults and soft limits.
+- **Separately loaded market table.** If `dsh_market` fails to load, the range-wide accepts alone would admit any instance account to any market port; the probe and the `firewall-state` gate keep `dsh-plugins` closed until the table is back.
 - **Changed firewall decision.** The container firewall gains per-user elements, which the provisioner must keep in step; stale elements are removed at stop and at provisioner start.
 
 ### Unverified items
@@ -683,7 +700,7 @@ Control socket verbs for the provisioner: `open`, `close`, `instance-config` (pa
 - **pnpm 11 behaviour.** That standard tarball paths with a scope-mapped registry keep tarball URLs out of `pnpm-lock.yaml` across port changes; that `NPM_CONFIG_GLOBALCONFIG` supplies the auth token; whether peer auto-install asks the mirror for `@deepseek-ai/dsh*`; how a repair resolves a repacked public name with and without `registry=` in the npmrc.
 - **Pinned artifacts.** That pnpm 11 installs an artifact with `bundleDependencies` correctly, and whether `allowBuilds` governs scripts of bundled packages. Until shown, versions with install scripts use fallback mode.
 - **Build defaults.** That pnpm 11 runs no dependency build outside `--allow-build` and `allowBuilds` in both sync and reconcile.
-- **Listener cgroup.** That listening sockets created by PID 1 sit in `init.scope` and accepted connections inherit it, for the `market_listener` subchain.
+- **Listener cgroup.** Whether the listening sockets sit in `system.slice/dsh-plugins.socket` (likely, with BPF firewall support) or in `init.scope`, that accepted connections inherit it, and whether the `dsh_market` rules must be reloaded after a socket unit restart.
 - **Disabled installs.** That `installBundle` with `enabled: false` under HMR starts none of the bundle's plugins, and `setBundleEnabled` then starts them.
 - **Idle detection.** Which existing signal tells the sync plugin that no agent turn is running.
 - **Install preconditions.** Whether upstream would accept an optional precondition option on `installBundle`; the design does not need it.
@@ -717,7 +734,9 @@ No test uses real model keys or model calls. All listeners bind `127.0.0.1` or U
   - Store tampering: a modified blob is quarantined and answers 503.
   - `pluginMarket` reading the personalized index from the listener, including `maxBytes` and no redirects.
 - **End to end** (native stack, extending the kb-stack e2e harness, and the container stack where the runtime is in scope):
+  - Owner reach: in both runtimes the owner account connects to its own market port and gets its index and packuments; this is the positive case for the accept rules.
   - Cross-tenant: another account cannot connect to a user's port in either runtime; a wrong token gets 404.
+  - Firewall gate: with `dsh_market` removed, instances still start, `dsh-plugins` closes every market connection, and serving resumes after the table is reloaded.
   - Port hijack: with `dsh-plugins` stopped, another account cannot bind a market port; with the socket unit also stopped, an account that binds user B's port receives nothing from B. The test runs with every instance list order.
   - Host accounts: root, `dsh-router`, `dsh-identity`, and an unmapped port are refused by the port-owner rule.
   - A department user sees a department listing; others do not, and its artifacts answer 404 to them.
@@ -730,7 +749,7 @@ No test uses real model keys or model calls. All listeners bind `127.0.0.1` or U
   - Revoke: the full flow, including the My plugins flag for a hand-installed revoked version.
   - Build scripts: an allowed build runs in sync and reconcile; a non-allowed one does not run.
   - `market_only` makes a registry spec outside the market fail with not-found; `egress_lock` blocks public `443` but not model calls.
-- **Firewall rendering.** `network.ts` and `dsh-public.nft` rule tests: the market chain runs before the per-instance dispatch and the container rules before the out-of-range accept; the market rules survive instance install and removal; `network.install` succeeds while `dsh-plugins` is stopped; an unmapped port is dropped by the `!=` set lookup; the fetch UID reaches only `egressPort`; set element add and remove; the probe detects a missing market rule or set element. Config validators reject overlapping, out-of-range, or oversized `ports.market`.
+- **Firewall rendering.** `network.ts` and `dsh-public.nft` rule tests: the market chain runs before the per-instance dispatch and the container rules before the out-of-range accept; the market rules survive instance install and removal; `network.install` succeeds while `dsh-plugins` is stopped and never loads `dsh_market`; the owner accept sits before the final drop in `in_<uid>` and before `oif "lo" drop`; the loader keeps set elements across a reload; an unmapped port is dropped by the `!=` set lookup; the fetch UID reaches only `egressPort`; set element add and remove; the probe detects a missing market rule or set element. Config validators reject overlapping, out-of-range, or oversized `ports.market`.
 - **Regression.** The upstream plugin-market and plugin-manager tests run unchanged.
 
 <a id="phased-implementation-plan"></a>
@@ -747,7 +766,7 @@ Phase 1 is the first release (一期); phase 2 is the second (二期), as the us
 5. Container: `meta skuid . tcp dport` matching through pasta, and a one-shot reconcile container.
 6. A tarball built from git blobs compared with `npm pack` output.
 7. An idle signal for the sync plugin; that `installBundle(..., { enabled: false })` starts no plugin under HMR. Optionally, propose a precondition option on `installBundle` upstream.
-8. `dsh-plugins.socket` with the full range: start time with `LimitNOFILE=16384`; that the listening sockets sit in `init.scope` and accepted connections inherit it; that the `market_listener` subchain loads while `dsh-plugins` is stopped.
+8. `dsh-plugins.socket` with the full range: start time with `LimitNOFILE=16384`; which cgroup holds the listening sockets, testing both `init.scope` and `system.slice/dsh-plugins.socket`; that accepted connections inherit it; that the `dsh_market` loader works from `ExecStartPost` while `dsh-plugins` is stopped; and whether the rules need reloading after the socket unit restarts.
 
 ### Phase 1 (一期)
 
@@ -761,7 +780,7 @@ Milestone 1A, store and mirror:
 Milestone 1B, serving:
 
 1. `dsh-plugins.socket`, one-to-one ports, routes, tokens.
-2. Native: second patch, npmrc, receiving-socket and port-owner rules, probe, config validation.
+2. Native: second patch, npmrc, the separately loaded `dsh_market` table, the owner accept in `in_<uid>`, probe and `firewall-state` gate, config validation.
 3. `pluginMarketRows` and the provisioner `open` and `close` calls.
 
 Milestone 1C, review flow:

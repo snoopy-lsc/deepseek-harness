@@ -66,8 +66,8 @@
   en: bec9261ca9596e30
   zh: 620db9afeef55ee4
 /company-plugin-market-design/serving-instances/who-can-connect:
-  en: 524302ffc26aa949
-  zh: e9e3a2deb5056622
+  en: a5dd382624bdced3
+  zh: 3b369e402ac52542
 /company-plugin-market-design/serving-instances/routes:
   en: 7d6d342186178918
   zh: 4dd9694464dbe98d
@@ -120,8 +120,8 @@
   en: c234573c2be9f3dc
   zh: 45032a2d3d33cde1
 /company-plugin-market-design/api-list:
-  en: 9811427b41dcc0bf
-  zh: ec56613f19419bcf
+  en: a0e5d63b394515b8
+  zh: 95704608cc525a69
 /company-plugin-market-design/permissions-and-audit:
   en: 2e37972a1ac15504
   zh: 0fbfe9b67763c80b
@@ -138,11 +138,11 @@
   en: 79dca6ff09d171f5
   zh: db044567ff4d3b02
 /company-plugin-market-design/deployment-changes/native-deployment-integrations-public-harness-deploy-native:
-  en: e583c97c9caeff27
-  zh: 07bf320d03a6ad4a
+  en: a59535ce7f8316c6
+  zh: ebc9d2e5f527596e
 /company-plugin-market-design/deployment-changes/production-container-deployment-integrations-public-harness-deploy-production:
-  en: 3b7d92ebb5cab07f
-  zh: 1b1c267be4fcf59a
+  en: f37182fb681d86c7
+  zh: 8e5fb773c0933fd6
 /company-plugin-market-design/deployment-changes/startup-behaviour:
   en: 6a96cd1819300ff3
   zh: 4e091021a3f3c60e
@@ -153,23 +153,23 @@
   en: 6cd3c9e43fc2ec71
   zh: 96a4d9ea00458c40
 /company-plugin-market-design/risks-and-unverified-items/risks:
-  en: d52e2f562f30aabd
-  zh: 6b8f2ae5869df02f
+  en: 95639cd4d61cdee0
+  zh: 9fe5628dfd75539e
 /company-plugin-market-design/risks-and-unverified-items/unverified-items:
-  en: 0158630a6762544a
-  zh: f2c700683dadd8c7
+  en: e328ddad8856032b
+  zh: d2c4217621ec693e
 /company-plugin-market-design/test-plan:
-  en: b22c33cc70dcc5f6
-  zh: ca5cd9304934e6c8
+  en: e978f5d335134def
+  zh: 6463afb362d6a324
 /company-plugin-market-design/phased-implementation-plan:
   en: bf5674b7384e61b5
   zh: 5d025f8a4241deef
 /company-plugin-market-design/phased-implementation-plan/phase-0-verification-spikes:
-  en: 8ba35e882f308116
-  zh: 4f66c73b76acee07
+  en: 1895dec6acfd5af4
+  zh: 1f18f1974c130bcf
 /company-plugin-market-design/phased-implementation-plan/phase-1:
-  en: d76b7407e0fb211f
-  zh: fb0da42067f44c7a
+  en: 5d24b1115e5f8bd0
+  zh: 71b2172467524c61
 /company-plugin-market-design/phased-implementation-plan/phase-2:
   en: 6173e80d1f46e388
   zh: 31633fc0ec119770
