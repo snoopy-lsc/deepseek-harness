@@ -6,8 +6,8 @@
   en: 3861f2e781304c71
   zh: ac8da0841081f1d4
 /company-plugin-market-design/summary:
-  en: 352568af52deaf06
-  zh: 39745cffaccfab88
+  en: 93a06ea173c332b2
+  zh: 8040f25cd63a156a
 /company-plugin-market-design/contents:
   en: 03334de763a801da
   zh: dd6d28827f02316a
@@ -21,14 +21,14 @@
   en: 97a3cf5a86928304
   zh: 074c3186bd8ad860
 /company-plugin-market-design/requirements-mapping:
-  en: 20859c3a9344e45f
-  zh: 80a0fa39ce9b5812
+  en: 40214073d5dd9108
+  zh: 5d7740df11138ab1
 /company-plugin-market-design/current-system-facts:
   en: a979ea29d397adfc
   zh: 11188ab4c757f2aa
 /company-plugin-market-design/architecture-overview:
-  en: bd770ab37a349489
-  zh: bad56c3ee6ad4cc7
+  en: f80fca303195f9a6
+  zh: ad80eaa4f3dbe47b
 /company-plugin-market-design/package-kinds-and-index-extensions:
   en: e32ce2cdc78ead54
   zh: 6c91c486ac1ef631
@@ -39,53 +39,56 @@
   en: 966dbcf2bbca7a54
   zh: 6bf8e6b533d0f217
 /company-plugin-market-design/data-model:
-  en: 691157db58b54617
-  zh: 8cddd7e888417422
+  en: 4f13d9b337109060
+  zh: aebaa0cbcbbce7aa
 /company-plugin-market-design/store-egress-and-mirror:
   en: 35d470f16e064846
   zh: 23e64a2339067a35
 /company-plugin-market-design/store-egress-and-mirror/directory-layout:
   en: ddf7a5c518b4dc33
   zh: 212f77547dfba94d
+/company-plugin-market-design/store-egress-and-mirror/fetch-service:
+  en: ca80471a4ffc087a
+  zh: a714bfb63284210e
 /company-plugin-market-design/store-egress-and-mirror/egress-the-new-host-proxy-component:
-  en: be7fd4a9c94f172c
-  zh: 32cb6da071344fd1
+  en: c97863b2d5673bfe
+  zh: ce487d268fb53426
 /company-plugin-market-design/store-egress-and-mirror/mirroring-a-version:
-  en: 9a8d6c99c3e4d444
-  zh: f3be5ad96676133d
+  en: 05b1b34b95271d5d
+  zh: 9c485dd1fd1d0fea
 /company-plugin-market-design/store-egress-and-mirror/integrity-guarantees:
-  en: c4047323d80b3f7e
-  zh: 789aad8fa6c4a33e
+  en: 742cadaeddef5bec
+  zh: f5c034e4ae0d3714
 /company-plugin-market-design/serving-instances:
   en: 47de2b9b7266a9ea
   zh: 9ea5b34ae9c46895
 /company-plugin-market-design/serving-instances/listener-and-port:
-  en: b8c3d6f6c3735dd8
-  zh: a073a3c5a32599a8
+  en: ff20b11cf0052c55
+  zh: 908c59d7f2cfeffb
 /company-plugin-market-design/serving-instances/who-can-connect:
-  en: b274292c6126a55a
-  zh: 17f1b36738330571
+  en: da3f28c2583759d1
+  zh: b1006cfa3646dce4
 /company-plugin-market-design/serving-instances/routes:
   en: 7d6d342186178918
   zh: 4dd9694464dbe98d
 /company-plugin-market-design/serving-instances/how-the-instance-learns-the-url-and-token:
-  en: 58ca6534a3c58b92
-  zh: 1d582c236cc648d9
+  en: 75fd39b457bf8704
+  zh: 2990f36c99b94906
 /company-plugin-market-design/listing-flows-and-state-machine:
   en: 9afe07828c7be02e
   zh: 5723d91d8dab440a
 /company-plugin-market-design/listing-flows-and-state-machine/who-may-submit:
-  en: e67a574c806ff695
-  zh: 292f0f37fa999fa0
+  en: 368c5cb643d8165d
+  zh: 1eb16ce054d434da
 /company-plugin-market-design/listing-flows-and-state-machine/transitions:
-  en: 451bf6262fa484d6
-  zh: aaff60e00db41c5f
+  en: a3a0cc2da22a79ab
+  zh: a8d1a7ea3e3ea91f
 /company-plugin-market-design/listing-flows-and-state-machine/listing-pointer-rules:
   en: 212683df175f2e8e
   zh: 9d310ee60e28a892
 /company-plugin-market-design/listing-flows-and-state-machine/path-a-user-submission-and-administrator-approval:
-  en: 8c4832d19ae3a072
-  zh: 33dafb926aa28909
+  en: 510213ef8707b058
+  zh: b7e83f9964a53db4
 /company-plugin-market-design/listing-flows-and-state-machine/path-b-administrator-direct-listing:
   en: f136bf80098efae4
   zh: 05250b4a21a452fc
@@ -96,11 +99,11 @@
   en: 87ee3d831758e3a0
   zh: 4918cf9bbff8f835
 /company-plugin-market-design/installation-and-policy/only-allow-installing-from-the-market:
-  en: bd2ab896884d8fa9
-  zh: ab13875b43c92fec
+  en: 9e56bcfb6baa6430
+  zh: d88129bd16f5e750
 /company-plugin-market-design/installation-and-policy/install-scripts:
-  en: 970bf4a52fd6d9b6
-  zh: 86499df5af026a66
+  en: 16813fa50142e542
+  zh: 92b54ed693511e9e
 /company-plugin-market-design/default-installs-sync-and-reconcile:
   en: a909d365fb09131c
   zh: df90f9eef9d1df4a
@@ -108,20 +111,20 @@
   en: 710891e18050b38f
   zh: 4efc4b2850f7e369
 /company-plugin-market-design/default-installs-sync-and-reconcile/live-push-the-sync-plugin:
-  en: 602cc87447d98891
-  zh: e4111e3db89a431e
+  en: 68303867dfb25885
+  zh: bcaedbc3ccf0dfd3
 /company-plugin-market-design/default-installs-sync-and-reconcile/fallback-pre-start-reconcile:
-  en: 19f2052f205a7fce
-  zh: 03c1ff01219c0299
+  en: 1350bb0e2908c2b1
+  zh: f24f1faa30ad6ef0
 /company-plugin-market-design/updates-and-rollback:
   en: c234573c2be9f3dc
   zh: 45032a2d3d33cde1
 /company-plugin-market-design/api-list:
-  en: 1d36cd46e06e4832
-  zh: ba83146f4d62e736
+  en: 9811427b41dcc0bf
+  zh: ec56613f19419bcf
 /company-plugin-market-design/permissions-and-audit:
-  en: 47e1186b9d3387cd
-  zh: f370bd1fa9bbd328
+  en: 2e37972a1ac15504
+  zh: 0fbfe9b67763c80b
 /company-plugin-market-design/plugin-limits:
   en: c76eed6b6211d416
   zh: f80f5dc65ffcb36b
@@ -132,41 +135,41 @@
   en: 18d58f53db3a6473
   zh: 63b6c73cf736e46e
 /company-plugin-market-design/deployment-changes/shared-code:
-  en: 93296f7433213e8c
-  zh: 4741d1e946ccb0fa
+  en: 79dca6ff09d171f5
+  zh: db044567ff4d3b02
 /company-plugin-market-design/deployment-changes/native-deployment-integrations-public-harness-deploy-native:
-  en: 9d07c30585924119
-  zh: 82b58702773dd422
+  en: 8b9b4ca6d71abb59
+  zh: 886517edf64df8b3
 /company-plugin-market-design/deployment-changes/production-container-deployment-integrations-public-harness-deploy-production:
-  en: 7bd4db359af2d6f8
-  zh: 892f14a86f09a975
+  en: 0ec4fc66fac5803e
+  zh: 27cdf8a7c6808905
 /company-plugin-market-design/deployment-changes/startup-behaviour:
-  en: 8c30db2d657267b6
-  zh: d271d667030acad2
+  en: 6a96cd1819300ff3
+  zh: 4e091021a3f3c60e
 /company-plugin-market-design/adding-a-public-market-later:
-  en: 67e40028bf49a4d5
-  zh: 3c38ca928e4fdf66
+  en: aaf3856a0ea83117
+  zh: 3d77a43f7b21abda
 /company-plugin-market-design/risks-and-unverified-items:
   en: 6cd3c9e43fc2ec71
   zh: 96a4d9ea00458c40
 /company-plugin-market-design/risks-and-unverified-items/risks:
-  en: d780daf5a8eb9864
-  zh: 3f4426ea38cb13b1
+  en: d33ff3a777ca0c41
+  zh: a5f1ff73430cf59a
 /company-plugin-market-design/risks-and-unverified-items/unverified-items:
-  en: b423f99881469223
-  zh: b95aba29ce376493
+  en: 9c690be6577c2ecc
+  zh: 6a4538ce6b2c81a0
 /company-plugin-market-design/test-plan:
-  en: 3458d83b91b44ef3
-  zh: a51142b1d66ec388
+  en: a516a14ba1249469
+  zh: a7ee0e0be25f9419
 /company-plugin-market-design/phased-implementation-plan:
   en: bf5674b7384e61b5
   zh: 5d025f8a4241deef
 /company-plugin-market-design/phased-implementation-plan/phase-0-verification-spikes:
-  en: 5a2a9db66a841bfd
-  zh: 013d1b7694bb9c24
+  en: b1a04da7be17bc03
+  zh: c700506fd108b38d
 /company-plugin-market-design/phased-implementation-plan/phase-1:
-  en: 08b6cd53a0795726
-  zh: 35475f22d464d5c5
+  en: 05f8d99178a92054
+  zh: 4c0170ab85115984
 /company-plugin-market-design/phased-implementation-plan/phase-2:
   en: 6173e80d1f46e388
   zh: 31633fc0ec119770
