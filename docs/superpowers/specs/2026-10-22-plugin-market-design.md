@@ -366,15 +366,15 @@ Market traffic must pass two drop rules and then reach one accept. In nftables a
   - Neither names a cgroup, so neither can fail to load.
 - **Together.** The market range is guarded jointly by this accept and the two drops in `dsh_market`: the accept admits any instance account to the range, and the drops narrow it to the owner of the port and to the systemd listener.
 - **Peer check in `dsh-plugins`, the second line.** The accepts admit the whole range, so if `dsh_market` is missing, nft alone would let one instance account reach another's port. `dsh-plugins` therefore checks every connection itself, independently of any table, provisioner, or state sync:
-  - On each accept it asks the kernel for the peer socket's UID with an exact four-tuple `inet_diag` lookup over `NETLINK_SOCK_DIAG`: the client socket `127.0.0.1:<peer port> -> 127.0.0.1:<market port>`, or the `hostAddress` equivalent.
+  - On each accept it asks the kernel for the peer socket's UID with an exact four-tuple `inet_diag` lookup over `NETLINK_SOCK_DIAG`: the client socket, found by querying with the accepted socket's `getsockname` and `getpeername` swapped. Seen from the host, pasta's connections also come from `127.0.0.1`, so the same lookup serves both runtimes.
   - It compares that UID with the port's owner in `plugin_endpoint` and closes the connection at once, before reading a byte, on a mismatch, an unmapped port, or a failed lookup.
   - In containers the peer is pasta's socket, which belongs to the account UID: the same basis as the nft `meta skuid` rule.
   - `SO_PEERCRED` cannot be used, because it works only for `AF_UNIX`, not TCP. Scanning `/proc/net/tcp` is a fallback only, because it reads the whole table on every accept, which is costly with 4,096 accounts.
-  - `dsh-plugins.service` adds `AF_NETLINK` to `RestrictAddressFamilies`. That an unprivileged, sandboxed service gets the UID this way is checked in phase 0 item 9.
-- **Self-healing and exact set.** The root provisioner's probe runs before each instance start and every minute:
+  - `dsh-plugins.service` adds `AF_NETLINK` to `RestrictAddressFamilies`. That an unprivileged, sandboxed service gets the UID this way is checked in phase 0 item 9. If `inet_diag` is unavailable, the check falls back to `/proc/net/tcp`, with the same security and a higher cost per accept, which phase 0 measures. If neither works, the claim below that either line alone keeps other accounts out no longer holds: only nft and the token remain. That is a risk change that goes back to the user for a decision; the implementation does not downgrade silently.
+- **Self-healing and exact set.** The root provisioner's probe runs before each instance start and every minute. Adding or removing a set element and the probe's comparison run serialized under one provisioner lock, and the probe reads the endpoint rows and the set only after taking it:
   - If the `dsh_market` table or a chain is missing, the provisioner reruns the loader itself and refills `market_owner` from `plugin_endpoint`.
-  - It compares the set with the endpoint rows for exact equality. It deletes any extra element at once and raises a security alert, because a stale element would let an old UID reach a port that has a new owner. It adds any missing element; a missing element only shuts out that owner, so it is never treated as a global failure, and nothing closes the market for everyone.
-  - The provisioner also adds the set element before the instance starts and deletes it with the endpoint row.
+  - It compares the set with the endpoint rows for exact equality. It deletes any extra element at once, because a stale element would let an old UID reach a port that has a new owner, and raises a security alert when the same extra element is present in two consecutive probes. It adds any missing element; a missing element only shuts out that owner, so it is never treated as a global failure, and nothing closes the market for everyone.
+  - The provisioner also adds the set element before the instance starts and deletes it with the endpoint row, under the same lock. Stopping an instance does not remove its element; the endpoint row stays.
   - A restart of `nftables.service` runs `flush ruleset`, which also wipes `dsh_market`. The probe restores it within a minute, and the peer check keeps other accounts out meanwhile. Operators should not reload the ruleset on its own; the runbook says so.
 - This changes the recorded decision that the container firewall has no per-user rules, only for the market range.
 - Isolation rests on the nft rules and the peer check, either of which alone keeps other accounts off a port. The npm bearer token is defence in depth.
@@ -657,7 +657,7 @@ Control socket verbs for the provisioner: `open`, `close`, `instance-config` (pa
   - `units.ts` adds the second `--patch` and `NPM_CONFIG_GLOBALCONFIG`;
   - a new `market-firewall.ts` renders the `dsh_market` table (input chain at priority `filter - 2`, the `market_listener` subchain, and the `market_owner` set) for the socket unit's loader; it is outside `network.install`;
   - `network.ts` adds `ct mark <uid> iif "lo" tcp dport $MARKET_PORTS accept` to `in_<uid>` before its final drop, and under `egress_lock` drops the public accept;
-  - `probe.ts` checks the `dsh_market` table and both chains, reruns the loader when they are missing, and makes `market_owner` exactly equal to `plugin_endpoint`, deleting extras with an alert and adding missing elements;
+  - `probe.ts` checks the `dsh_market` table and both chains, reruns the loader when they are missing, and makes `market_owner` exactly equal to `plugin_endpoint`: it deletes extras, alerting when one is present in two consecutive probes, and adds missing elements. It runs under the same provisioner lock as element changes and reads both sides only after taking it;
   - `runtime.ts` adds the reconcile step between `network.install` and the unit start, writes the per-instance files, and adds and deletes the set element.
 - Firewall rules let only the `dsh-plugins-fetch` UID reach `egressPort`, and let that UID reach nothing else.
 
@@ -698,7 +698,7 @@ Control socket verbs for the provisioner: `open`, `close`, `instance-config` (pa
 - **Allowlist upkeep.** A registry that moves its tarballs to a new CDN host fails fetches until `egress.allow` is updated.
 - **In-instance sync is tenant-controlled.** A user can disable or alter it; this only affects their own defaults and soft limits.
 - **Separately loaded market table.** `dsh_market` can be lost, for example by `flush ruleset` when `nftables.service` restarts. Until the probe reloads and refills it, within a minute, the range-wide accepts alone would admit any instance account to any market port; the `inet_diag` peer check in `dsh-plugins` keeps them out meanwhile, and the bearer token remains behind it. A stale set element is deleted at the next probe and alerted.
-- **Changed firewall decision.** The container firewall gains per-user elements, which the provisioner must keep in step; stale elements are removed at stop and at provisioner start.
+- **Changed firewall decision.** The container firewall gains per-user elements, which the provisioner must keep in step; a stale element is removed together with its endpoint row or by the next probe, not when an instance stops.
 
 ### Unverified items
 
@@ -708,6 +708,7 @@ Control socket verbs for the provisioner: `open`, `close`, `instance-config` (pa
 - **Build defaults.** That pnpm 11 runs no dependency build outside `--allow-build` and `allowBuilds` in both sync and reconcile.
 - **Listener cgroup.** Whether the listening sockets sit in `system.slice/dsh-plugins.socket` (likely, with BPF firewall support) or in `init.scope`, that accepted connections inherit it, and whether the `dsh_market` rules must be reloaded after a socket unit restart.
 - **Disabled installs.** That `installBundle` with `enabled: false` under HMR starts none of the bundle's plugins, and `setBundleEnabled` then starts them.
+- **Peer check.** That `dsh-plugins` gets the peer UID through `inet_diag` as an unprivileged, sandboxed service, on `127.0.0.1` and through pasta, at an acceptable cost per accept, or through the `/proc/net/tcp` fallback. If neither works, the isolation claim changes and goes to the user.
 - **Idle detection.** Which existing signal tells the sync plugin that no agent turn is running.
 - **Install preconditions.** Whether upstream would accept an optional precondition option on `installBundle`; the design does not need it.
 - **Container reconcile.** The one-shot `runsc` container with the instance's volumes and network.
@@ -775,7 +776,7 @@ Phase 1 is the first release (一期); phase 2 is the second (二期), as the us
 6. A tarball built from git blobs compared with `npm pack` output.
 7. An idle signal for the sync plugin; that `installBundle(..., { enabled: false })` starts no plugin under HMR. Optionally, propose a precondition option on `installBundle` upstream.
 8. `dsh-plugins.socket` with the full range: start time with `LimitNOFILE=16384`; which cgroup holds the listening sockets, testing both `init.scope` and `system.slice/dsh-plugins.socket`; that accepted connections inherit it; that the `dsh_market` loader works from `ExecStartPost` while `dsh-plugins` is stopped; and whether the rules need reloading after the socket unit restarts.
-9. The `inet_diag` peer check from the sandboxed, unprivileged `dsh-plugins.service`: that an exact four-tuple `NETLINK_SOCK_DIAG` lookup returns the peer UID on `127.0.0.1` and through pasta, and its cost per accept.
+9. The `inet_diag` peer check from the sandboxed, unprivileged `dsh-plugins.service`: that an exact four-tuple `NETLINK_SOCK_DIAG` lookup returns the peer UID on `127.0.0.1` and through pasta, and its cost per accept. If it is unavailable, the `/proc/net/tcp` fallback and its cost per accept. If neither works, the isolation claim changes, and the result goes to the user for a decision before phase 1 relies on it.
 
 ### Phase 1 (一期)
 

@@ -366,15 +366,15 @@ CREATE TABLE plugin_audit_outbox (
   - 两条都不引用 cgroup，因此都不会加载失败。
 - **合起来。** 市场端口段由这条放行加上 `dsh_market` 中的两条丢弃共同把关：放行让任何实例账户都能到达该端口段，两条丢弃再把它收窄到端口的属主和 systemd 监听。
 - **`dsh-plugins` 中的对端校验，第二道防线。** 放行规则覆盖整个端口段，因此如果 `dsh_market` 缺失，只靠 nft 会让一个实例账户访问到另一个账户的端口。所以 `dsh-plugins` 自己校验每条连接，不依赖任何表、provisioner 或状态同步：
-  - 每次 accept 时，它通过 `NETLINK_SOCK_DIAG` 以四元组精确的 `inet_diag` 查询向内核询问对端 socket 的 UID：即客户端 socket `127.0.0.1:<对端端口> -> 127.0.0.1:<市场端口>`，或对应的 `hostAddress` 形式。
+  - 每次 accept 时，它通过 `NETLINK_SOCK_DIAG` 以四元组精确的 `inet_diag` 查询向内核询问对端 socket 的 UID：即客户端 socket，查询时把 accept 所得 socket 的 `getsockname` 和 `getpeername` 对调。从宿主机看，pasta 的连接源地址也是 `127.0.0.1`，因此两种运行时用同一种查询。
   - 它把该 UID 与 `plugin_endpoint` 中这个端口的属主比对；不一致、端口未映射或查询失败时，在读取任何字节之前立即关闭连接。
   - 在容器中，对端是 pasta 的 socket，属于账户 UID，与 nft 的 `meta skuid` 规则依据相同。
   - 不能用 `SO_PEERCRED`，因为它只对 `AF_UNIX` 有效，TCP 上拿不到。扫描 `/proc/net/tcp` 只作退路，因为每次 accept 都要读整张表，在 4,096 个账户时代价偏高。
-  - `dsh-plugins.service` 在 `RestrictAddressFamilies` 中加入 `AF_NETLINK`。非特权、带沙箱的服务能否这样取得 UID，由第 0 阶段第 9 项确认。
-- **自愈与集合完全一致。** root 身份的 provisioner 在每次实例启动前以及每分钟运行探测：
+  - `dsh-plugins.service` 在 `RestrictAddressFamilies` 中加入 `AF_NETLINK`。非特权、带沙箱的服务能否这样取得 UID，由第 0 阶段第 9 项确认。如果 `inet_diag` 不可用，就退回 `/proc/net/tcp`，安全性相同，只是每次 accept 的开销更大，由第 0 阶段测量。如果两者都不可用，下文"任一道防线单独就能挡住其他账户"的说法不再成立，只剩 nft 和令牌。这属于风险变化，要回到用户那里拍板；实现时不得悄悄降级。
+- **自愈与集合完全一致。** root 身份的 provisioner 在每次实例启动前以及每分钟运行探测。添加或删除 set 元素与探测比对在同一把 provisioner 锁下串行执行，探测在拿到锁之后才读取端点行和 set：
   - 如果 `dsh_market` 表或某条链缺失，provisioner 自己重新运行加载程序，并按 `plugin_endpoint` 重新填满 `market_owner`。
-  - 它比对该 set 与端点行是否完全相等。多出来的元素立即删除并发出安全告警，因为过期元素会让旧 UID 访问已换了属主的端口。缺失的元素则补上；元素缺失只会把那位属主挡在外面，因此从不当作全局故障，也不会让所有人的市场关闭。
-  - provisioner 还会在实例启动前添加 set 元素，并随端点行一起删除它。
+  - 它比对该 set 与端点行是否完全相等。多出来的元素立即删除，因为过期元素会让旧 UID 访问已换了属主的端口；同一个多余元素在连续两轮探测中都出现时，才发出安全告警。缺失的元素则补上；元素缺失只会把那位属主挡在外面，因此从不当作全局故障，也不会让所有人的市场关闭。
+  - provisioner 还会在同一把锁下，于实例启动前添加 set 元素，并随端点行一起删除它。实例停止不会删除其元素，因为端点行仍然存在。
   - 重启 `nftables.service` 会执行 `flush ruleset`，`dsh_market` 也会被一并清掉。探测会在一分钟内恢复它，在此期间对端校验仍把其他账户挡在外面。运维不应单独重载规则集；运维手册写明这一点。
 - 这改变了"容器防火墙不放按用户规则"的既有决定，但只针对市场端口段。
 - 隔离依靠 nft 规则和对端校验，二者任一单独都能把其他账户挡在端口之外。npm bearer 令牌是纵深防御。
@@ -657,7 +657,7 @@ provisioner 使用的控制 socket 动词：`open`、`close`、`instance-config`
   - `units.ts` 增加第二个 `--patch` 和 `NPM_CONFIG_GLOBALCONFIG`；
   - 新增的 `market-firewall.ts` 为 socket 单元的加载程序渲染 `dsh_market` 表（优先级为 `filter - 2` 的 input 链、`market_listener` 子链和 `market_owner` set）；它不在 `network.install` 之内；
   - `network.ts` 在 `in_<uid>` 最后的丢弃之前加入 `ct mark <uid> iif "lo" tcp dport $MARKET_PORTS accept`，并在 `egress_lock` 下去掉公网放行；
-  - `probe.ts` 检查 `dsh_market` 表和两条链，缺失时重新运行加载程序，并使 `market_owner` 与 `plugin_endpoint` 完全一致：删除多余元素并告警，补上缺失元素；
+  - `probe.ts` 检查 `dsh_market` 表和两条链，缺失时重新运行加载程序，并使 `market_owner` 与 `plugin_endpoint` 完全一致：删除多余元素（同一元素连续两轮探测都出现时才告警），补上缺失元素。它与元素增删使用同一把 provisioner 锁，拿到锁之后才读取两边；
   - `runtime.ts` 在 `network.install` 和单元启动之间加入对账步骤，写入每实例文件，并添加和删除 set 元素。
 - 防火墙规则只允许 `dsh-plugins-fetch` UID 访问 `egressPort`，并且该 UID 不能访问其他任何地址。
 
@@ -698,7 +698,7 @@ provisioner 使用的控制 socket 动词：`open`、`close`、`instance-config`
 - **白名单维护。** registry 把 tarball 迁到新的 CDN 主机后，在更新 `egress.allow` 之前拉取会失败。
 - **实例内同步受租户控制。** 用户可以禁用或修改它；这只影响其自己的默认安装和软限额。
 - **单独加载的市场表。** `dsh_market` 可能丢失，例如 `nftables.service` 重启时执行 `flush ruleset`。在探测于一分钟内重新加载并填满它之前，只靠覆盖整个端口段的放行规则，任何实例账户都能访问任何市场端口；这段时间由 `dsh-plugins` 中的 `inet_diag` 对端校验把它们挡在外面，其后还有 bearer 令牌。过期的 set 元素会在下一次探测时删除并告警。
-- **防火墙决定改变。** 容器防火墙增加按用户的元素，provisioner 必须保持同步；过期元素在实例停止和 provisioner 启动时清除。
+- **防火墙决定改变。** 容器防火墙增加按用户的元素，provisioner 必须保持同步；过期元素随其端点行一起删除，或由下一次探测删除，而不是在实例停止时删除。
 
 ### 未验证项
 
@@ -708,6 +708,7 @@ provisioner 使用的控制 socket 动词：`open`、`close`、`instance-config`
 - **构建默认值。** pnpm 11 在同步和对账中是否不运行 `--allow-build` 和 `allowBuilds` 之外的任何依赖构建。
 - **监听的 cgroup。** 监听 socket 位于 `system.slice/dsh-plugins.socket`（支持 BPF 防火墙时很可能如此）还是 `init.scope`；accept 出来的连接是否继承它；socket 单元重启后 `dsh_market` 规则是否需要重新加载。
 - **禁用安装。** 启用 HMR 时，带 `enabled: false` 的 `installBundle` 是否不启动该组合包的任何插件，之后 `setBundleEnabled` 是否能启动它们。
+- **对端校验。** `dsh-plugins` 作为非特权、带沙箱的服务，能否在 `127.0.0.1` 上和经 pasta 时通过 `inet_diag` 取得对端 UID，且每次 accept 的开销可接受；或者能否通过 `/proc/net/tcp` 退路取得。两者都不行时，隔离说法发生变化，要交用户决定。
 - **空闲检测。** 哪个现有信号能告诉同步插件当前没有 agent 轮次在运行。
 - **安装前置条件。** 上游是否接受为 `installBundle` 增加可选的前置条件选项；本设计不需要它。
 - **容器对账。** 使用实例卷和网络的一次性 `runsc` 容器。
@@ -775,7 +776,7 @@ provisioner 使用的控制 socket 动词：`open`、`close`、`instance-config`
 6. 用 git blob 构建 tarball，与 `npm pack` 产物比较。
 7. 为同步插件找到空闲信号；确认启用 HMR 时 `installBundle(..., { enabled: false })` 不启动任何插件。可选：向上游提议为 `installBundle` 增加前置条件选项。
 8. 覆盖完整端口段的 `dsh-plugins.socket`：在 `LimitNOFILE=16384` 下的启动时间；监听 socket 属于哪个 cgroup，`init.scope` 和 `system.slice/dsh-plugins.socket` 两种都测；accept 出来的连接是否继承它；`dsh-plugins` 停止时 `dsh_market` 加载程序能否在 `ExecStartPost` 中正常工作；以及 socket 单元重启后规则是否需要重新加载。
-9. 在带沙箱的非特权 `dsh-plugins.service` 中做 `inet_diag` 对端校验：四元组精确的 `NETLINK_SOCK_DIAG` 查询能否在 `127.0.0.1` 上以及经 pasta 时返回对端 UID，以及每次 accept 的开销。
+9. 在带沙箱的非特权 `dsh-plugins.service` 中做 `inet_diag` 对端校验：四元组精确的 `NETLINK_SOCK_DIAG` 查询能否在 `127.0.0.1` 上以及经 pasta 时返回对端 UID，以及每次 accept 的开销。不可用时，测 `/proc/net/tcp` 退路及其每次 accept 的开销。两者都不行时，隔离说法发生变化，结果要先交用户决定，第 1 阶段才能依赖它。
 
 ### 第 1 阶段（一期）
 
