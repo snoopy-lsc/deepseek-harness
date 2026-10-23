@@ -1,0 +1,33 @@
+/** Personal My plugins copy (en/zh), merged into the personal center dictionaries (keys start with `plg_`). */
+export const pluginsCopy = {
+  en: {
+    plg_title: 'My plugins',
+    plg_submit: 'Submit a version', plg_submitTitle: 'Submit a plugin version', plg_submitHint: 'Company-scoped packages only. An administrator reviews the mirrored artifact before listing.',
+    plg_name: 'Package name', plg_version: 'Version', plg_source: 'Source', plg_source_npm: 'npm', plg_source_git: 'git', plg_source_upload: 'upload',
+    plg_registry: 'Registry URL', plg_gitUrl: 'Git URL', plg_gitCommit: 'Commit', plg_gitPath: 'Path (optional)', plg_note: 'Note for the reviewer (optional)',
+    plg_send: 'Submit', plg_cancel: 'Cancel', plg_submitted: 'Submitted for review.',
+    plg_none: 'You have not submitted any plugins yet.', plg_withdraw: 'Withdraw', plg_delistAsk: 'Ask to delist',
+    plg_state_pending: 'Pending', plg_state_approved: 'Approved', plg_state_rejected: 'Rejected', plg_state_withdrawn: 'Withdrawn', plg_state_expired: 'Expired', plg_state_revoked: 'Revoked',
+    plg_mirror: 'Mirror: {state}', plg_rejected: 'Rejected: {reason}', plg_versionLabel: 'Version {version}',
+    plg_defaults: 'My defaults', plg_noDefaults: 'No company defaults apply to you.', plg_defaultState: 'State: {state}', plg_reenable: 'Re-enable',
+    plg_revokedFlag: 'A version you use was revoked; restart to apply changes.', plg_restartNotice: 'Restart your instance to apply market changes.',
+    plg_snapshots: 'Profile snapshots', plg_noSnapshots: 'No snapshots yet.', plg_restore: 'Restore', plg_restored: 'Restore queued.',
+    plg_snapshotAt: 'Saved {date}', plg_loading: 'Loading…', plg_failed: 'Something went wrong. Try again.', plg_done: 'Done.',
+    plg_unavailable: 'The plugin market is not available on this deployment.',
+  },
+  zh: {
+    plg_title: '我的插件',
+    plg_submit: '提交版本', plg_submitTitle: '提交插件版本', plg_submitHint: '仅限公司作用域的包。管理员审核镜像制品后才会上架。',
+    plg_name: '包名', plg_version: '版本', plg_source: '来源', plg_source_npm: 'npm', plg_source_git: 'git', plg_source_upload: '上传',
+    plg_registry: 'Registry URL', plg_gitUrl: 'Git URL', plg_gitCommit: 'Commit', plg_gitPath: '路径（可选）', plg_note: '给审核人的说明（可选）',
+    plg_send: '提交', plg_cancel: '取消', plg_submitted: '已提交审核。',
+    plg_none: '你还没有提交过插件。', plg_withdraw: '撤回', plg_delistAsk: '申请下架',
+    plg_state_pending: '待审核', plg_state_approved: '已批准', plg_state_rejected: '已驳回', plg_state_withdrawn: '已撤回', plg_state_expired: '已过期', plg_state_revoked: '已吊销',
+    plg_mirror: '镜像：{state}', plg_rejected: '已驳回：{reason}', plg_versionLabel: '版本 {version}',
+    plg_defaults: '我的默认安装', plg_noDefaults: '当前没有适用于你的公司默认安装。', plg_defaultState: '状态：{state}', plg_reenable: '重新启用',
+    plg_revokedFlag: '你使用的某个版本已被吊销；请重启以应用变更。', plg_restartNotice: '请重启实例以应用市场变更。',
+    plg_snapshots: '配置快照', plg_noSnapshots: '还没有快照。', plg_restore: '恢复', plg_restored: '已加入恢复队列。',
+    plg_snapshotAt: '保存于 {date}', plg_loading: '加载中…', plg_failed: '操作失败，请重试。', plg_done: '已完成。',
+    plg_unavailable: '此部署未提供插件市场。',
+  },
+}

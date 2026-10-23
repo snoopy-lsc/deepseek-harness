@@ -6,6 +6,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import { createAccountApi, loadProfile, type AccountApi, type AccountProfile } from './me.ts'
 import { createKbApi, type KbApi } from './kb-api.ts'
+import { createPluginsApi, type PluginsApi } from './plugins-api.ts'
 import { PersonalCenter, personalDictionaries } from './personal.tsx'
 import { ADMIN_PANEL, AdminIcon, PROFILE_PANEL, ProfileIcon, navDictionaries } from './nav.tsx'
 import { AdminMenu, AdminPage, adminDictionaries, createSectionState } from './admin.tsx'
@@ -24,12 +25,12 @@ export const SETTINGS_TRIGGER = '[data-slot="sidebar.settings"] button[aria-hasp
  * @param profile - the signed-in profile.
  * @returns disposers for every registration.
  */
-export function registerEntries(ctx: Context, profile: AccountProfile, api: AccountApi = createAccountApi(), admin: AdminApi = createAdminApi(), kb: KbApi = createKbApi()): Array<() => void> {
+export function registerEntries(ctx: Context, profile: AccountProfile, api: AccountApi = createAccountApi(), admin: AdminApi = createAdminApi(), kb: KbApi = createKbApi(), plugins: PluginsApi = createPluginsApi()): Array<() => void> {
   const t = ctx.locale.bind(NS)
   // Appearance and language live in the Harness settings dialog; pressing its own trigger opens it, so no settings UI is duplicated here.
   const openSettings = () => { globalThis.document?.querySelector<HTMLElement>(SETTINGS_TRIGGER)?.click() }
   const off = [
-    ctx.slots.register({ name: 'main', key: PROFILE_PANEL, locale: 'publicHarnessPersonal', inject: () => ({ profile, api, kb, openSettings }) }, PersonalCenter),
+    ctx.slots.register({ name: 'main', key: PROFILE_PANEL, locale: 'publicHarnessPersonal', inject: () => ({ profile, api, kb, plugins, openSettings }) }, PersonalCenter),
     ctx.slots.register({ name: 'sidebar.panellist', id: PROFILE_PANEL, order: 80, locale: NS, label: () => t('profile') }, ProfileIcon),
     ctx.slots.register({ name: 'shell.overlay', id: 'team.over-limit', locale: 'publicHarness', inject: () => ({ api }) }, OverLimitNotice),
   ]

@@ -80,6 +80,48 @@ export interface AdminKbPreview { readonly user: { readonly id: string; readonly
 /** What the quota proxy does when a user reaches the personal daily limit. */
 export type OverLimitMode = 'block' | 'grace' | 'warn'
 
+
+/** Plugin market scope: whole company or one group. */
+export type PluginScopeEntry = { readonly kind: 'company'; readonly target: '*' } | { readonly kind: 'group'; readonly target: string }
+export type PluginLimitName = 'max_submissions' | 'max_submission_bytes'
+export interface AdminPluginRequest {
+  readonly id: string; readonly packageId: string; readonly name: string; readonly version: string
+  readonly submittedBy: string; readonly submittedByEmail: string | null; readonly submittedAt: number
+  readonly note: string | null; readonly state: 'pending' | 'approved' | 'rejected' | 'withdrawn' | 'expired'
+  readonly mirrorState?: string; readonly artifactSha512?: string | null; readonly reason?: string | null
+}
+export interface AdminPluginRequestDetail {
+  readonly request: AdminPluginRequest
+  readonly files: ReadonlyArray<{ readonly path: string; readonly bytes: number }>
+  readonly installScripts?: readonly string[]
+  readonly allowedBuilds?: readonly string[]
+  readonly digest?: string | null
+}
+export interface AdminPluginFile { readonly path: string; readonly bytes: number; readonly text: string | null; readonly binary: boolean }
+export interface AdminPlugin {
+  readonly packageId: string; readonly name: string; readonly listed: boolean
+  readonly currentVersion?: string | null; readonly previousVersion?: string | null
+  readonly currentVersionId?: string | null; readonly previousVersionId?: string | null
+  readonly scopes: readonly PluginScopeEntry[]; readonly applyCount?: number
+  readonly defaults?: ReadonlyArray<{ readonly scope: PluginScopeEntry }>
+}
+export interface AdminPluginPolicy { readonly market_only: boolean; readonly install_scripts: boolean; readonly egress_lock: boolean }
+export interface AdminPluginLimits {
+  readonly global: Partial<Record<PluginLimitName, number | null>>
+  readonly overrides: ReadonlyArray<{ readonly scope: { readonly type: 'global' | 'group' | 'user'; readonly id: string; readonly email?: string | null }; readonly values: Partial<Record<PluginLimitName, number | null>> }>
+}
+export interface AdminPluginEffective {
+  readonly user: { readonly id: string; readonly email: string | null }
+  readonly limits: Record<PluginLimitName, { readonly value: number | null; readonly source: string }>
+}
+export type PluginLimitScope = { readonly type: 'global' | 'group' | 'user'; readonly id: string }
+export type PluginUploadBody = {
+  readonly name: string; readonly version: string
+  readonly source: { readonly type: 'npm'; readonly registry: string; readonly name: string; readonly version: string }
+    | { readonly type: 'git'; readonly url: string; readonly commit: string; readonly name: string; readonly version: string; readonly path?: string }
+    | { readonly type: 'upload'; readonly name: string; readonly version: string }
+  readonly scope: PluginScopeEntry; readonly allowedBuilds?: readonly string[]
+}
 /** A refused call; `method` says how to re-authenticate when `code` is `reauth-required` or `reauth`. */
 export class AdminApiError extends Error {
   constructor(readonly status: number, readonly code: string, readonly method?: 'password' | 'sso') { super(code) }
@@ -139,6 +181,27 @@ export interface AdminApi {
   setKbLimit(scope: KbLimitScope, name: KbLimitName, value: number | null, proof?: Proof): Promise<AdminKbLimits>
   deleteKbLimit(scope: KbLimitScope, name: KbLimitName, proof?: Proof): Promise<AdminKbLimits>
   kbEffective(userId: string): Promise<AdminKbEffective>
+  pluginInventory(): Promise<{ plugins: readonly AdminPlugin[] }>
+  pluginRequests(state: 'pending' | 'all'): Promise<readonly AdminPluginRequest[]>
+  pluginRequestDetail(id: string): Promise<AdminPluginRequestDetail>
+  pluginRequestFile(id: string, path: string): Promise<AdminPluginFile>
+  approvePlugin(id: string, scope: PluginScopeEntry, expectedArtifactSha512: string, allowedBuilds?: readonly string[], proof?: Proof): Promise<void>
+  rejectPlugin(id: string, reason: string): Promise<void>
+  uploadPlugin(body: PluginUploadBody, proof?: Proof): Promise<void>
+  setPluginScope(packageId: string, scopes: readonly PluginScopeEntry[], proof?: Proof): Promise<void>
+  rollbackPlugin(packageId: string, proof?: Proof): Promise<void>
+  delistPlugin(packageId: string, reason: string | undefined, proof?: Proof): Promise<void>
+  relistPlugin(packageId: string, proof?: Proof): Promise<void>
+  revokePlugin(versionId: string, reason: string | undefined, proof?: Proof): Promise<void>
+  setPluginDefaults(body: { packageId: string; scope: PluginScopeEntry; enabled: boolean }, proof?: Proof): Promise<void>
+  resetPluginDefaults(body: { packageId: string; scope: PluginScopeEntry }, proof?: Proof): Promise<void>
+  pluginPolicy(): Promise<AdminPluginPolicy>
+  setPluginPolicy(policy: AdminPluginPolicy, proof?: Proof): Promise<AdminPluginPolicy>
+  pluginLimits(): Promise<AdminPluginLimits>
+  setPluginLimit(scope: PluginLimitScope, name: PluginLimitName, value: number | null, proof?: Proof): Promise<AdminPluginLimits>
+  deletePluginLimit(scope: PluginLimitScope, name: PluginLimitName, proof?: Proof): Promise<AdminPluginLimits>
+  pluginEffective(userId: string): Promise<AdminPluginEffective>
+  restorePlugin(userId: string, snapshotId: string, proof?: Proof): Promise<void>
   /** Raw JSON call for the knowledge-base client (same error handling). */
   call(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown): Promise<unknown>
 }
@@ -218,6 +281,32 @@ export function createAdminApi(fetcher?: typeof fetch): AdminApi {
     setKbLimit: async (scope, name, value, p) => await request('/kb/limits', { scope, name, value, ...proof(p) }, 'PUT') as AdminKbLimits,
     deleteKbLimit: async (scope, name, p) => await request('/kb/limits', { scope, name, ...proof(p) }, 'DELETE') as AdminKbLimits,
     kbEffective: async user => await request(`/kb/limits/effective${qs({ user })}`) as AdminKbEffective,
+    pluginInventory: async () => {
+      const body = await request('/plugins') as { plugins?: AdminPlugin[]; packages?: AdminPlugin[] }
+      return { plugins: body.plugins ?? body.packages ?? [] }
+    },
+    pluginRequests: async state => (await request(`/plugins/requests${qs({ state })}`) as { requests: AdminPluginRequest[] }).requests,
+    pluginRequestDetail: async id => await request(`/plugins/requests/detail${qs({ id })}`) as AdminPluginRequestDetail,
+    pluginRequestFile: async (id, path) => await request(`/plugins/requests/file${qs({ id, path })}`) as AdminPluginFile,
+    approvePlugin: async (id, scope, expectedArtifactSha512, allowedBuilds, p) => {
+      await request('/plugins/requests/approve', { id, scope, expectedArtifactSha512, ...allowedBuilds ? { allowedBuilds } : {}, ...proof(p) })
+    },
+    rejectPlugin: async (id, reason) => { await request('/plugins/requests/reject', { id, reason }) },
+    uploadPlugin: async (body, p) => { await request('/plugins/upload', { ...body, ...proof(p) }) },
+    setPluginScope: async (packageId, scopes, p) => { await request('/plugins/scope', { packageId, scopes, ...proof(p) }) },
+    rollbackPlugin: async (packageId, p) => { await request('/plugins/rollback', { packageId, ...proof(p) }) },
+    delistPlugin: async (packageId, reason, p) => { await request('/plugins/delist', { packageId, ...reason ? { reason } : {}, ...proof(p) }) },
+    relistPlugin: async (packageId, p) => { await request('/plugins/relist', { packageId, ...proof(p) }) },
+    revokePlugin: async (versionId, reason, p) => { await request('/plugins/revoke', { versionId, ...reason ? { reason } : {}, ...proof(p) }) },
+    setPluginDefaults: async (body, p) => { await request('/plugins/defaults', { ...body, ...proof(p) }) },
+    resetPluginDefaults: async (body, p) => { await request('/plugins/defaults/reset', { ...body, ...proof(p) }) },
+    pluginPolicy: async () => await request('/plugins/policy') as AdminPluginPolicy,
+    setPluginPolicy: async (policy, p) => await request('/plugins/policy', { ...policy, ...proof(p) }, 'PUT') as AdminPluginPolicy,
+    pluginLimits: async () => await request('/plugins/limits') as AdminPluginLimits,
+    setPluginLimit: async (scope, name, value, p) => await request('/plugins/limits', { scope, name, value, ...proof(p) }, 'PUT') as AdminPluginLimits,
+    deletePluginLimit: async (scope, name, p) => await request('/plugins/limits', { scope, name, ...proof(p) }, 'DELETE') as AdminPluginLimits,
+    pluginEffective: async user => await request(`/plugins/limits/effective${qs({ user })}`) as AdminPluginEffective,
+    restorePlugin: async (userId, snapshotId, p) => { await request('/plugins/restore', { userId, snapshotId, ...proof(p) }) },
     call: (method, path, body) => request(path, body, method),
   }
 }

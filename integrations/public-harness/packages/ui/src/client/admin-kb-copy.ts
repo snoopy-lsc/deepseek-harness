@@ -1,5 +1,6 @@
 /** System Admin copy for groups and knowledge bases, merged into the administration dictionaries. */
 import { kbAdminCopy } from './admin-kb-text.ts'
+import { pluginAdminCopy } from './admin-plugins-text.ts'
 export const groupAdminCopy = {
   en: {
     groups: 'Groups', groupNew: 'New local group', groupNewHint: 'Local groups are managed here; departments and groups from the company directory refresh at sign-in and reconciliation.',
@@ -10,6 +11,7 @@ export const groupAdminCopy = {
     groupLocalMembersHint: 'Adding or removing members may change who can read group-scoped knowledge bases.', groupSyncedMembersHint: 'Members come from the company directory and cannot be edited here.',
     groupNoMembers: 'No members.', groupAdd: 'Add member', userGroups: 'Groups: {groups}',
     ...kbAdminCopy.en,
+    ...pluginAdminCopy.en,
   },
   zh: {
     groups: '用户组', groupNew: '新建本地用户组', groupNewHint: '本地用户组在此管理；企业目录中的部门和用户组会在登录和目录同步时刷新。',
@@ -20,5 +22,6 @@ export const groupAdminCopy = {
     groupLocalMembersHint: '增删成员可能改变谁能阅读按用户组共享的知识库。', groupSyncedMembersHint: '成员来自企业目录，不能在此编辑。',
     groupNoMembers: '没有成员。', groupAdd: '添加成员', userGroups: '用户组：{groups}',
     ...kbAdminCopy.zh,
+    ...pluginAdminCopy.zh,
   },
 }
