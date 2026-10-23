@@ -135,6 +135,19 @@ function pendingExists(db: PluginsDbHandle, packageId: string): boolean {
   ).get(packageId) !== undefined
 }
 
+
+function countUserSubmissionBytesLocal(db: PluginsDbHandle, userId: string): number {
+  const row = db.db.prepare(
+    `SELECT COALESCE(SUM(v.size_bytes), 0) AS n
+     FROM plugin_version v
+     JOIN plugin_package p ON p.id = v.package_id
+     WHERE p.owner_user_id = ?
+       AND v.size_bytes IS NOT NULL
+       AND v.state IN ('pending', 'approved', 'revoked')`,
+  ).get(userId) as { n: number }
+  return Number(row.n)
+}
+
 /** Packages the user owns that are pending or currently listed (design max_submissions). */
 function countUserSubmissions(db: PluginsDbHandle, userId: string): number {
   const row = db.db.prepare(
@@ -231,6 +244,16 @@ export function submitPluginVersion(input: SubmitInput): SubmitResult {
 
     const versionId = newId('plv')
     const sizeBytes = input.source.type === 'upload' ? (input.source.sizeBytes ?? null) : null
+    if (
+      sizeBytes != null
+      && input.limits?.maxSubmissionBytes != null
+      && sizeBytes > 0
+    ) {
+      const used = countUserSubmissionBytesLocal(input.db, input.userId) + sizeBytes
+      if (used > input.limits.maxSubmissionBytes) {
+        throw new SubmitError('limit-reached', 'max_submission_bytes')
+      }
+    }
     input.db.db.prepare(`INSERT INTO plugin_version
       (id, package_id, version, source, state, mirror_state, mirror_error, artifact_sha512,
        upstream_integrity, size_bytes, engines_dsh, install_scripts, allowed_builds,

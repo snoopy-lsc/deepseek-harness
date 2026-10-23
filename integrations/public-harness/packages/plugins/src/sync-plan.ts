@@ -5,6 +5,7 @@
 import { defaultsVisibleToUser } from './defaults.ts'
 import { compareSemVerDescending } from './index-builder.ts'
 import type { PluginsDbHandle } from './migrate.ts'
+import { overLimit, type EffectivePluginLimits } from './limits.ts'
 
 export type SyncAction = 'install' | 'update' | 'downgrade'
 
@@ -76,6 +77,8 @@ export interface ApplySyncReportResult {
   readonly userManaged: readonly string[]
   readonly installed: readonly string[]
   readonly installedCount: number
+  /** True when installedCount exceeds max_installed (defaults may push past the cap). */
+  readonly overLimitDefaults?: boolean
 }
 
 export interface BuildSyncPlanInput {
@@ -90,6 +93,8 @@ export interface ApplySyncReportInput {
   readonly groups: ReadonlySet<string>
   readonly report: SyncReport
   readonly now?: number
+  /** When set, record overLimitDefaults if installedCount exceeds max_installed. */
+  readonly limits?: EffectivePluginLimits
 }
 
 export interface ReconcilePlanInput {
@@ -379,6 +384,8 @@ export function applySyncReport(input: ApplySyncReportInput): ApplySyncReportRes
     }
 
     const installedCount = report.installed.length
+    const overLimitDefaults = input.limits !== undefined
+      && overLimit(input.limits.max_installed, installedCount)
     const lastReport = JSON.stringify({
       at: now,
       installedCount,
@@ -386,13 +393,17 @@ export function applySyncReport(input: ApplySyncReportInput): ApplySyncReportRes
       failed,
       userManaged,
       installed: installedNames,
+      ...(overLimitDefaults ? { overLimitDefaults: true } : {}),
     })
     input.db.db.prepare(
       'UPDATE plugin_endpoint SET last_report = ? WHERE user_id = ?',
     ).run(lastReport, input.userId)
 
     input.db.db.exec('COMMIT')
-    return { optedOut, failed, userManaged, installed: installedNames, installedCount }
+    return {
+      optedOut, failed, userManaged, installed: installedNames, installedCount,
+      ...(overLimitDefaults ? { overLimitDefaults: true as const } : {}),
+    }
   } catch (error) {
     try { input.db.db.exec('ROLLBACK') } catch { /* ignore */ }
     throw error

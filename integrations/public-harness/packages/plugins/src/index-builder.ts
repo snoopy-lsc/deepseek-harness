@@ -34,6 +34,8 @@ export interface PersonalizedMarketPlugin {
     readonly sortKeys: Readonly<Record<string, number>>
   }
   readonly versions: readonly PersonalizedMarketVersion[]
+  /** Best-effort: last sync/reconcile report is at max_installed and this package is not yet installed. */
+  readonly 'x-dsh-at-limit'?: true
 }
 
 export interface PersonalizedMarketVersion {

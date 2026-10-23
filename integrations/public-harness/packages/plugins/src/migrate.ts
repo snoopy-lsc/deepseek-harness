@@ -12,6 +12,15 @@ export interface PluginsDbHandle {
 export function migratePluginsDb(db: DatabaseSync): void {
   db.exec('PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;')
   db.exec(PLUGIN_SCHEMA_SQL)
+  // Q12 defaults (design): max_installed 50, max_submissions 20, max_submission_bytes 1 GiB.
+  const seed = db.prepare(
+    `INSERT OR IGNORE INTO dsh_plugin_limit (scope_type, scope_id, name, value, updated_by, updated_at)
+     VALUES ('global', '*', ?, ?, 'seed', ?)`,
+  )
+  const now = Date.now()
+  seed.run('max_installed', 50, now)
+  seed.run('max_submissions', 20, now)
+  seed.run('max_submission_bytes', 1024 ** 3, now)
 }
 
 export interface PackageInsert {

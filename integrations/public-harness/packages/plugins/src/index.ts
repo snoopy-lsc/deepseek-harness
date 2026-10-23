@@ -253,6 +253,42 @@ export {
   type IndexCacheEntry,
 } from './index-builder.ts'
 
+
+export {
+  PLUGIN_LIMIT_NAMES,
+  DEFAULT_PLUGIN_LIMITS,
+  PLUGIN_LIMIT_RANGE,
+  PluginLimitError,
+  seedPluginLimits,
+  listPluginLimitRows,
+  listPluginLimits,
+  effectivePluginLimits,
+  setPluginLimit,
+  deletePluginLimit,
+  countUserSubmissions,
+  countUserSubmissionBytes,
+  installedCountFromReport,
+  installedNamesFromReport,
+  assertSubmissionWithinLimits,
+  packumentAllowed,
+  markIndexAtLimit,
+  handlePluginLimitsAdmin,
+  atLimit,
+  overLimit,
+  type PluginLimitName,
+  type PluginLimitRow,
+  type EffectivePluginLimits,
+  type PluginLimitsView,
+  type PluginEffectiveView,
+  type PluginLimitErrorCode,
+  type SetPluginLimitInput,
+  type DeletePluginLimitInput,
+  type AssertSubmissionLimitsInput,
+  type HandlePluginLimitsAdminInput,
+  type PluginLimitsAdminActor,
+  type EffectiveLimit,
+} from './limits.ts'
+
 export {
   PKG_TIMEOUT_MS,
   TOTAL_TIMEOUT_MS,

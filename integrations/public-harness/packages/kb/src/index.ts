@@ -20,6 +20,7 @@ export { parseScope, publishSnapshot, REQUEST_TTL_MS, shareModule } from './shar
 export { applyView, reconcileViews, visibleEntries, type ViewEntry } from './views.ts'
 export { orgModule, orgPrincipal } from './org.ts'
 export { limitsModule, LIMIT_RANGE } from './limits-admin.ts'
+export { effectiveLimits, atLimit, overLimit, type EffectiveLimit, type EffectiveLimits, type LimitRowLike } from './limits.ts'
 export { createMessagesModel, createMockModel, ModelError, type KbModel } from './model.ts'
 
 /** Service settings. */
