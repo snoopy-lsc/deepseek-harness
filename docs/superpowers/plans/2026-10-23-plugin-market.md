@@ -336,14 +336,77 @@ Package home remains `integrations/public-harness/packages/plugins/`. Identity g
 
 **1C exit:** every transition-table row + refusal code tested; department visibility; reauth on approve/upload/scope/rollback/delist/revoke; admin + My plugins pages present.
 
-## Milestone 1D: defaults and updates (outline)
+## Milestone 1D: defaults and updates (TDD)
 
-**Create / modify:**
-- `packages/plugin-sync/` — `public-harness-plugin-sync`; sync-log; install `enabled:false` → re-check → `setBundleEnabled`; user-removed rule.
-- Reconcile entry + provisioner pre-start unit (flags from P0.4).
-- Snapshots under `~/.dsh-market/snapshots/`.
+Server side stays in `integrations/public-harness/packages/plugins/` (`plugin_default` / `plugin_default_state`, `GET /sync`, `POST /sync/report`, `reconcile-plan`, reconcile entry). In-instance sync lives in new `packages/plugin-sync/` (`public-harness-plugin-sync`). Design: § Default installs, sync, and reconcile; Updates and rollback; API `/sync` `/sync/report`. P0.7: gate on agent `status: 'idle'` (not `idleWatchdog`). P0.4: pnpm ignore flags OK; live systemd slice / `IPAddressAllow` still **blocked** — unit-text / argv fixtures only (same pattern as 1B). Container one-shot reconcile stays in **1E**.
 
-**Acceptance:** CLI/hand-edit uninstall not reinstalled; remove+install failure recovers; integrity mismatch never enables; idle gate uses P0.7 signal.
+### Task 1D.1: Defaults CRUD + state
+
+**Files:** Create `packages/plugins/src/defaults.ts`, `tests/defaults.spec.ts`; export from `index.ts`.
+
+**Interfaces:** `setDefault` / `clearDefault` / `resetDefault` (admin) / `reenableDefault` (me) — write `plugin_default` for company or group targets; `reset_at` clears opt-outs older than it; `plugin_default_state` values `installed` | `pending` | `failed` | `opted-out` | `user-managed`; a user's default set is every default visible to them (same visibility as listings); delisted packages stop installing as defaults; apply-count helpers for admin. Wire control handlers behind identity routes already stubbed in 1C.4/1C.5 (`POST /plugins/defaults`, `/defaults/reset`, me `/defaults/reenable`).
+
+- [ ] **1. Write failing tests:** set/clear company and group defaults; visibility filter; reset clears opted-out; re-enable restores pending/installed path; delisted refuse / stop; state stubs.
+- [ ] **2. Run** `pnpm --dir integrations/public-harness/packages/plugins test -- defaults.spec.ts`; expect fail.
+- [ ] **3. Implement** `defaults.ts` (+ exports / control wiring as needed).
+- [ ] **4. Verify** pass; commit `feat(plugins): default installs set clear reset reenable`.
+
+### Task 1D.2: Sync plan + report API
+
+**Files:** Create `packages/plugins/src/sync-plan.ts`, `tests/sync-plan.spec.ts`; wire `GET /sync` and `POST /sync/report` on the market HTTP server; expose control-socket `reconcile-plan(userId)`.
+
+**Interfaces:** `buildSyncPlan(userId)` → `{ entries: [{ name, version, fromVersion, sha512, action, allowedBuilds }], ... }` with `action` in `install` | `update` | `downgrade` (plan is a request, not an order); `applySyncReport(userId, report)` derives `opted-out` **only** from `user-removed` op-log records, marks open/failed applies as `failed`, derives `user-managed` and installed count for `max_installed`; `reconcilePlan(userId)` returns the same plan shape for the provisioner (`name@exact-semver` + sha512 + registry = that user's `ports.market` on `127.0.0.1` / `hostAddress`). Bearer + peer checks already from 1B apply.
+
+- [ ] **1. Write failing tests:** plan actions for new / newer / rolled-back defaults; skip opted-out / user-managed; report maps user-removed → opted-out only; bad registry rejected for reconcile-plan.
+- [ ] **2. Run** focused sync-plan tests; expect fail.
+- [ ] **3. Implement** plan builder, report apply, route + control verb wiring.
+- [ ] **4. Verify** pass; commit `feat(plugins): sync plan report and reconcile-plan`.
+
+### Task 1D.3: plugin-sync apply core
+
+**Files:** Create `integrations/public-harness/packages/plugin-sync/` (`public-harness-plugin-sync`); `src/{oplog.ts,apply.ts,index.ts}`, `tests/{oplog,apply}.spec.ts`.
+
+**Interfaces:** poll `GET /sync` at start (idle/apply wiring in 1D.4); local op log `~/.dsh-market/sync-log.jsonl` (`intent` / `done` / `removed` / `failed` / `recovered` / `user-removed`); **user-removal rule** — sync `done` install, package now absent from `package.json`, no later sync `removed` → write `user-removed` (covers Discover, `dsh plugin remove`, hand edit); preconditions under the same `package.json.lock` `withFileLock` as plugin-manager (fresh read): `update`/`downgrade` only at exact `fromVersion`; `install` only if absent and not user-removed since reset/re-enable; apply: `removeBundle` (update/downgrade) → `installBundle(name@version, { registry, enabled: false, approvedBuilds })` → re-check presence + lockfile integrity == `sha512` + no user-removal since intent → `setBundleEnabled(name, true)`; **integrity mismatch never enables** (remove never-enabled bundle; on update reinstall `fromVersion`); `already-installed` / `not-removable` abandon entry. Mock plugin-manager; do not depend on live HMR.
+
+- [ ] **1. Write failing tests:** user-removed from CLI/hand-edit shapes; preconditions skip reasons; enabled:false then enable; integrity fail never enables; already-installed / not-removable.
+- [ ] **2. Run** `pnpm --dir integrations/public-harness/packages/plugin-sync test`; expect fail.
+- [ ] **3. Implement** package scaffold, oplog, apply core (snapshots/recovery stubs OK until 1D.5).
+- [ ] **4. Verify** pass; commit `feat(plugin-sync): oplog user-removed and disabled install apply`.
+
+### Task 1D.4: Idle gate (P0.7)
+
+**Files:** Create `packages/plugin-sync/src/idle.ts`, `tests/idle.spec.ts`; wire poll loop (every ~5 minutes + jitter) and apply gate.
+
+**Interfaces:** `isAgentIdle(ctx)` uses agent `status: 'idle'` (P0.7 shortlist — **not** LLM `idleWatchdog`); apply runs only while idle; when not idle, leave defaults `pending` and skip mutate; `plugin-manager/changed` only schedules an earlier re-check (never used as the user-removal source). Design ~5 minute live push window.
+
+- [ ] **1. Write failing tests:** idle allows apply; non-idle skips; jittered poll schedule; changed event advances next check only.
+- [ ] **2. Run** focused idle tests; expect fail.
+- [ ] **3. Implement** idle helper + poll/apply gate.
+- [ ] **4. Verify** pass; commit `feat(plugin-sync): agent idle gate for default apply`.
+
+### Task 1D.5: Snapshots + recovery
+
+**Files:** Create `packages/plugin-sync/src/snapshots.ts`, `tests/snapshots.spec.ts` (helpers reusable by reconcile in 1D.6).
+
+**Interfaces:** before each `intent`, copy `package.json` + `pnpm-lock.yaml` to `~/.dsh-market/snapshots/<op>/` (keep last five); read with `O_NOFOLLOW`, regular files only, ≤ 4 MiB; refuse symlink planted as `package.json`; **recovery:** if `removeBundle` succeeded and `installBundle` failed → reinstall `fromVersion` from mirror; if that fails → restore both files from snapshot, leave intent `failed` for next reconcile; integrity-failure path must leave plugin never started. Hashes only go to server `plugin_profile_snapshot` (files stay in the account home). Queued user/admin restore runs at next reconcile start (never mid-run) — wire queue stubs here; execute in 1D.6.
+
+- [ ] **1. Write failing tests:** snapshot write/rotate; symlink refuse; remove+install failure recovers to fromVersion or files; integrity mismatch leaves disabled/absent.
+- [ ] **2. Run** focused snapshot tests; expect fail.
+- [ ] **3. Implement** snapshot IO + recovery paths; hook into apply.
+- [ ] **4. Verify** pass; commit `feat(plugin-sync): profile snapshots and apply recovery`.
+
+### Task 1D.6: Reconcile entry + provisioner pre-start (P0.4)
+
+**Files:** Create `packages/plugins/src/reconcile-entry.ts` (and release entry/bin as needed), `tests/reconcile-entry.spec.ts`; provisioner hooks in `packages/provisioner/src/runtime.ts` (native order: slice → `network.install` → reconcile unit → instance); unit-text fixtures under `deploy/native/systemd/` or beside tests. **No live `systemd-run`** on this box (P0.4 blocked) — assert argv / unit text / env allowlist with fixtures, same substitute style as 1B. Container one-shot reconcile → **1E**.
+
+**Interfaces:** entry runs as the account; loads plan only from `reconcile-plan`; each entry `name@exact-semver` + sha512; registry must be that user's market port on loopback/`hostAddress` or abort; same user-removal rule + op log as sync; first complete any open `failed` sync from its snapshot; pnpm as `dsh plugin` with `--ignore-pnpmfile`, `--config.registry=<mirror>`, `--config.userconfig=/dev/null`, one `--allow-build=<pkg>` per allowed build (never `ignore-scripts`); update/downgrade = single `pnpm add name@version`; failure/timeout (120 s/pkg, 300 s total) restores snapshot then `pnpm install --frozen-lockfile --offline`, else online against user mirror only; instance starts anyway on error; env allowlist exactly `HOME` / `DSH_HOME` / `XDG_CACHE_HOME` / `TMPDIR` / toolchain `PATH` / `NPM_CONFIG_GLOBALCONFIG` (no root inherit, no model key). Unit text modeled on `initializeWorkspace`: slice, uid/gid, AppArmor, `IPAddressDeny=any` + `IPAddressAllow=localhost`, `RuntimeMaxSec=300`.
+
+- [ ] **1. Write failing tests:** plan validation / bad registry abort; user-removed skip; open failed sync restored; pnpm argv flags (P0.4 substitute); unit-text / env allowlist fixtures; offline then online repair path.
+- [ ] **2. Run** focused reconcile-entry (+ provisioner fixture) tests; expect fail.
+- [ ] **3. Implement** entry + provisioner pre-start wiring; mark live systemd as partial/blocked in notes.
+- [ ] **4. Verify** pass; commit `feat(plugins): pre-start reconcile entry and provisioner hook`.
+
+**1D exit:** CLI/hand-edit uninstall not reinstalled; remove+install failure recovers; integrity mismatch never enables; idle gate uses P0.7 agent idle signal; live systemd reconcile remains partial/blocked per P0.4 (fixtures green).
 
 ## Milestone 1E: policy, limits, containers (outline)
 
@@ -365,5 +428,5 @@ Signatures; pure-skill views; optional `egress_lock`.
 
 1. Complete Phase 0 tasks P0.1–P0.9; fill `phase0-results.md`. Stop if P0.8/P0.9 falsify assumptions.
 2. Milestone 1A tasks in order.
-3. Milestone 1B tasks in order (outline expanded 2026-10-23). Milestone 1C tasks in order (outline expanded 2026-10-23). Expand 1D–1E from outlines after 1C review.
+3. Milestone 1B tasks in order (outline expanded 2026-10-23). Milestone 1C tasks in order (outline expanded 2026-10-23). Milestone 1D tasks in order (outline expanded 2026-10-23). Expand 1E from outline after 1D review.
 4. Push `codex/plugin-market-impl` after each green task commit. Await「可以合并」before master.

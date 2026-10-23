@@ -336,14 +336,77 @@
 
 **1C 出口：** 迁移表每行 + 拒绝码有测；部门可见性；批准/上传/scope/回滚/下架/吊销需 reauth；管理端与「我的插件」页就位。
 
-## 里程碑 1D：默认与更新（大纲）
+## 里程碑 1D：默认与更新（TDD）
 
-**创建 / 修改：**
-- `packages/plugin-sync/` — `public-harness-plugin-sync`；sync-log；`enabled:false` 安装 → 再核对 → `setBundleEnabled`；用户移除规则。
-- reconcile 入口 + provisioner 启动前单元（标志取自 P0.4）。
-- 快照在 `~/.dsh-market/snapshots/`。
+服务端仍在 `integrations/public-harness/packages/plugins/`（`plugin_default` / `plugin_default_state`、`GET /sync`、`POST /sync/report`、`reconcile-plan`、reconcile 入口）。实例内同步在新包 `packages/plugin-sync/`（`public-harness-plugin-sync`）。设计文档：§ 默认安装、同步与 reconcile；更新与回滚；API `/sync` `/sync/report`。P0.7：门控用 agent `status: 'idle'`（不用 `idleWatchdog`）。P0.4：pnpm ignore 标志已验证；真实 systemd slice / `IPAddressAllow` 仍 **blocked** — 仅单元文本 / argv 夹具（与 1B 同模式）。容器一次性 reconcile 留给 **1E**。
 
-**验收：** CLI/手改卸载不重装；移除+安装失败可恢复；integrity 不符永不启用；空闲门控用 P0.7 信号。
+### 任务 1D.1：默认项 CRUD + 状态
+
+**文件：** 创建 `packages/plugins/src/defaults.ts`、`tests/defaults.spec.ts`；从 `index.ts` 导出。
+
+**接口：** `setDefault` / `clearDefault` / `resetDefault`（管理端）/ `reenableDefault`（个人）— 为公司或部门写 `plugin_default`；`reset_at` 清除早于它的 opt-out；`plugin_default_state` 取值 `installed` | `pending` | `failed` | `opted-out` | `user-managed`；用户可见默认集=其可见范围内全部默认（与 listing 可见性一致）；已下架包不再作为默认安装；管理端 apply 计数辅助。挂到 1C.4/1C.5 已 stub 的 identity 路由（`POST /plugins/defaults`、`/defaults/reset`、me `/defaults/reenable`）。
+
+- [ ] **1. 写失败测试：** 公司/部门 set/clear；可见性过滤；reset 清 opted-out；re-enable 回到 pending/installed；下架拒绝/停止；状态桩。
+- [ ] **2. 跑** `pnpm --dir integrations/public-harness/packages/plugins test -- defaults.spec.ts`；预期失败。
+- [ ] **3. 实现** `defaults.ts`（含导出 / 所需控制接线）。
+- [ ] **4. 验证** 通过；提交 `feat(plugins): default installs set clear reset reenable`。
+
+### 任务 1D.2：同步计划 + 上报 API
+
+**文件：** 创建 `packages/plugins/src/sync-plan.ts`、`tests/sync-plan.spec.ts`；在市场 HTTP 上挂 `GET /sync` 与 `POST /sync/report`；控制 socket 暴露 `reconcile-plan(userId)`。
+
+**接口：** `buildSyncPlan(userId)` → `{ entries: [{ name, version, fromVersion, sha512, action, allowedBuilds }], ... }`，`action` 为 `install` | `update` | `downgrade`（计划是请求不是命令）；`applySyncReport(userId, report)` **仅**从 `user-removed` 操作日志推导 `opted-out`，未完成/失败记 `failed`，并推导 `user-managed` 与 `max_installed` 用的已装计数；`reconcilePlan(userId)` 返回同形计划给 provisioner（`name@exact-semver` + sha512 + registry = 该用户 `ports.market` 于 `127.0.0.1` / `hostAddress`）。Bearer + peer 校验沿用 1B。
+
+- [ ] **1. 写失败测试：** 新默认 / 更新 / 回滚的 action；跳过 opted-out / user-managed；上报仅 user-removed→opted-out；错误 registry 拒绝 reconcile-plan。
+- [ ] **2. 跑** 聚焦 sync-plan 测试；预期失败。
+- [ ] **3. 实现** 计划构建、上报落库、路由与控制动词接线。
+- [ ] **4. 验证** 通过；提交 `feat(plugins): sync plan report and reconcile-plan`。
+
+### 任务 1D.3：plugin-sync 应用核心
+
+**文件：** 创建 `integrations/public-harness/packages/plugin-sync/`（`public-harness-plugin-sync`）；`src/{oplog.ts,apply.ts,index.ts}`、`tests/{oplog,apply}.spec.ts`。
+
+**接口：** 启动时轮询 `GET /sync`（空闲/应用门控见 1D.4）；本地操作日志 `~/.dsh-market/sync-log.jsonl`（`intent` / `done` / `removed` / `failed` / `recovered` / `user-removed`）；**用户移除规则** — 曾有 sync `done` 安装、现 `package.json` 中缺失、其后无 sync `removed` → 写 `user-removed`（覆盖 Discover、`dsh plugin remove`、手改）；在与 plugin-manager 相同的 `package.json.lock` `withFileLock` 下做前置条件（新鲜读）：`update`/`downgrade` 仅当恰为 `fromVersion`；`install` 仅当缺失且自 reset/re-enable 以来非 user-removed；应用：`removeBundle`（update/downgrade）→ `installBundle(..., { enabled: false, ... })` → 再核对在场 + lockfile integrity == `sha512` + intent 后无用户移除 → `setBundleEnabled(name, true)`；**integrity 不符永不启用**（删未启用包；更新失败则重装 `fromVersion`）；`already-installed` / `not-removable` 放弃该项。Mock plugin-manager；不依赖真实 HMR。
+
+- [ ] **1. 写失败测试：** CLI/手改形态的 user-removed；前置跳过原因；enabled:false 再 enable；integrity 失败不启用；already-installed / not-removable。
+- [ ] **2. 跑** `pnpm --dir integrations/public-harness/packages/plugin-sync test`；预期失败。
+- [ ] **3. 实现** 包骨架、oplog、应用核心（快照/恢复可 stub 到 1D.5）。
+- [ ] **4. 验证** 通过；提交 `feat(plugin-sync): oplog user-removed and disabled install apply`。
+
+### 任务 1D.4：空闲门控（P0.7）
+
+**文件：** 创建 `packages/plugin-sync/src/idle.ts`、`tests/idle.spec.ts`；接线轮询（约 5 分钟 + jitter）与应用门控。
+
+**接口：** `isAgentIdle(ctx)` 用 agent `status: 'idle'`（P0.7 短名单 — **不是** LLM `idleWatchdog`）；仅空闲时应用；非空闲则保持 `pending` 且不改动；`plugin-manager/changed` 仅提前下次检查（绝不当作用户移除来源）。设计约 5 分钟在线推送窗口。
+
+- [ ] **1. 写失败测试：** 空闲允许应用；非空闲跳过；带 jitter 的轮询；changed 事件只提前下次检查。
+- [ ] **2. 跑** 聚焦 idle 测试；预期失败。
+- [ ] **3. 实现** idle 辅助 + 轮询/应用门控。
+- [ ] **4. 验证** 通过；提交 `feat(plugin-sync): agent idle gate for default apply`。
+
+### 任务 1D.5：快照 + 恢复
+
+**文件：** 创建 `packages/plugin-sync/src/snapshots.ts`、`tests/snapshots.spec.ts`（辅助可被 1D.6 reconcile 复用）。
+
+**接口：** 每个 `intent` 前把 `package.json` + `pnpm-lock.yaml` 拷到 `~/.dsh-market/snapshots/<op>/`（保留最近五个）；`O_NOFOLLOW` 读、仅普通文件、≤ 4 MiB；拒绝把符号链接种成 `package.json`；**恢复：** `removeBundle` 成功而 `installBundle` 失败 → 从镜像重装 `fromVersion`；仍失败 → 从快照恢复两文件，intent 留 `failed` 待下次 reconcile；integrity 失败路径须使插件从未启动。仅哈希进服务端 `plugin_profile_snapshot`（文件留在用户家目录）。用户/管理员排队的 restore 在下次 reconcile 启动时执行（绝不在运行中）— 此处接线队列桩；执行在 1D.6。
+
+- [ ] **1. 写失败测试：** 快照写入/轮转；拒绝符号链接；remove+install 失败恢复到 fromVersion 或文件；integrity 不符保持未启用/缺失。
+- [ ] **2. 跑** 聚焦 snapshot 测试；预期失败。
+- [ ] **3. 实现** 快照 IO + 恢复路径；挂入 apply。
+- [ ] **4. 验证** 通过；提交 `feat(plugin-sync): profile snapshots and apply recovery`。
+
+### 任务 1D.6：Reconcile 入口 + provisioner 启动前（P0.4）
+
+**文件：** 创建 `packages/plugins/src/reconcile-entry.ts`（及所需 release entry/bin）、`tests/reconcile-entry.spec.ts`；provisioner 挂钩 `packages/provisioner/src/runtime.ts`（原生顺序：slice → `network.install` → reconcile 单元 → 实例）；单元文本夹具放在 `deploy/native/systemd/` 或测试旁。本箱 **无真实 `systemd-run`**（P0.4 blocked）— 用夹具断言 argv / 单元文本 / 环境白名单，与 1B 同替代风格。容器一次性 reconcile → **1E**。
+
+**接口：** 入口以账户身份跑；计划只来自 `reconcile-plan`；每项 `name@exact-semver` + sha512；registry 必须是该用户市场端口于回环/`hostAddress`，否则中止；与 sync 相同的用户移除规则 + 操作日志；先完成任何打开的 `failed` sync（从其快照）；pnpm 同 `dsh plugin`：`--ignore-pnpmfile`、`--config.registry=<mirror>`、`--config.userconfig=/dev/null`、每个允许构建一个 `--allow-build=<pkg>`（从不设 `ignore-scripts`）；update/downgrade = 单次 `pnpm add name@version`；失败/超时（每包 120 s、总计 300 s）先恢复快照再 `pnpm install --frozen-lockfile --offline`，否则仅对用户镜像在线；出错仍启动实例；环境白名单恰为 `HOME` / `DSH_HOME` / `XDG_CACHE_HOME` / `TMPDIR` / 工具链 `PATH` / `NPM_CONFIG_GLOBALCONFIG`（不继承 root、无模型密钥）。单元文本参照 `initializeWorkspace`：slice、uid/gid、AppArmor、`IPAddressDeny=any` + `IPAddressAllow=localhost`、`RuntimeMaxSec=300`。
+
+- [ ] **1. 写失败测试：** 计划校验 / 错误 registry 中止；user-removed 跳过；打开的 failed sync 恢复；pnpm argv 标志（P0.4 替代）；单元文本 / 环境白名单夹具；offline 再 online 修复路径。
+- [ ] **2. 跑** 聚焦 reconcile-entry（+ provisioner 夹具）测试；预期失败。
+- [ ] **3. 实现** 入口 + provisioner 启动前接线；笔记中标明真实 systemd 为 partial/blocked。
+- [ ] **4. 验证** 通过；提交 `feat(plugins): pre-start reconcile entry and provisioner hook`。
+
+**1D 出口：** CLI/手改卸载不重装；移除+安装失败可恢复；integrity 不符永不启用；空闲门控用 P0.7 agent idle 信号；真实 systemd reconcile 按 P0.4 仍为 partial/blocked（夹具绿灯）。
 
 ## 里程碑 1E：策略、限额、容器（大纲）
 
@@ -365,5 +428,5 @@
 
 1. 完成第 0 阶段 P0.1–P0.9，填 `phase0-results.md`。若 P0.8/P0.9 证伪假设则停下。
 2. 按序做里程碑 1A。
-3. 按序做里程碑 1B（大纲已于 2026-10-23 展开）。按序做里程碑 1C（大纲已于 2026-10-23 展开）。1C 审查后再把 1D–1E 大纲展开。
+3. 按序做里程碑 1B（大纲已于 2026-10-23 展开）。按序做里程碑 1C（大纲已于 2026-10-23 展开）。按序做里程碑 1D（大纲已于 2026-10-23 展开）。1D 审查后再把 1E 大纲展开。
 4. 每项绿提交后推 `codex/plugin-market-impl`。合 master 前等「可以合并」。

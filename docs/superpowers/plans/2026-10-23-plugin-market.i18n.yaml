@@ -95,9 +95,27 @@
 /company-plugin-market-implementation-plan/milestone-1c-review-flow-tdd/task-1c-5-admin-my-plugins-ui:
   en: f7996b157b640278
   zh: 6c67d864de568a79
-/company-plugin-market-implementation-plan/milestone-1d-defaults-and-updates-outline:
-  en: 82175d4f867437e9
-  zh: 52ba7744879aa705
+/company-plugin-market-implementation-plan/milestone-1d-defaults-and-updates-tdd:
+  en: e31db5deb6488636
+  zh: c8aaf4a0791bb6da
+/company-plugin-market-implementation-plan/milestone-1d-defaults-and-updates-tdd/task-1d-1-defaults-crud-state:
+  en: 24fc1ed61f857ef5
+  zh: e53f297f0e66cdca
+/company-plugin-market-implementation-plan/milestone-1d-defaults-and-updates-tdd/task-1d-2-sync-plan-report-api:
+  en: 59df53800a4d628c
+  zh: c9e1031e943e0e3f
+/company-plugin-market-implementation-plan/milestone-1d-defaults-and-updates-tdd/task-1d-3-plugin-sync-apply-core:
+  en: 4fd27e4a2c846895
+  zh: 9a72ff6d8a3f233d
+/company-plugin-market-implementation-plan/milestone-1d-defaults-and-updates-tdd/task-1d-4-idle-gate-p0-7:
+  en: 27dc13f5917cb73c
+  zh: 24435e29574652af
+/company-plugin-market-implementation-plan/milestone-1d-defaults-and-updates-tdd/task-1d-5-snapshots-recovery:
+  en: 8d54b3317c68523f
+  zh: f84a4cb264184f8d
+/company-plugin-market-implementation-plan/milestone-1d-defaults-and-updates-tdd/task-1d-6-reconcile-entry-provisioner-pre-start-p0-4:
+  en: b7b20953f4207b81
+  zh: 8eabca26770f4733
 /company-plugin-market-implementation-plan/milestone-1e-policy-limits-containers-outline:
   en: e88942618d1b4dd5
   zh: 819d383400c69d5a
@@ -105,5 +123,5 @@
   en: 26afa622963f2686
   zh: c382d88f39f42a2c
 /company-plugin-market-implementation-plan/execution-order:
-  en: 9e7bfa178f3413b1
-  zh: b404285523bc36e5
+  en: c9fb8671860d14af
+  zh: aa845592f8647627
