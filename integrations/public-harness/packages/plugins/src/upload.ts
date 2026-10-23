@@ -3,6 +3,7 @@
  * Mirrors via `mirrorVersion`, freezes the artifact, writes catalogue rows + `admin-plugin-upload` audit.
  */
 import { COMPANY_SCOPE_PREFIX } from './schema.ts'
+import { compareSemVerDescending } from './index-builder.ts'
 import { newId } from './ids.ts'
 import type { PluginsDbHandle } from './migrate.ts'
 import { writeAuditOutbox } from './audit.ts'
@@ -204,7 +205,6 @@ export async function adminUpload(input: AdminUploadInput): Promise<AdminUploadR
     throw new UploadError('version-exists', `${mirrored.name}@${mirrored.version}`)
   }
 
-  const packageId = newId('plg')
   const versionId = newId('plv')
   const kind = input.kind ?? 'bundle'
   const display = input.display ?? defaultDisplay(mirrored.name)
@@ -220,11 +220,23 @@ export async function adminUpload(input: AdminUploadInput): Promise<AdminUploadR
       throw new UploadError('version-exists', `${mirrored.name}@${mirrored.version}`)
     }
 
-    input.db.db.prepare(`INSERT INTO plugin_package
-      (id, name, kind, origin, owner_user_id, claimed_at, display, icon_sha512, created_at)
-      VALUES (?, ?, ?, 'admin', NULL, ?, ?, NULL, ?)`).run(
-      packageId, mirrored.name, kind, now, display, now,
-    )
+    const existing = input.db.db.prepare(
+      'SELECT id, kind FROM plugin_package WHERE name = ?',
+    ).get(mirrored.name) as { id: string; kind: string } | undefined
+
+    let packageId: string
+    let createdPackage = false
+    if (existing !== undefined) {
+      packageId = existing.id
+    } else {
+      packageId = newId('plg')
+      createdPackage = true
+      input.db.db.prepare(`INSERT INTO plugin_package
+        (id, name, kind, origin, owner_user_id, claimed_at, display, icon_sha512, created_at)
+        VALUES (?, ?, ?, 'admin', NULL, ?, ?, NULL, ?)`).run(
+        packageId, mirrored.name, kind, now, display, now,
+      )
+    }
 
     input.db.db.prepare(`INSERT INTO plugin_version
       (id, package_id, version, source, state, mirror_state, mirror_error, artifact_sha512,
@@ -252,19 +264,68 @@ export async function adminUpload(input: AdminUploadInput): Promise<AdminUploadR
       insertClosure.run(versionId, entry.name, entry.version, entry.integrity, entry.installScript)
     }
 
-    input.db.db.prepare(
-      `INSERT INTO plugin_listing (package_id, current_version_id, previous_version_id, generation, listed_by, listed_at)
-       VALUES (?, ?, NULL, 1, ?, ?)`,
-    ).run(packageId, versionId, input.adminUserId, now)
+    const listing = input.db.db.prepare(
+      'SELECT package_id, current_version_id, previous_version_id, generation FROM plugin_listing WHERE package_id = ?',
+    ).get(packageId) as {
+      package_id: string
+      current_version_id: string
+      previous_version_id: string | null
+      generation: number
+    } | undefined
 
-    input.db.db.prepare(
-      `INSERT INTO plugin_listing_history (package_id, version_id, action, detail, by, at)
-       VALUES (?, ?, 'list', ?, ?, ?)`,
-    ).run(packageId, versionId, JSON.stringify({ source: input.source.type }), input.adminUserId, now)
-
-    input.db.db.prepare(
-      `INSERT INTO plugin_scope (package_id, kind, target) VALUES (?, ?, ?)`,
-    ).run(packageId, input.scope.kind, input.scope.target)
+    if (listing === undefined) {
+      input.db.db.prepare(
+        `INSERT INTO plugin_listing (package_id, current_version_id, previous_version_id, generation, listed_by, listed_at)
+         VALUES (?, ?, NULL, 1, ?, ?)`,
+      ).run(packageId, versionId, input.adminUserId, now)
+      input.db.db.prepare(
+        `INSERT INTO plugin_listing_history (package_id, version_id, action, detail, by, at)
+         VALUES (?, ?, 'list', ?, ?, ?)`,
+      ).run(packageId, versionId, JSON.stringify({ source: input.source.type }), input.adminUserId, now)
+      if (createdPackage) {
+        input.db.db.prepare(
+          `INSERT INTO plugin_scope (package_id, kind, target) VALUES (?, ?, ?)`,
+        ).run(packageId, input.scope.kind, input.scope.target)
+      }
+    } else {
+      const currentVer = input.db.db.prepare(
+        'SELECT version FROM plugin_version WHERE id = ?',
+      ).get(listing.current_version_id) as { version: string } | undefined
+      const currentVersion = currentVer?.version ?? '0.0.0'
+      // Same rule as approve: only advance current when the new version is newer.
+      if (compareSemVerDescending(mirrored.version, currentVersion) < 0) {
+        input.db.db.prepare(
+          `UPDATE plugin_listing
+           SET previous_version_id = current_version_id,
+               current_version_id = ?,
+               generation = generation + 1,
+               listed_by = ?,
+               listed_at = ?
+           WHERE package_id = ?`,
+        ).run(versionId, input.adminUserId, now, packageId)
+        input.db.db.prepare(
+          `INSERT INTO plugin_listing_history (package_id, version_id, action, detail, by, at)
+           VALUES (?, ?, 'update', ?, ?, ?)`,
+        ).run(
+          packageId,
+          versionId,
+          JSON.stringify({ from: currentVersion, to: mirrored.version, source: input.source.type }),
+          input.adminUserId,
+          now,
+        )
+      } else {
+        input.db.db.prepare(
+          `INSERT INTO plugin_listing_history (package_id, version_id, action, detail, by, at)
+           VALUES (?, ?, 'list', ?, ?, ?)`,
+        ).run(
+          packageId,
+          versionId,
+          JSON.stringify({ source: input.source.type, historyOnly: true, version: mirrored.version }),
+          input.adminUserId,
+          now,
+        )
+      }
+    }
 
     const auditId = writeAuditOutbox(input.db, {
       at: now,

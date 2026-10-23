@@ -214,3 +214,79 @@ describe('admin-plugin-upload audit', () => {
     expect(root).toBeTruthy()
   })
 })
+
+describe('adminUpload existing package new version', () => {
+  it('reuses_package_id_and_advances_listing_for_newer_version', async () => {
+    const { db, storeRoot } = fixtureDb()
+    const name = `${COMPANY_SCOPE_PREFIX}demo`
+    const first = await adminUpload({
+      db,
+      storeRoot,
+      adminUserId: 'admin-1',
+      scope: { kind: 'company', target: '*' },
+      source: { type: 'upload', tarball: npmTgz({ name, version: '1.0.0' }, [{ path: 'index.js', data: 'v1\n' }]) },
+      closure: [],
+      now: 1_700_000_000_000,
+    })
+
+    const second = await adminUpload({
+      db,
+      storeRoot,
+      adminUserId: 'admin-2',
+      scope: { kind: 'company', target: '*' },
+      source: { type: 'upload', tarball: npmTgz({ name, version: '2.0.0' }, [{ path: 'index.js', data: 'v2\n' }]) },
+      closure: [],
+      now: 1_700_000_000_100,
+    })
+
+    expect(second.packageId).toBe(first.packageId)
+    expect(second.versionId).not.toBe(first.versionId)
+    expect(second.version).toBe('2.0.0')
+
+    const packages = db.db.prepare('SELECT COUNT(*) AS n FROM plugin_package WHERE name = ?').get(name) as { n: number }
+    expect(packages.n).toBe(1)
+
+    const listing = db.db.prepare(
+      'SELECT current_version_id, previous_version_id, generation, listed_by FROM plugin_listing WHERE package_id = ?',
+    ).get(first.packageId) as {
+      current_version_id: string
+      previous_version_id: string | null
+      generation: number
+      listed_by: string
+    }
+    expect(listing.current_version_id).toBe(second.versionId)
+    expect(listing.previous_version_id).toBe(first.versionId)
+    expect(listing.generation).toBe(2)
+    expect(listing.listed_by).toBe('admin-2')
+
+    const scopes = db.db.prepare('SELECT COUNT(*) AS n FROM plugin_scope WHERE package_id = ?').get(first.packageId) as { n: number }
+    expect(scopes.n).toBe(1)
+
+    const history = db.db.prepare(
+      `SELECT action FROM plugin_listing_history WHERE package_id = ? ORDER BY at, rowid`,
+    ).all(first.packageId) as Array<{ action: string }>
+    expect(history.map(h => h.action)).toEqual(['list', 'update'])
+  })
+
+  it('same_name_and_version_still_version_exists', async () => {
+    const { db, storeRoot } = fixtureDb()
+    const name = `${COMPANY_SCOPE_PREFIX}demo`
+    const tarball = npmTgz({ name, version: '1.0.0' }, [{ path: 'index.js', data: 'v1\n' }])
+    await adminUpload({
+      db,
+      storeRoot,
+      adminUserId: 'admin-1',
+      scope: { kind: 'company', target: '*' },
+      source: { type: 'upload', tarball },
+      closure: [],
+    })
+    await expect(adminUpload({
+      db,
+      storeRoot,
+      adminUserId: 'admin-1',
+      scope: { kind: 'company', target: '*' },
+      source: { type: 'upload', tarball },
+      closure: [],
+    })).rejects.toThrow(/version-exists/)
+  })
+})
