@@ -107,6 +107,15 @@ export {
   type ExpireInput,
 } from './submit.ts'
 export {
+  ApproveError,
+  approveSubmission,
+  rejectSubmission,
+  type ApproveErrorCode,
+  type ApproveInput,
+  type ApproveResult,
+  type RejectInput,
+} from './approve.ts'
+export {
   writeAuditOutbox,
   listPendingAudit,
   ackAuditOutbox,
