@@ -1,4 +1,4 @@
-/** Plugin market catalogue, egress proxy, fetch framing, and mirror pipeline. */
+/** Plugin market catalogue, egress proxy, fetch framing, mirror pipeline, and admin upload. */
 export { newId, ID_PATTERN } from './ids.ts'
 export { openPluginsDb, type PluginsDb } from './db.ts'
 export {
@@ -81,3 +81,21 @@ export {
   type ArtifactMode,
   type InstallScriptKind,
 } from './mirror/index.ts'
+
+export {
+  UploadError,
+  adminUpload,
+  assertCompanyPluginName,
+  type UploadErrorCode,
+  type PluginScopeSpec,
+  type AdminUploadSource,
+  type AdminUploadInput,
+  type AdminUploadResult,
+} from './upload.ts'
+export {
+  writeAuditOutbox,
+  listPendingAudit,
+  ackAuditOutbox,
+  type PluginAuditWrite,
+  type PluginAuditRow,
+} from './audit.ts'
