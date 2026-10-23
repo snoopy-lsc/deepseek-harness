@@ -106,6 +106,9 @@ importers:
       '@public-harness/kb':
         specifier: workspace:*
         version: link:../kb
+      '@public-harness/plugins':
+        specifier: workspace:*
+        version: link:../plugins
       '@public-harness/provisioner':
         specifier: workspace:*
         version: link:../provisioner
