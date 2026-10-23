@@ -149,7 +149,8 @@ async function load(name: string, script: string, instance: RuntimeInstance, con
 export async function installNetwork(instance: RuntimeInstance, config: SystemdConfig, runner: CommandRunner,
   active: readonly RuntimeInstance[] = []): Promise<void> {
   const others = active.filter(other => other.uid !== instance.uid)
-  await load('network.nft', `${renderUserNetwork(instance, config)}${renderInputDispatch([...others, instance])}`, instance, config, runner, 'network-install')
+  const market = config.ports.market === undefined ? {} : { marketPorts: config.ports.market }
+  await load('network.nft', `${renderUserNetwork(instance, config, market)}${renderInputDispatch([...others, instance])}`, instance, config, runner, 'network-install')
 }
 
 /** Remove one account's rules in one transaction; other accounts and host tables are unchanged.

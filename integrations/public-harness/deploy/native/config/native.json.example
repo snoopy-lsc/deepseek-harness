@@ -6,7 +6,8 @@
     "dsh": "/opt/dsh-public/release/dsh.mjs",
     "launchPatch": "/opt/dsh-public/release/native.yml",
     "browserRoot": "/opt/dsh-public/browser",
-    "browser": "/opt/dsh-public/browser/chrome-linux64/chrome"
+    "browser": "/opt/dsh-public/browser/chrome-linux64/chrome",
+    "instanceMarketDir": "/run/dsh-public/instance-market"
   },
   "tools": {
     "node": "/opt/dsh-public/toolchain/node",

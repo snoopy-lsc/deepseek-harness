@@ -1,0 +1,18 @@
+[Unit]
+Description=Team Harness plugin market ports (installer expands ListenStream from ports.market)
+PartOf=dsh-public.target
+Before=dsh-provisioner.service
+# Holds the whole ports.market range so no other process can bind a market port.
+
+[Socket]
+# Sketch: one example ListenStream. The installer replaces this section with one
+# ListenStream=127.0.0.1:<port> line per port in ports.market (see renderPluginsSocketUnit).
+ListenStream=127.0.0.1:30000
+Service=dsh-plugins.service
+RemoveOnStop=yes
+# Non-fatal loader for inet dsh_market (priority filter - 2). The "-" prefix means a
+# missing nftables table must not fail this socket unit or block instance starts.
+ExecStartPost=-/usr/lib/dsh-public/load-dsh-market.sh
+
+[Install]
+WantedBy=sockets.target

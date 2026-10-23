@@ -21,10 +21,12 @@ export interface SystemdConfig {
     readonly browserRoot: string
     /** The pinned browser executable; the only path the AppArmor browser child profile attaches to. */
     readonly browser: string
+    /** Root-owned dir for per-account market patch/npmrc (`instance-market/`); outside tenant writable paths. */
+    readonly instanceMarketDir?: string
   }
   readonly tools: ProvisionerConfig['tools'] & { readonly node: string; readonly systemctl: string; readonly apparmorParser: string; readonly xfsQuota: string; readonly nft: string; readonly systemdRun: string; readonly git: string }
   readonly limits: ProvisionerConfig['limits'] & { readonly diskInodes: number; readonly shmBytes: number; readonly shmInodes: number }
-  readonly ports: { readonly web: PortRange; readonly quota: PortRange }
+  readonly ports: { readonly web: PortRange; readonly quota: PortRange; readonly market?: PortRange }
   readonly profile: string
   readonly resolver: string
   readonly publicEgress: { readonly tcp: readonly number[]; readonly udp: readonly number[] }
@@ -33,10 +35,13 @@ export interface SystemdConfig {
   readonly stopTimeoutMs: number
 }
 
-function record(value: unknown, keys: readonly string[]): Record<string, unknown> {
+function record(value: unknown, keys: readonly string[], optional: readonly string[] = []): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new NativeHostError('invalid-config', 'configuration')
   const r = value as Record<string, unknown>
-  if (keys.some(key => !Object.hasOwn(r, key)) || Object.keys(r).some(key => !keys.includes(key))) throw new NativeHostError('invalid-config', 'configuration-fields')
+  if (keys.some(key => !Object.hasOwn(r, key))
+    || Object.keys(r).some(key => !keys.includes(key) && !optional.includes(key))) {
+    throw new NativeHostError('invalid-config', 'configuration-fields')
+  }
   return r
 }
 function path(value: unknown): string {
@@ -69,10 +74,11 @@ export function parseSystemdConfig(value: unknown): SystemdConfig {
   try { common = validateProvisionerConfig(root.common) } catch (cause) { throw new NativeHostError('invalid-config', 'common-configuration', cause) }
   if (common.runtime.kind !== 'systemd') throw new NativeHostError('invalid-config', 'runtime-selection')
   const n = record(root.native, ['paths', 'tools', 'profile', 'diskInodes', 'shmBytes', 'shmInodes', 'operationTimeoutMs', 'web', 'resolver', 'publicEgress'])
-  const p = record(n.paths, ['release', 'releaseManifest', 'toolchain', 'dsh', 'launchPatch', 'browserRoot', 'browser'])
+  const p = record(n.paths, ['release', 'releaseManifest', 'toolchain', 'dsh', 'launchPatch', 'browserRoot', 'browser'], ['instanceMarketDir'])
   const t = record(n.tools, ['node', 'systemctl', 'apparmorParser', 'xfsQuota', 'nft', 'systemdRun', 'git'])
   const paths = { ...common.paths, release: path(p.release), releaseManifest: path(p.releaseManifest), toolchain: path(p.toolchain),
-    dsh: path(p.dsh), launchPatch: path(p.launchPatch), browserRoot: path(p.browserRoot), browser: path(p.browser) }
+    dsh: path(p.dsh), launchPatch: path(p.launchPatch), browserRoot: path(p.browserRoot), browser: path(p.browser),
+    ...p.instanceMarketDir === undefined ? {} : { instanceMarketDir: path(p.instanceMarketDir) } }
   const tools = { ...common.tools, node: path(t.node), systemctl: path(t.systemctl), apparmorParser: path(t.apparmorParser), xfsQuota: path(t.xfsQuota), nft: path(t.nft), systemdRun: path(t.systemdRun), git: path(t.git) }
   Object.values(paths).forEach(path); Object.values(tools).forEach(path)
   path(common.runtime.configFile)
@@ -88,6 +94,18 @@ export function parseSystemdConfig(value: unknown): SystemdConfig {
   let web: PortRange
   try { web = validatePortRange(n.web, 'native.web', common.maxActiveInstances) } catch (cause) { throw new NativeHostError('invalid-config', 'web-ports', cause) }
   if (portRangesOverlap(web, common.ports.quota)) throw new NativeHostError('invalid-config', 'overlapping-ports')
+  const market = common.ports.market
+  if (market !== undefined) {
+    if (portRangesOverlap(web, market) || portRangesOverlap(common.ports.quota, market)) {
+      throw new NativeHostError('invalid-config', 'overlapping-ports')
+    }
+  }
+  if (paths.instanceMarketDir !== undefined) {
+    if (hidden.some(h => inside(paths.instanceMarketDir!, h))
+      || inside(paths.instanceMarketDir, paths.storageRoot) || inside(paths.storageRoot, paths.instanceMarketDir)) {
+      throw new NativeHostError('invalid-config', 'instance-market-dir')
+    }
+  }
   if (typeof n.profile !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(n.profile)) throw new NativeHostError('invalid-config', 'profile')
   if (typeof n.resolver !== 'string' || isIP(n.resolver) === 0) throw new NativeHostError('invalid-config', 'resolver')
   const egress = record(n.publicEgress, ['tcp', 'udp'])
@@ -95,7 +113,7 @@ export function parseSystemdConfig(value: unknown): SystemdConfig {
   // A native instance shares one cgroup between Node, its tools and Chromium; the container floors apply here too.
   if (limits.pids < NATIVE_MIN_PIDS || limits.memoryBytes < NATIVE_MIN_MEMORY_BYTES) throw new NativeHostError('invalid-config', 'native-limit-floor')
   if (limits.shmBytes > limits.memoryBytes || limits.diskBytes % 1024 !== 0) throw new NativeHostError('invalid-config', 'storage-limits')
-  return { paths, tools, limits, ports: { web, quota: common.ports.quota }, profile: n.profile, resolver: n.resolver,
+  return { paths, tools, limits, ports: { web, quota: common.ports.quota, ...market === undefined ? {} : { market } }, profile: n.profile, resolver: n.resolver,
     publicEgress: { tcp: portList(egress.tcp), udp: portList(egress.udp) }, operationTimeoutMs: positive(n.operationTimeoutMs),
     readyTimeoutMs: common.readyTimeoutMs, stopTimeoutMs: common.stopTimeoutMs }
 }

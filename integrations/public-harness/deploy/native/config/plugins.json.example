@@ -1,0 +1,16 @@
+{
+  "database": "/var/lib/dsh-plugins/plugins.sqlite",
+  "storeDir": "/var/lib/dsh-plugins/store",
+  "ports": {
+    "market": {
+      "min": 30000,
+      "max": 34095
+    }
+  },
+  "egressPort": 18787,
+  "egress": {
+    "allow": ["registry.npmjs.org"],
+    "intranet": {},
+    "gitPathPrefixes": {}
+  }
+}

@@ -1,0 +1,45 @@
+[Unit]
+Description=Team Harness plugin market catalogue and per-user listeners
+PartOf=dsh-public.target
+After=network-online.target dsh-plugins.socket dsh-plugins-egress.service
+Requires=dsh-plugins.socket
+Before=dsh-provisioner.service
+ConditionPathExists=/etc/dsh-public/plugins.json
+
+[Service]
+Type=simple
+User=dsh-plugins
+Group=dsh-plugins
+Sockets=dsh-plugins.socket
+Environment=DSH_HOME=/var/lib/dsh-public/plugins-home
+ExecStart=/usr/bin/node /opt/dsh-public/harness/apps/cli/lib/bin.js --profile plugins
+Restart=on-failure
+RestartSec=3
+# Up to 4,096 inherited ListenStream fds from dsh-plugins.socket.
+LimitNOFILE=16384
+# AF_NETLINK for inet_diag peer UID checks on accept (design; P0.9).
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=no
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+IPAddressDeny=any
+IPAddressAllow=localhost
+UMask=0077
+StateDirectory=dsh-public/plugins-home
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/dsh-plugins /run/dsh-plugins
+ReadOnlyPaths=/etc/dsh-public /opt/dsh-public
+
+[Install]
+WantedBy=dsh-public.target

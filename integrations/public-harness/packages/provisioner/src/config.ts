@@ -38,14 +38,14 @@ export interface ProvisionerConfig {
   readonly limits: Omit<Limits, 'network'>
   readonly readyTimeoutMs: number
   readonly stopTimeoutMs: number
-  readonly ports: { readonly quota: PortRange }
+  readonly ports: { readonly quota: PortRange; readonly market?: PortRange }
 }
 /** Explicitly resolved inputs used by the container implementation. */
 export interface ContainerConfig extends Omit<ProvisionerConfig, 'runtime' | 'tools' | 'paths' | 'limits' | 'ports'> {
   readonly paths: HostPaths & { readonly runtimeAssets: string }
   readonly tools: HostTools & ContainerRuntimeConfig['tools'] & { readonly quotaMount: string }
   readonly limits: Limits
-  readonly ports: { readonly quota: PortRange; readonly sidecar: PortRange }
+  readonly ports: { readonly quota: PortRange; readonly sidecar: PortRange; readonly market?: PortRange }
   readonly image: string
   readonly imageArchive?: string
   readonly quota: { readonly hostAddress: string }
@@ -86,8 +86,13 @@ export function validateProvisionerConfig(value: unknown): ProvisionerConfig {
   const tools: HostTools = { getent: path(t.getent, 'getent'), useradd: path(t.useradd, 'useradd'), userdel: path(t.userdel, 'userdel'), nologin: path(t.nologin, 'nologin') }
   const maxActiveInstances = integer(c.maxActiveInstances, 'maxActiveInstances')
   const idleStopMs = integer(c.idleStopMs, 'idleStopMs'); validateIdleMs(idleStopMs)
-  const ports = record(c.ports, ['quota'])
+  const ports = record(c.ports, ['quota'], ['market'])
   const quota = validatePortRange(ports.quota, 'ports.quota', maxActiveInstances)
+  let market: PortRange | undefined
+  if (ports.market !== undefined) {
+    market = validatePortRange(ports.market, 'ports.market')
+    if (portRangesOverlap(quota, market)) throw new Error('quota and market ports must not overlap')
+  }
   const l = record(c.limits, ['cpus', 'memoryBytes', 'pids', 'openFiles', 'diskBytes'])
   if (typeof l.cpus !== 'number' || !Number.isFinite(l.cpus) || l.cpus <= 0) throw new Error('cpus must be positive')
   const limits = { cpus: l.cpus, memoryBytes: integer(l.memoryBytes, 'memoryBytes'), pids: integer(l.pids, 'pids'),
@@ -105,6 +110,7 @@ export function validateProvisionerConfig(value: unknown): ProvisionerConfig {
         || tag.hostAddress.split('.').some(octet => Number(octet) > 255)) throw new Error('hostAddress must be an IPv4 address')
       const sidecar = validatePortRange(tag.sidecar, 'runtime.sidecar', maxActiveInstances)
       if (portRangesOverlap(quota, sidecar)) throw new Error('quota and sidecar ports must not overlap')
+      if (market !== undefined && portRangesOverlap(sidecar, market)) throw new Error('sidecar and market ports must not overlap')
       const containerLimits = validateLimits({ ...limits, network: tag.network })
       runtime = { kind: 'podman-gvisor', runtimeAssets: path(tag.runtimeAssets, 'runtimeAssets'), image: tag.image,
         hostAddress: tag.hostAddress, network: containerLimits.network, sidecar,
@@ -117,7 +123,7 @@ export function validateProvisionerConfig(value: unknown): ProvisionerConfig {
     }
     default: throw new Error('unknown runtime provider kind')
   }
-  return { paths, tools, runtime, maxActiveInstances, idleStopMs, limits, ports: { quota },
+  return { paths, tools, runtime, maxActiveInstances, idleStopMs, limits, ports: { quota, ...market === undefined ? {} : { market } },
     socketGid: integer(c.socketGid, 'socketGid', 0), deletionRecoveryMs: integer(c.deletionRecoveryMs, 'deletionRecoveryMs'),
     readyTimeoutMs: integer(c.readyTimeoutMs, 'readyTimeoutMs'), stopTimeoutMs: integer(c.stopTimeoutMs, 'stopTimeoutMs') }
 }

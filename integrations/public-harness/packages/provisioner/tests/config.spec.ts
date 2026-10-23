@@ -52,3 +52,29 @@ it('rejects native configuration without an absolute companion file', async () =
     expect(() => validateProvisionerConfig({ ...c, runtime })).toThrow()
   }
 })
+
+describe('ports.market', () => {
+  it('accepts_optional_market_range_and_rejects_overlap_or_cap', async () => {
+    const c = await makeConfig()
+    const ok = validateProvisionerConfig({
+      ...c,
+      ports: { ...c.ports, market: { min: 30_000, max: 30_099 } },
+    })
+    expect(ok.ports.market).toEqual({ min: 30_000, max: 30_099 })
+
+    expect(() => validateProvisionerConfig({
+      ...c,
+      ports: { ...c.ports, market: { min: 29_100, max: 29_150 } },
+    })).toThrow(/overlap/i)
+
+    expect(() => validateProvisionerConfig({
+      ...c,
+      ports: { ...c.ports, market: { min: 10_000, max: 10_000 + 4096 } },
+    })).toThrow()
+
+    expect(() => validateProvisionerConfig({
+      ...c,
+      ports: { ...c.ports, market: { min: 40_000, max: 40_010 } },
+    })).toThrow()
+  })
+})
