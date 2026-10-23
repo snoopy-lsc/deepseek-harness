@@ -3,32 +3,35 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/superpowers/plans/phase0-results.md
 /phase-0-results-company-plugin-market:
-  en: 0285df122e8eec21
-  zh: 7bf5f5a0fb4c8650
+  en: d34f34cbd64a8a6e
+  zh: b0c25d80a0a62377
 /phase-0-results-company-plugin-market/p0-1-second-patch-and-settings-overrides:
-  en: a66069d8a7b86bd5
-  zh: 18aeafe46bffc475
+  en: 480c33b83255c54a
+  zh: 104e3c116592745b
 /phase-0-results-company-plugin-market/p0-2-pnpm-11-against-a-loopback-registry:
-  en: 693268a9e571b090
-  zh: f2616a3f4b55d1d6
+  en: 8562c8f44975382b
+  zh: ba9435b1e3d5bc4b
 /phase-0-results-company-plugin-market/p0-3-bundledependencies-and-allow-build:
-  en: 56094f201b7eaee4
-  zh: ff1adf5a9c413356
+  en: b4c5ad5b02ece4f6
+  zh: 2c8e655b1f094f3f
 /phase-0-results-company-plugin-market/p0-4-reconcile-transient-unit-flags:
-  en: 44a77a2655483b07
-  zh: c0231ad9eaebbd32
+  en: 75b7b1c0c23fe806
+  zh: 04385c8f39c06793
 /phase-0-results-company-plugin-market/p0-5-container-pasta-matching-and-one-shot-reconcile:
-  en: e9d1e8d748af6d46
-  zh: 815d69b6245ee0ec
+  en: 26b96f990c365769
+  zh: c8d3f03cd8078699
 /phase-0-results-company-plugin-market/p0-6-git-blob-tarball-vs-npm-pack:
-  en: 0dab577590dbe850
-  zh: b25c11557ad4eb03
+  en: 761f8ae1c13ef0ce
+  zh: dcba6ef413921c23
 /phase-0-results-company-plugin-market/p0-7-idle-signal-and-installbundle-enabled-false:
-  en: a175b6b3036f7245
-  zh: 1e731a7301ca3e51
+  en: 017a11199228e800
+  zh: a1b025523092980e
 /phase-0-results-company-plugin-market/p0-8-socket-unit-cgroup-and-dsh-market-loader:
-  en: c6067cafc75f0ac3
-  zh: 85f26baa0646ada7
+  en: cacf17092a010e23
+  zh: f103a070d8e4e79c
 /phase-0-results-company-plugin-market/p0-9-inet-diag-peer-check-from-unprivileged-service:
-  en: 4ea05e50818203b4
-  zh: e99a3b9c1fced9d7
+  en: 809ed73df4a85077
+  zh: 7179a1b4026cc978
+/phase-0-results-company-plugin-market/summary-for-milestone-planning:
+  en: ff3f13402dbcf406
+  zh: beb80fdd07fecd86
