@@ -10,7 +10,7 @@ import { CommandError, KeyedLock, runChecked, type CommandRunner } from '@public
 import { clearReady, readReady, waitForReady, ContainerExitedError } from '@public-harness/provisioner/token-channel'
 import { NativeHostError, type SystemdConfig } from './config.ts'
 import { installNetwork, removeNetwork, unitCgroup, unitSlice } from './network.ts'
-import { buildReconcileSystemdRunArgv, instanceMarketNpmrcPath } from './reconcile-unit.ts'
+import { buildReconcileSystemdRunArgv, instanceMarketNpmrcPath, reconcilePlanPath } from './reconcile-unit.ts'
 import { verifyEnforcement, type ProbeHost } from './probe.ts'
 import { openDirectoryNoFollow, prepareHost } from './storage.ts'
 
@@ -47,6 +47,16 @@ export interface SystemdRuntimeDeps {
    * Pass `false` to skip (tests); pass a function to inject.
    */
   readonly preStartReconcile?: false | ((instance: RuntimeInstance) => Promise<void>)
+  /**
+   * User's assigned market port (+ optional hostAddress) for the default reconcile unit.
+   * Required for the default hook; without it the one-shot is skipped (no tautological port).
+   */
+  readonly reconcileMarket?:
+    | { readonly port: number; readonly hostAddress?: string }
+    | ((instance: RuntimeInstance) =>
+      | { readonly port: number; readonly hostAddress?: string }
+      | undefined
+      | Promise<{ readonly port: number; readonly hostAddress?: string } | undefined>)
 }
 
 /** A native lifecycle failure with a stable, path-free reason. */
@@ -191,13 +201,19 @@ export function createSystemdRuntime(deps: SystemdRuntimeDeps) {
         // Reconcile failures must not block the instance start.
         if (deps.preStartReconcile !== false) {
           const reconcile = deps.preStartReconcile ?? (async (target: RuntimeInstance) => {
+            const market = typeof deps.reconcileMarket === 'function'
+              ? await deps.reconcileMarket(target)
+              : deps.reconcileMarket
+            if (market === undefined) return
             const npmGlobalConfig = instanceMarketNpmrcPath(config, target.account) ?? '/dev/null'
             const argv = buildReconcileSystemdRunArgv({
               instance: target,
               config,
               entryPath: `${config.paths.release}/reconcile-entry.mjs`,
-              planPath: `${target.controlDir}/reconcile-plan.json`,
+              planPath: reconcilePlanPath(target.home),
               npmGlobalConfig,
+              marketPort: market.port,
+              ...(market.hostAddress === undefined ? {} : { hostAddress: market.hostAddress }),
             })
             try { await runChecked(runner, config.tools.systemdRun, argv) } catch { /* start anyway */ }
           })

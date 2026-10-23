@@ -3,7 +3,7 @@
  * Runs as the account; plan only from reconcile-plan; P0.4 argv/env fixtures.
  */
 import { randomBytes } from 'node:crypto'
-import { readFile, writeFile } from 'node:fs/promises'
+import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   appendOp,
@@ -13,6 +13,7 @@ import {
   readLockfileIntegrity,
   readOps,
   listQueuedRestores,
+  readTenantFile,
   restoreQueuePath,
   restoreSnapshotFiles,
   writeProfileSnapshot,
@@ -268,7 +269,7 @@ interface PackageJsonShape {
 
 async function readPackageJson(profileDir: string): Promise<PackageJsonShape> {
   try {
-    const text = await readFile(join(profileDir, 'package.json'), 'utf8')
+    const text = (await readTenantFile(join(profileDir, 'package.json'))).toString('utf8')
     const parsed: unknown = JSON.parse(text)
     if (typeof parsed !== 'object' || parsed === null) return {}
     return parsed as PackageJsonShape
@@ -293,7 +294,7 @@ async function readInstalledIntegrity(
   version: string,
 ): Promise<string | undefined> {
   try {
-    const text = await readFile(join(profileDir, 'pnpm-lock.yaml'), 'utf8')
+    const text = (await readTenantFile(join(profileDir, 'pnpm-lock.yaml'))).toString('utf8')
     return readLockfileIntegrity(text, name, version)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined

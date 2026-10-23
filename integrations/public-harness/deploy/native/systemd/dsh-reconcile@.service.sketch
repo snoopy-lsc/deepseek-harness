@@ -18,5 +18,9 @@
 #   IPAddressAllow=localhost
 #   MemoryMax= / TasksMax= (instance limits)
 #   RuntimeMaxSec=300
-# Environment allowlist only:
+# Environment allowlist for pnpm (exact):
 #   HOME DSH_HOME XDG_CACHE_HOME TMPDIR PATH NPM_CONFIG_GLOBALCONFIG
+# Entry-only setenv (not passed to pnpm):
+#   DSH_MARKET_PORT  (independent expected registry port)
+#   DSH_HOST_ADDRESS (optional; enables hostAddress registry host)
+# Plan path: <home>/.dsh-market/reconcile-plan.json (account-readable; NOT under stateDir/controlDir)

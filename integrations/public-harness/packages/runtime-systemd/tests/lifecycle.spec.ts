@@ -44,6 +44,7 @@ async function harness(overrides: { readyPort?: number; probe?: boolean; hang?: 
     webProbe: async (port, grant) => overrides.probe ?? (port === i.webPort && grant === 'grant-1'),
     prepare: async () => { events.push('prepare') },
     network: { install: async () => { events.push('nft-install') }, remove: async () => { events.push('nft-remove') } },
+    reconcileMarket: { port: 31001 },
     probeHost: { read: async path => {
       if (path.endsWith('cgroup.procs')) return unitActive ? '1\n' : overrides.procs ?? ''
       if (path.endsWith('profiles')) return `${i.account} (enforce)\n${i.account}//chromium (enforce)\n`
@@ -96,6 +97,10 @@ describe('native lifecycle', () => {
     const reconcile = h.calls.find(line => line.startsWith('systemd-run') && line.includes('RuntimeMaxSec=300'))
     expect(reconcile).toBeDefined()
     expect(reconcile).toContain('IPAddressAllow=localhost')
+    expect(reconcile).toContain(`${h.home}/.dsh-market/reconcile-plan.json`)
+    expect(reconcile).not.toContain(`${h.i.controlDir}/reconcile-plan.json`)
+    expect(reconcile).toContain('--setenv=DSH_MARKET_PORT=31001')
+    expect(reconcile).toContain('--market-port=31001')
     const sliceIdx = h.calls.findIndex(line => line.startsWith('systemctl start') && line.endsWith('.slice'))
     const serviceIdx = h.calls.findIndex(line => line.startsWith('systemctl start') && line.endsWith('.service'))
     const reconcileIdx = h.calls.findIndex(line => line.startsWith('systemd-run') && line.includes('RuntimeMaxSec=300'))

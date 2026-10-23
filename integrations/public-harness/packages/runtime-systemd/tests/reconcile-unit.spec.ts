@@ -1,4 +1,4 @@
-/** 1D.6: native reconcile unit-text / env fixtures (P0.4 — no live systemd-run). */
+/** 1D.6 / 1D.6-fix: native reconcile unit-text / env fixtures (P0.4 — no live systemd-run). */
 import { describe, expect, it } from 'vitest'
 import {
   RECONCILE_ENV_ALLOWLIST,
@@ -6,6 +6,7 @@ import {
 } from '../../plugins/src/reconcile-entry.ts'
 import {
   buildReconcileSystemdRunArgv,
+  reconcilePlanPath,
   renderReconcileUnitProperties,
 } from '../src/reconcile-unit.ts'
 import { config, instance } from './fixture.ts'
@@ -35,15 +36,27 @@ describe('reconcile unit text fixtures (P0.4 substitute; live systemd blocked)',
     expect(props.join('\n')).not.toContain('PrivateNetwork=yes')
   })
 
+  it('reconcilePlanPath_is_under_account_home_market_dir_not_stateDir', () => {
+    const i = instance()
+    const plan = reconcilePlanPath(i.home)
+    expect(plan).toBe(`${i.home}/.dsh-market/reconcile-plan.json`)
+    expect(plan.startsWith(i.home)).toBe(true)
+    expect(plan.includes(i.controlDir)).toBe(false)
+    expect(plan.includes('/srv/dsh/state')).toBe(false)
+  })
+
   it('buildReconcileSystemdRunArgv_orders_slice_uid_gid_setenv_and_entry', () => {
     const i = instance()
     const cfg = config()
+    const planPath = reconcilePlanPath(i.home)
     const argv = buildReconcileSystemdRunArgv({
       instance: i,
       config: cfg,
       entryPath: '/opt/dsh/release/reconcile-entry.mjs',
-      planPath: `${i.controlDir}/reconcile-plan.json`,
+      planPath,
       npmGlobalConfig: '/run/dsh-public/instance-market/acct.npmrc',
+      marketPort: 31001,
+      hostAddress: '10.0.2.2',
     })
     expect(argv[0]).toBe('--wait')
     expect(argv).toContain('--collect')
@@ -60,14 +73,22 @@ describe('reconcile unit text fixtures (P0.4 substitute; live systemd blocked)',
     expect(argv).toContain(`--setenv=TMPDIR=${i.tmp}`)
     expect(argv.some((a) => a.startsWith('--setenv=PATH=') && a.includes(cfg.paths.toolchain))).toBe(true)
     expect(argv).toContain('--setenv=NPM_CONFIG_GLOBALCONFIG=/run/dsh-public/instance-market/acct.npmrc')
+    // Independent market port + hostAddress available to the entry (not derived from plan).
+    expect(argv).toContain('--setenv=DSH_MARKET_PORT=31001')
+    expect(argv).toContain('--setenv=DSH_HOST_ADDRESS=10.0.2.2')
     // Env allowlist only — no model key setenv.
     expect(argv.join('\n')).not.toContain('DSH_MODEL_API_KEY')
+    // Plan must be account-readable (under home), not under InaccessiblePaths stateDir/controlDir.
+    expect(planPath).toBe(`${i.home}/.dsh-market/reconcile-plan.json`)
+    expect(argv).toContain(planPath)
+    expect(argv.join('\n')).not.toContain(`${i.controlDir}/reconcile-plan.json`)
     const sep = argv.indexOf('--')
     expect(sep).toBeGreaterThan(0)
     expect(argv.slice(sep + 1)).toEqual([
       cfg.tools.node,
       '/opt/dsh/release/reconcile-entry.mjs',
-      `${i.controlDir}/reconcile-plan.json`,
+      planPath,
+      '--market-port=31001',
     ])
   })
 

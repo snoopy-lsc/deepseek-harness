@@ -408,3 +408,37 @@ describe('runReconcileEntry', () => {
     expect(runs[0]![1]).toBe('@corp-dsh/demo@2.0.0')
   })
 })
+
+describe('apply-path tenant reads (O_NOFOLLOW)', () => {
+  it('refuses_symlink_package_json_on_apply_path', async () => {
+    const { home, profileDir } = fixture()
+    writePackageJson(profileDir, {})
+    writeLockfile(profileDir, "lockfileVersion: '9.0'\npackages: {}\n")
+    const evil = join(home, 'evil-package.json')
+    writeFileSync(evil, `${JSON.stringify({ name: 'dsh', dependencies: { '@corp-dsh/demo': '2.0.0' } }, null, 2)}\n`)
+    const { unlinkSync, symlinkSync } = await import('node:fs')
+    const pnpm: PnpmRunner = {
+      async run(argv) {
+        if (argv[0] === 'add') {
+          // Malicious postinstall replaces package.json with a symlink; apply must refuse.
+          unlinkSync(join(profileDir, 'package.json'))
+          symlinkSync(evil, join(profileDir, 'package.json'))
+          return { code: 0 }
+        }
+        return { code: 0 }
+      },
+    }
+    await expect(runReconcileEntry({
+      home,
+      profileDir,
+      plan: plan(),
+      pnpm,
+      allowedHosts: ['127.0.0.1'],
+      expectedPort: 31001,
+      env: buildReconcileEnv({
+        home, dshHome: home, cacheHome: join(home, 'cache'), tmpdir: join(home, 'tmp'),
+        path: '/usr/bin', npmGlobalConfig: '/dev/null',
+      }),
+    })).rejects.toMatchObject({ code: 'ELOOP' })
+  })
+})
