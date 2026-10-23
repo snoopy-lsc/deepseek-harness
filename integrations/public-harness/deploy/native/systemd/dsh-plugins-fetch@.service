@@ -1,0 +1,36 @@
+[Unit]
+Description=Team Harness plugin market fetch (one request through egress allowlist)
+CollectMode=inactive-or-failed
+
+[Service]
+Type=simple
+User=dsh-plugins-fetch
+Group=dsh-plugins-fetch
+Environment=HTTPS_PROXY=http://127.0.0.1:18787
+# egressPort from plugins.json; placeholder until 1B wires the real port into the unit drop-in.
+ExecStart=/usr/bin/node /opt/dsh-public/integration/packages/production/lib/plugins-fetch.js /etc/dsh-public/plugins.json
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=no
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+IPAddressDeny=any
+IPAddressAllow=localhost
+UMask=0077
+MemoryMax=1536M
+TasksMax=64
+RuntimeMaxSec=900
+# Sketch only: nft output rule (fetch UID → egressPort only), sysusers, and real egressPort drop-in land in 1B.

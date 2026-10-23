@@ -1,0 +1,16 @@
+[Unit]
+Description=Team Harness plugin market fetch socket (only the dsh-plugins account may connect)
+PartOf=dsh-public.target
+
+[Socket]
+ListenStream=/run/dsh-plugins/fetch.sock
+SocketUser=root
+SocketGroup=dsh-plugins
+SocketMode=0660
+# One short-lived dsh-plugins-fetch@.service per connection.
+Accept=yes
+MaxConnections=8
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

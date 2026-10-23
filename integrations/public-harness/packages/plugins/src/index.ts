@@ -1,4 +1,4 @@
-/** Plugin market catalogue and host-side egress proxy. */
+/** Plugin market catalogue, egress proxy, and socket-activated fetch framing. */
 export { newId, ID_PATTERN } from './ids.ts'
 export { openPluginsDb, type PluginsDb } from './db.ts'
 export {
@@ -33,3 +33,27 @@ export {
 } from './egress/server.ts'
 export { evaluateConnectTarget, parseConnectTarget, type EgressDecision, type EgressPolicyOptions } from './egress/policy.ts'
 export { addressInCidrs, isForbiddenAddress, parseCidr } from './egress/ranges.ts'
+export {
+  FETCH_VERBS,
+  FetchError,
+  createFetchDeps,
+  exactSemVer,
+  npmName,
+  parseFetchPolicy,
+  parseFetchRequest,
+  registryHost,
+  serveFetchConnection,
+  unimplementedHandlers,
+  validateFetchArgs,
+  type ArtifactArgs,
+  type ClosureArgs,
+  type FetchConnectionDeps,
+  type FetchHandlerResult,
+  type FetchHandlers,
+  type FetchPolicy,
+  type FetchRequest,
+  type FetchVerb,
+  type GitCommitArgs,
+  type NpmVersionArgs,
+  type ValidatedArgs,
+} from './fetch/server.ts'
