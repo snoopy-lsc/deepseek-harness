@@ -14,10 +14,15 @@
       "default": "./lib/*.js"
     }
   },
-  "files": ["lib", "NOTICE"],
+  "files": [
+    "lib",
+    "NOTICE"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "test": "cd ../.. && vitest run --config vitest.config.ts packages/plugins/tests"
   },
-  "dependencies": {}
+  "dependencies": {
+    "@public-harness/plugin-sync": "workspace:*"
+  }
 }

@@ -175,8 +175,7 @@ export {
   type ApplySyncReportResult,
   type BuildSyncPlanInput,
   type ApplySyncReportInput,
-  type ReconcilePlanInput,
-} from './sync-plan.ts'
+  } from './sync-plan.ts'
 export {
   scopesVisibleToUser,
   packageVisibleInIndex,
@@ -253,3 +252,29 @@ export {
   type IndexCache,
   type IndexCacheEntry,
 } from './index-builder.ts'
+
+export {
+  PKG_TIMEOUT_MS,
+  TOTAL_TIMEOUT_MS,
+  RECONCILE_ENV_ALLOWLIST,
+  ReconcileEntryError,
+  assertReconcilePlan,
+  buildPnpmAddArgv,
+  buildPnpmRepairArgv,
+  buildReconcileEnv,
+  openFailedSnapshots,
+  runReconcileEntry,
+  type ReconcileEnvKey,
+  type ReconcileEntryErrorCode,
+  type ReconcileEntryPlan,
+  type AssertReconcilePlanOptions,
+  type PnpmRunOptions,
+  type PnpmRunner,
+  type ReconcileEntryResult,
+  type ReconcileEntryReport,
+  type RunReconcileEntryInput,
+  type BuildReconcileEnvInput,
+  type BuildPnpmAddArgvInput,
+  type BuildPnpmRepairArgvInput,
+} from './reconcile-entry.ts'
+export { main as reconcileEntryMain } from './reconcile-entry-main.ts'

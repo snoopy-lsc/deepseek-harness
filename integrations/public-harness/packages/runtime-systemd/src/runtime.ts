@@ -10,6 +10,7 @@ import { CommandError, KeyedLock, runChecked, type CommandRunner } from '@public
 import { clearReady, readReady, waitForReady, ContainerExitedError } from '@public-harness/provisioner/token-channel'
 import { NativeHostError, type SystemdConfig } from './config.ts'
 import { installNetwork, removeNetwork, unitCgroup, unitSlice } from './network.ts'
+import { buildReconcileSystemdRunArgv, instanceMarketNpmrcPath } from './reconcile-unit.ts'
 import { verifyEnforcement, type ProbeHost } from './probe.ts'
 import { openDirectoryNoFollow, prepareHost } from './storage.ts'
 
@@ -40,6 +41,12 @@ export interface SystemdRuntimeDeps {
   /** Margin after a command's own timeout before the runtime stops waiting for the runner (default 1 s). */
   readonly deadlineSlackMs?: number
   readonly credentialRotateMs?: number
+  /**
+   * Pre-start reconcile between network.install and instance start.
+   * Default runs a confined `systemd-run` one-shot (errors swallowed — instance starts anyway).
+   * Pass `false` to skip (tests); pass a function to inject.
+   */
+  readonly preStartReconcile?: false | ((instance: RuntimeInstance) => Promise<void>)
 }
 
 /** A native lifecycle failure with a stable, path-free reason. */
@@ -180,6 +187,22 @@ export function createSystemdRuntime(deps: SystemdRuntimeDeps) {
         await systemctl('start', unitSlice(instance))
         // The slice cgroup now exists, so `socket cgroupv2` resolves; rules are in place before any tenant process runs.
         await network.install(instance, config, runner, (await deps.active()).filter(other => other.userId !== instance.userId))
+        // Native order: slice → network.install → reconcile unit → instance (design § Fallback).
+        // Reconcile failures must not block the instance start.
+        if (deps.preStartReconcile !== false) {
+          const reconcile = deps.preStartReconcile ?? (async (target: RuntimeInstance) => {
+            const npmGlobalConfig = instanceMarketNpmrcPath(config, target.account) ?? '/dev/null'
+            const argv = buildReconcileSystemdRunArgv({
+              instance: target,
+              config,
+              entryPath: `${config.paths.release}/reconcile-entry.mjs`,
+              planPath: `${target.controlDir}/reconcile-plan.json`,
+              npmGlobalConfig,
+            })
+            try { await runChecked(runner, config.tools.systemdRun, argv) } catch { /* start anyway */ }
+          })
+          try { await reconcile(instance) } catch { /* start anyway */ }
+        }
         await systemctl('start', unitOf(instance))
         let ready
         try {

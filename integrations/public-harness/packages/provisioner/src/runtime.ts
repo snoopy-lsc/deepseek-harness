@@ -157,6 +157,16 @@ function loopbackPortFree(port: number): Promise<boolean> {
   })
 }
 
+/** Draft allowlist for the container one-shot reconcile (P0.5 / 1E).
+ * Same forbid-list spirit as {@link assertSafeRunArgv}; narrower volumes (workspace + market
+ * snapshot paths only); no publish; pasta `--no-splice`; command allowlist `pnpm` / `node` entry.
+ * Full enforcement lands in milestone 1E — this stub documents the contract for 1D.6.
+ */
+export function assertSafeReconcileArgvDraft(argv: readonly string[]): void {
+  if (argv.some(arg => FORBIDDEN_FLAGS.test(arg))) throw new RuntimeStartError('unsafe-argv')
+  if (argv.includes('--publish')) throw new RuntimeStartError('unsafe-argv')
+}
+
 /** Reject an argv that grants more than the fixed design allows. */
 export function assertSafeRunArgv(argv: readonly string[], config: ContainerConfig, record: UserRecord): void {
   const allowedVolumes = new Set([

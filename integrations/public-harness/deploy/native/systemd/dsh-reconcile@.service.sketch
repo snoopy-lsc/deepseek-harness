@@ -1,0 +1,22 @@
+# Sketch: pre-start reconcile is a *transient* systemd-run unit (not installed).
+# Generated argv: packages/runtime-systemd/src/reconcile-unit.ts `buildReconcileSystemdRunArgv`.
+# P0.4 / 1D.6: live systemd-run on unprivileged boxes is blocked — unit-text / argv fixtures only.
+#
+# Native start order: slice → network.install → this one-shot → instance unit.
+#
+# Essential properties (also asserted by reconcile-unit.spec.ts):
+#   Slice=dsh-user-<account>.slice
+#   User=/Group= account uid/gid
+#   AppArmorProfile=<account>
+#   NoNewPrivileges=yes
+#   CapabilityBoundingSet=
+#   ProtectSystem=strict
+#   ProtectHome=yes
+#   ReadWritePaths=<home> <workspace> <cache> <tmp>
+#   InaccessiblePaths=<stateDir> <socketDir>
+#   IPAddressDeny=any
+#   IPAddressAllow=localhost
+#   MemoryMax= / TasksMax= (instance limits)
+#   RuntimeMaxSec=300
+# Environment allowlist only:
+#   HOME DSH_HOME XDG_CACHE_HOME TMPDIR PATH NPM_CONFIG_GLOBALCONFIG
