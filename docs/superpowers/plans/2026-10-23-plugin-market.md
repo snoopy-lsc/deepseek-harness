@@ -408,15 +408,77 @@ Server side stays in `integrations/public-harness/packages/plugins/` (`plugin_de
 
 **1D exit:** CLI/hand-edit uninstall not reinstalled; remove+install failure recovers; integrity mismatch never enables; idle gate uses P0.7 agent idle signal; live systemd reconcile remains partial/blocked per P0.4 (fixtures green).
 
-## Milestone 1E: policy, limits, containers (outline)
+## Milestone 1E: policy, limits, containers (TDD)
 
-**Create / modify:**
-- Generalize `packages/kb/src/limits.ts` `effectiveLimits` over limit names; `dsh_plugin_limit`.
-- `market_only` / `install_scripts` policies; npmrc `registry=` when market_only.
-- `deploy/production/nftables/{dsh-public.nft,dsh-market.nft}`; provisioner `webPatch` + market volume; one-shot reconcile container (P0.5).
-- README records market-range firewall exception (decided Q7).
+Server-side policy and limits live in `integrations/public-harness/packages/plugins/` (`plugin_policy`, `dsh_plugin_limit`) with resolution shared via a generalized `packages/kb/src/limits.ts` `effectiveLimits`. Container production pieces live under `deploy/production/` and `packages/provisioner/`. Design: § Installation and policy; Plugin limits; Deployment changes (production). **Locked decisions:** `market_only` is policy-only (no `egress_lock` in phase 1 — that is phase 2); signatures phase 2; ~5 min idle push already in 1D; native + container in phase 1 (containers here); no self-review on path A; force company scope `@corp-dsh/`; production firewall gains a market-range exception only (Q7); accept the three phase-1 residual risks; scale cap 4096 accounts. P0.5 live pasta/runsc still **blocked** — argv / nft-text / volume fixtures only. Fold deferred from 1D: promote `assertSafeReconcileArgvDraft` → `assertSafeReconcileArgv`; release packaging for `reconcile-entry.mjs`.
 
-**Acceptance:** market_only registry specs fail closed without egress_lock; container owner reach + cross-tenant deny; limits lowering never deletes data.
+### Task 1E.1: Generalize effectiveLimits + plugin limits
+
+**Files:** Generalize `packages/kb/src/limits.ts` `effectiveLimits` over caller-supplied limit names (KB `LIMIT_NAMES` stay the default for KB callers); create `packages/plugins/src/limits.ts`, `tests/limits.spec.ts`; seed / CRUD on `dsh_plugin_limit`; wire identity-backed admin control (`GET`/`PUT`/`DELETE /plugins/limits`, `GET /plugins/limits/effective`) already stubbed in the gateway.
+
+**Interfaces:** `PLUGIN_LIMIT_NAMES` = `max_installed` | `max_submissions` | `max_submission_bytes`; defaults global 50 / 20 / 1 GiB (design Q12); `effectivePluginLimits(rows, userId, groups)` reuses the generalized resolver (user wins → most permissive among effective groups incl. ancestors → global; `NULL` = unlimited); `setPluginLimit` / `deletePluginLimit` (admin, reauth); **lowering a limit never deletes, delists, or uninstalls** — only growth returns 409 `limit-reached`; enforce `max_submissions` / `max_submission_bytes` on submit/upload; `max_installed` best-effort on packument + index mark when last sync/reconcile report is at limit (tarball/git/stale reports may escape); default installs count toward `max_installed` but sync/reconcile still install past the limit when an admin chose them (record it); audit `admin-plugin-limit-change` / `admin-plugin-limit-delete`.
+
+- [ ] **1. Write failing tests:** generalized resolver with plugin names; user/group/global precedence; lower limit leaves existing installs/submissions; submit/upload refuse at cap; packument/index mark at `max_installed`; defaults still plan past limit; delete/set admin shapes.
+- [ ] **2. Run** `pnpm --dir integrations/public-harness/packages/kb test` (resolver) and `pnpm --dir integrations/public-harness/packages/plugins test -- limits.spec.ts`; expect fail on new cases.
+- [ ] **3. Implement** generalized `effectiveLimits`, plugin limits module, enforcement hooks, control wiring.
+- [ ] **4. Verify** pass; commit `feat(plugins): generalize effectiveLimits and plugin limits`.
+
+### Task 1E.2: market_only / install_scripts policies
+
+**Files:** Create `packages/plugins/src/policy.ts`, `tests/policy.spec.ts`; wire `GET`/`PUT /plugins/policy`; ensure provisioner / market-file writers consume resolved `marketOnly` (npmrc `registry=` + `pluginMarketRows` `fallbackRegistries: []` already exist in 1B — bind them to policy resolution); keep `egress_lock` schema/name only (phase 2 — do not implement firewall drops).
+
+**Interfaces:** `effectivePolicy(userId, groups)` — user is under `market_only` when any effective group or the global row turns it on; default `install_scripts = deny` (approve already 409 `install-scripts` unless each package allowed after reauth); under `market_only`, registry specs outside the user mirror fail closed with not-found in the existing dialog **without** needing `egress_lock` (git/tarball/`443` still leave — accepted soft policy); company scope remains forced `@corp-dsh/`; audit `admin-plugin-policy-change`. Phase 0 confirmed `--patch` wins over Settings for registry/`indexes`.
+
+- [ ] **1. Write failing tests:** resolve market_only from global/group; install_scripts deny default; market_only drives npmrc `registry=` + empty `fallbackRegistries`; non-mirror registry spec fails closed; `egress_lock` PUT refused or no-op stub (phase 2); no firewall mutation from this task.
+- [ ] **2. Run** focused policy (+ market-files / contracts) tests; expect fail on new cases.
+- [ ] **3. Implement** policy module, control wiring, provisioner consume-resolved-marketOnly path.
+- [ ] **4. Verify** pass; commit `feat(plugins): market_only and install_scripts policy`.
+
+### Task 1E.3: Production nftables + README (Q7)
+
+**Files:** Update `deploy/production/nftables/dsh-public.nft`; create `deploy/production/nftables/dsh-market.nft`; update `deploy/production/README.md` (and tests/fixtures under `deploy/production/` or package tests that already parse nft text). **No live `nft`** required — static text / example-parse fixtures (same substitute style as 1B.4).
+
+**Interfaces:** `define MARKET_PORTS` matching `ports.market` / provisioner config; in `dsh-public.nft`, `oif "lo" ip daddr 127.0.0.1 tcp dport $MARKET_PORTS accept` **before** `oif "lo" drop`; keep `dsh-plugins-fetch` → `egressPort` only; **do not** land `egress_locked` drops (phase 2); `dsh-market.nft` holds table `dsh_market` with `market_listener` input subchain, `market_owner` set, and owner drop in an output chain at priority `filter - 2`, loaded by the socket unit `ExecStartPost=-` and **never** by the `dsh-public.nft` load; README records the overturned decision (Q7): per-user set elements + receiving-socket rule exist **for the market range only**; root / `dsh-router` / `dsh-identity` / other host accounts stay off those ports; note `flush ruleset` risk and probe restore (peer check remains defense in depth).
+
+- [ ] **1. Write failing tests:** MARKET_PORTS accept precedes lo drop; dsh-market table/set/chain text; README mentions market-range exception; examples stay consistent with provisioner `ports.market` width ≤ 4096.
+- [ ] **2. Run** focused production / nft fixture tests; expect fail.
+- [ ] **3. Implement** nft files + README; mark live nft apply as out-of-scope on this box.
+- [ ] **4. Verify** pass; commit `feat(production): market nftables and README Q7 exception`.
+
+### Task 1E.4: Container webPatch, market volume, market_owner
+
+**Files:** Extend `packages/provisioner/src/runtime.ts` (and `config.ts` / `market-files.ts` as needed), `tests/runtime.spec.ts` (or split); ensure `pluginMarketRows` with `hostAddress` land in container `webPatch`; admit read-only market volume on `assertSafeRunArgv` allowlist; add/remove `market_owner` set elements around instance life.
+
+**Interfaces:** `webPatch` includes the same market insert rows as native (`plugin-market`, `ui-plugin-market`, sync plugin, optional `plugin_manager` registry under market_only) with registry host = `config.quota.hostAddress`; mount `<marketDir>/<account>:/run/dsh-market:ro` and set `NPM_CONFIG_GLOBALCONFIG=/run/dsh-market/npmrc`; volume must pass `assertSafeRunArgv`; provisioner adds the account to `market_owner` before start and removes on stop (fixture the nft set element argv/text — no live nft); `ports.market` validation already refuses overlap / >4096 — keep covered.
+
+- [ ] **1. Write failing tests:** webPatch contains pluginMarketRows + hostAddress; RO market volume admitted; foreign volume / publish still refused; market_owner add/remove call shapes; marketOnly flips registry rows.
+- [ ] **2. Run** focused provisioner runtime / market tests; expect fail.
+- [ ] **3. Implement** webPatch rows, volume allowlist, set-element helpers.
+- [ ] **4. Verify** pass; commit `feat(provisioner): container market webPatch volume and owner set`.
+
+### Task 1E.5: One-shot reconcile container + assertSafeReconcileArgv (P0.5)
+
+**Files:** Promote `assertSafeReconcileArgvDraft` → `assertSafeReconcileArgv` in `packages/provisioner/src/runtime.ts`; create reconcile-container argv builder + tests; wire provisioner pre-start after `market_owner` is present (container order: network/set → one-shot reconcile → instance). **No live pasta/runsc** (P0.5 blocked) — argv / allowlist fixtures only.
+
+**Interfaces:** one-shot `runsc` with the instance image, userns, pasta `--no-splice` + `--map-host-loopback`, **no publish**; volumes narrowed to workspace + market/snapshot paths only (forbid-list same spirit as `assertSafeRunArgv`); command allowlist `pnpm` / `node` reconcile entry only; env allowlist identical to native reconcile (`HOME` / `DSH_HOME` / `XDG_CACHE_HOME` / `TMPDIR` / toolchain `PATH` / `NPM_CONFIG_GLOBALCONFIG`); plan still only from `reconcile-plan` with user mirror registry; instance starts anyway on reconcile error; owner reach + cross-tenant deny covered by set + peer check (fixture assertions).
+
+- [ ] **1. Write failing tests:** safe argv admits workspace+market, refuses publish/extra volume/forbidden flags; pasta flags present; command allowlist; runs after market_owner add; error still starts instance (mock).
+- [ ] **2. Run** focused provisioner reconcile-container tests; expect fail.
+- [ ] **3. Implement** `assertSafeReconcileArgv` + one-shot wiring; note live pasta blocked.
+- [ ] **4. Verify** pass; commit `feat(provisioner): container one-shot reconcile argv allowlist`.
+
+### Task 1E.6: Release packaging for reconcile-entry.mjs
+
+**Files:** Ship `reconcile-entry.mjs` (from `packages/plugins` build / `reconcile-entry-main`) into the release/production asset layout used by native units and the container one-shot; update `packages/production` entry or release manifest as needed; tests that the packaged path is what provisioner argv and systemd unit text reference.
+
+**Interfaces:** stable artifact path consumable as `node <release>/reconcile-entry.mjs <planPath>` (native) and as the container command allowlist entry; no new behaviour beyond packaging + path wiring; keep env allowlist and plan-file contract from 1D.6.
+
+- [ ] **1. Write failing tests:** packaged file exists at expected release path; unit/argv fixtures point at that path; `node … reconcile-entry.mjs` help/missing-plan exit shapes still hold when run from the packaged file.
+- [ ] **2. Run** focused production / plugins packaging tests; expect fail.
+- [ ] **3. Implement** packaging + path wiring for native and container consumers.
+- [ ] **4. Verify** pass; commit `feat(plugins): package reconcile-entry.mjs for release`.
+
+**1E exit:** market_only registry specs fail closed without `egress_lock`; container owner reach + cross-tenant deny (fixtures); lowering limits never deletes data; production README records market-range firewall exception (Q7); `assertSafeReconcileArgv` + one-shot reconcile fixtures green (live pasta/runsc still blocked per P0.5); reconcile-entry.mjs packaged for release.
 
 ## Phase 2 (later; not in this plan's coding tasks)
 
@@ -428,5 +490,5 @@ Signatures; pure-skill views; optional `egress_lock`.
 
 1. Complete Phase 0 tasks P0.1–P0.9; fill `phase0-results.md`. Stop if P0.8/P0.9 falsify assumptions.
 2. Milestone 1A tasks in order.
-3. Milestone 1B tasks in order (outline expanded 2026-10-23). Milestone 1C tasks in order (outline expanded 2026-10-23). Milestone 1D tasks in order (outline expanded 2026-10-23). Expand 1E from outline after 1D review.
+3. Milestone 1B tasks in order (outline expanded 2026-10-23). Milestone 1C tasks in order (outline expanded 2026-10-23). Milestone 1D tasks in order (outline expanded 2026-10-23). Milestone 1E tasks in order (outline expanded 2026-10-23).
 4. Push `codex/plugin-market-impl` after each green task commit. Await「可以合并」before master.

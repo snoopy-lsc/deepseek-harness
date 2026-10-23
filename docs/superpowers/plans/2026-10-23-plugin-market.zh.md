@@ -408,15 +408,77 @@
 
 **1D 出口：** CLI/手改卸载不重装；移除+安装失败可恢复；integrity 不符永不启用；空闲门控用 P0.7 agent idle 信号；真实 systemd reconcile 按 P0.4 仍为 partial/blocked（夹具绿灯）。
 
-## 里程碑 1E：策略、限额、容器（大纲）
+## 里程碑 1E：策略、限额、容器（TDD）
 
-**创建 / 修改：**
-- 将 `packages/kb/src/limits.ts` 的 `effectiveLimits` 推广到限额名；`dsh_plugin_limit`。
-- `market_only` / `install_scripts` 策略；`market_only` 时 npmrc `registry=`。
-- `deploy/production/nftables/{dsh-public.nft,dsh-market.nft}`；provisioner `webPatch` + 市场卷；一次性 reconcile 容器（P0.5）。
-- README 记录市场端口防火墙破例（已定稿 Q7）。
+服务端策略与限额在 `integrations/public-harness/packages/plugins/`（`plugin_policy`、`dsh_plugin_limit`），解析共用经推广的 `packages/kb/src/limits.ts` `effectiveLimits`。容器生产侧在 `deploy/production/` 与 `packages/provisioner/`。设计文档：§ 安装与策略；插件限额；部署变更（生产）。**已定稿：** `market_only` 仅为策略（一期不做 `egress_lock` — 属二期）；签名二期；约 5 分钟空闲推送已在 1D；一期原生+容器（容器在此）；路径 A 禁止自审；强制公司 scope `@corp-dsh/`；生产防火墙仅市场端口破例（Q7）；接受一期三项残留风险；规模上限 4096 账户。P0.5 真实 pasta/runsc 仍 **blocked** — 仅 argv / nft 文本 / 卷夹具。并入 1D 延期项：将 `assertSafeReconcileArgvDraft` 提升为 `assertSafeReconcileArgv`；为 `reconcile-entry.mjs` 做 release 打包。
 
-**验收：** `market_only` 下非市场 registry 规格失败关闭且不依赖 egress_lock；容器属主可达 + 跨租户拒绝；降限额不删数据。
+### 任务 1E.1：推广 effectiveLimits + 插件限额
+
+**文件：** 将 `packages/kb/src/limits.ts` 的 `effectiveLimits` 推广为接受调用方限额名（KB 调用方仍默认 `LIMIT_NAMES`）；创建 `packages/plugins/src/limits.ts`、`tests/limits.spec.ts`；对 `dsh_plugin_limit` 做种子 / CRUD；挂到网关已 stub 的管理控制（`GET`/`PUT`/`DELETE /plugins/limits`、`GET /plugins/limits/effective`）。
+
+**接口：** `PLUGIN_LIMIT_NAMES` = `max_installed` | `max_submissions` | `max_submission_bytes`；全局默认 50 / 20 / 1 GiB（设计 Q12）；`effectivePluginLimits(rows, userId, groups)` 复用推广后的解析器（用户行优先 → 有效组含祖先中最宽 → 全局；`NULL` = 不限）；`setPluginLimit` / `deletePluginLimit`（管理端、需 reauth）；**降限额永不删除、下架或卸载** — 仅增长返回 409 `limit-reached`；在 submit/upload 上强制 `max_submissions` / `max_submission_bytes`；`max_installed` 在 packument + index 标记上尽力（最近 sync/reconcile 上报已达限时；tarball/git/陈旧上报可能逃逸）；默认安装计入 `max_installed`，但管理员选定的默认仍由 sync/reconcile 越过限额安装（并记录）；审计 `admin-plugin-limit-change` / `admin-plugin-limit-delete`。
+
+- [ ] **1. 写失败测试：** 插件名下的推广解析；用户/组/全局优先级；降限保留已装/已提交；达限拒绝 submit/upload；`max_installed` 时 packument/index 标记；默认仍可越过限额进计划；管理端 set/delete 形态。
+- [ ] **2. 跑** `pnpm --dir integrations/public-harness/packages/kb test`（解析器）与 `pnpm --dir integrations/public-harness/packages/plugins test -- limits.spec.ts`；新用例预期失败。
+- [ ] **3. 实现** 推广后的 `effectiveLimits`、插件限额模块、强制挂钩、控制接线。
+- [ ] **4. 验证** 通过；提交 `feat(plugins): generalize effectiveLimits and plugin limits`。
+
+### 任务 1E.2：market_only / install_scripts 策略
+
+**文件：** 创建 `packages/plugins/src/policy.ts`、`tests/policy.spec.ts`；挂 `GET`/`PUT /plugins/policy`；确保 provisioner / 市场文件写入消费已解析的 `marketOnly`（1B 已有 npmrc `registry=` 与 `pluginMarketRows` 的 `fallbackRegistries: []` — 绑到策略解析）；`egress_lock` 仅保留 schema/名（二期 — 不实现防火墙 drop）。
+
+**接口：** `effectivePolicy(userId, groups)` — 任一有效组或全局行打开则用户处于 `market_only`；默认 `install_scripts = deny`（approve 已在未逐包允许时 409 `install-scripts`）；`market_only` 下非用户镜像的 registry 规格以既有对话框 not-found **失败关闭**，**不依赖** `egress_lock`（git/tarball/`443` 仍可出站 — 接受的软策略）；公司 scope 仍强制 `@corp-dsh/`；审计 `admin-plugin-policy-change`。第 0 阶段已确认 `--patch` 覆盖 Settings 的 registry/`indexes`。
+
+- [ ] **1. 写失败测试：** 从全局/组解析 market_only；install_scripts 默认 deny；market_only 驱动 npmrc `registry=` + 空 `fallbackRegistries`；非镜像 registry 规格失败关闭；`egress_lock` PUT 拒绝或桩（二期）；本任务不改防火墙。
+- [ ] **2. 跑** 聚焦 policy（+ market-files / contracts）测试；新用例预期失败。
+- [ ] **3. 实现** policy 模块、控制接线、provisioner 消费已解析 marketOnly 的路径。
+- [ ] **4. 验证** 通过；提交 `feat(plugins): market_only and install_scripts policy`。
+
+### 任务 1E.3：生产 nftables + README（Q7）
+
+**文件：** 更新 `deploy/production/nftables/dsh-public.nft`；创建 `deploy/production/nftables/dsh-market.nft`；更新 `deploy/production/README.md`（及 `deploy/production/` 或已解析 nft 文本的包测试夹具）。**无需真实 `nft`** — 静态文本 / 示例解析夹具（与 1B.4 同替代风格）。
+
+**接口：** `define MARKET_PORTS` 与 `ports.market` / provisioner 配置一致；在 `dsh-public.nft` 中，于 `oif "lo" drop` **之前** 放 `oif "lo" ip daddr 127.0.0.1 tcp dport $MARKET_PORTS accept`；保持 `dsh-plugins-fetch` 仅达 `egressPort`；**不**落地 `egress_locked` drop（二期）；`dsh-market.nft` 含表 `dsh_market`、`market_listener` 输入子链、`market_owner` 集合，以及优先级 `filter - 2` 的输出链属主 drop，由 socket 单元 `ExecStartPost=-` 加载，**绝不**由 `dsh-public.nft` 加载；README 记录被推翻的决策（Q7）：**仅市场端口范围**存在 per-user 集合元素与收包 socket 规则；root / `dsh-router` / `dsh-identity` / 其他主机账户仍不能进这些端口；注明 `flush ruleset` 风险与 probe 恢复（peer check 仍是纵深防御）。
+
+- [ ] **1. 写失败测试：** MARKET_PORTS accept 在 lo drop 之前；dsh-market 表/集合/链文本；README 提及市场范围破例；示例与 provisioner `ports.market` 宽度 ≤ 4096 一致。
+- [ ] **2. 跑** 聚焦 production / nft 夹具测试；预期失败。
+- [ ] **3. 实现** nft 文件 + README；笔记标明本箱不做真实 nft apply。
+- [ ] **4. 验证** 通过；提交 `feat(production): market nftables and README Q7 exception`。
+
+### 任务 1E.4：容器 webPatch、市场卷、market_owner
+
+**文件：** 扩展 `packages/provisioner/src/runtime.ts`（及所需的 `config.ts` / `market-files.ts`）、`tests/runtime.spec.ts`（或拆分）；确保容器 `webPatch` 写入带 `hostAddress` 的 `pluginMarketRows`；`assertSafeRunArgv` 允许只读市场卷；实例生命周期中增删 `market_owner` 集合元素。
+
+**接口：** `webPatch` 含与原生相同的市场 insert 行（`plugin-market`、`ui-plugin-market`、sync 插件，以及 market_only 下可选的 `plugin_manager` registry），registry 主机 = `config.quota.hostAddress`；挂载 `<marketDir>/<account>:/run/dsh-market:ro` 并设 `NPM_CONFIG_GLOBALCONFIG=/run/dsh-market/npmrc`；该卷须通过 `assertSafeRunArgv`；provisioner 启动前把账户加入 `market_owner`、停止时删除（夹具化 nft 集合元素 argv/文本 — 无真实 nft）；`ports.market` 校验已拒绝重叠 / >4096 — 保持覆盖。
+
+- [ ] **1. 写失败测试：** webPatch 含 pluginMarketRows + hostAddress；只读市场卷被允许；外来卷 / publish 仍拒绝；market_owner 增删调用形态；marketOnly 翻转 registry 行。
+- [ ] **2. 跑** 聚焦 provisioner runtime / market 测试；预期失败。
+- [ ] **3. 实现** webPatch 行、卷白名单、集合元素辅助。
+- [ ] **4. 验证** 通过；提交 `feat(provisioner): container market webPatch volume and owner set`。
+
+### 任务 1E.5：一次性 reconcile 容器 + assertSafeReconcileArgv（P0.5）
+
+**文件：** 在 `packages/provisioner/src/runtime.ts` 将 `assertSafeReconcileArgvDraft` 提升为 `assertSafeReconcileArgv`；创建 reconcile 容器 argv 构建器 + 测试；在 `market_owner` 已存在后挂 provisioner 启动前步骤（容器顺序：网络/集合 → 一次性 reconcile → 实例）。**无真实 pasta/runsc**（P0.5 blocked）— 仅 argv / 白名单夹具。
+
+**接口：** 一次性 `runsc`，使用实例镜像、userns、pasta `--no-splice` + `--map-host-loopback`，**无 publish**；卷收窄为仅 workspace + 市场/快照路径（禁止列表精神同 `assertSafeRunArgv`）；命令白名单仅 `pnpm` / `node` reconcile 入口；环境白名单与原生 reconcile 相同（`HOME` / `DSH_HOME` / `XDG_CACHE_HOME` / `TMPDIR` / 工具链 `PATH` / `NPM_CONFIG_GLOBALCONFIG`）；计划仍只来自 `reconcile-plan` 且 registry 为用户镜像；reconcile 出错仍启动实例；属主可达 + 跨租户拒绝由集合 + peer check 覆盖（夹具断言）。
+
+- [ ] **1. 写失败测试：** 安全 argv 允许 workspace+market、拒绝 publish/额外卷/禁用标志；含 pasta 标志；命令白名单；在 market_owner add 之后运行；出错仍启动实例（mock）。
+- [ ] **2. 跑** 聚焦 provisioner reconcile-container 测试；预期失败。
+- [ ] **3. 实现** `assertSafeReconcileArgv` + 一次性接线；注明真实 pasta blocked。
+- [ ] **4. 验证** 通过；提交 `feat(provisioner): container one-shot reconcile argv allowlist`。
+
+### 任务 1E.6：reconcile-entry.mjs 的 release 打包
+
+**文件：** 将 `reconcile-entry.mjs`（来自 `packages/plugins` 构建 / `reconcile-entry-main`）装入原生单元与容器一次性任务所用的 release/production 资源布局；按需更新 `packages/production` 入口或 release 清单；测试打包路径即 provisioner argv 与 systemd 单元文本所引用路径。
+
+**接口：** 稳定制品路径，可作 `node <release>/reconcile-entry.mjs <planPath>`（原生）以及容器命令白名单入口；除打包与路径接线外无新行为；环境白名单与计划文件约定沿用 1D.6。
+
+- [ ] **1. 写失败测试：** 期望 release 路径上存在打包文件；单元/argv 夹具指向该路径；从打包文件运行 `node … reconcile-entry.mjs` 的缺参/缺计划退出形态仍成立。
+- [ ] **2. 跑** 聚焦 production / plugins 打包测试；预期失败。
+- [ ] **3. 实现** 打包 + 原生与容器消费者的路径接线。
+- [ ] **4. 验证** 通过；提交 `feat(plugins): package reconcile-entry.mjs for release`。
+
+**1E 出口：** `market_only` 下非市场 registry 规格失败关闭且不依赖 `egress_lock`；容器属主可达 + 跨租户拒绝（夹具）；降限额不删数据；生产 README 记录市场端口防火墙破例（Q7）；`assertSafeReconcileArgv` + 一次性 reconcile 夹具绿灯（真实 pasta/runsc 按 P0.5 仍 blocked）；`reconcile-entry.mjs` 已打入 release。
 
 ## 二期（本计划不写编码任务）
 
@@ -428,5 +490,5 @@
 
 1. 完成第 0 阶段 P0.1–P0.9，填 `phase0-results.md`。若 P0.8/P0.9 证伪假设则停下。
 2. 按序做里程碑 1A。
-3. 按序做里程碑 1B（大纲已于 2026-10-23 展开）。按序做里程碑 1C（大纲已于 2026-10-23 展开）。按序做里程碑 1D（大纲已于 2026-10-23 展开）。1D 审查后再把 1E 大纲展开。
+3. 按序做里程碑 1B（大纲已于 2026-10-23 展开）。按序做里程碑 1C（大纲已于 2026-10-23 展开）。按序做里程碑 1D（大纲已于 2026-10-23 展开）。按序做里程碑 1E（大纲已于 2026-10-23 展开）。
 4. 每项绿提交后推 `codex/plugin-market-impl`。合 master 前等「可以合并」。

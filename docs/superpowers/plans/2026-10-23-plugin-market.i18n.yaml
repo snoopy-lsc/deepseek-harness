@@ -116,12 +116,30 @@
 /company-plugin-market-implementation-plan/milestone-1d-defaults-and-updates-tdd/task-1d-6-reconcile-entry-provisioner-pre-start-p0-4:
   en: b7b20953f4207b81
   zh: 8eabca26770f4733
-/company-plugin-market-implementation-plan/milestone-1e-policy-limits-containers-outline:
-  en: e88942618d1b4dd5
-  zh: 819d383400c69d5a
+/company-plugin-market-implementation-plan/milestone-1e-policy-limits-containers-tdd:
+  en: 2f821d51220c7524
+  zh: 2425816534c97920
+/company-plugin-market-implementation-plan/milestone-1e-policy-limits-containers-tdd/task-1e-1-generalize-effectivelimits-plugin-limits:
+  en: eccbc4d4154f5642
+  zh: 2102d39676187180
+/company-plugin-market-implementation-plan/milestone-1e-policy-limits-containers-tdd/task-1e-2-market-only-install-scripts-policies:
+  en: 7cc040ab247f5896
+  zh: 7e881d5d347f1598
+/company-plugin-market-implementation-plan/milestone-1e-policy-limits-containers-tdd/task-1e-3-production-nftables-readme-q7:
+  en: 931febaea990ff46
+  zh: a4c076c5e2e2539f
+/company-plugin-market-implementation-plan/milestone-1e-policy-limits-containers-tdd/task-1e-4-container-webpatch-market-volume-market-owner:
+  en: 05f89a71989ebf01
+  zh: 2dbba0b79251f271
+/company-plugin-market-implementation-plan/milestone-1e-policy-limits-containers-tdd/task-1e-5-one-shot-reconcile-container-assertsafereconcileargv-p0-5:
+  en: 056a1a1a202b1bee
+  zh: 09d8d45885f8d84a
+/company-plugin-market-implementation-plan/milestone-1e-policy-limits-containers-tdd/task-1e-6-release-packaging-for-reconcile-entry-mjs:
+  en: ab6c1caf2a955d67
+  zh: 52c4fdbb33d1f3d0
 /company-plugin-market-implementation-plan/phase-2-later-not-in-this-plan-s-coding-tasks:
   en: 26afa622963f2686
   zh: c382d88f39f42a2c
 /company-plugin-market-implementation-plan/execution-order:
-  en: c9fb8671860d14af
-  zh: aa845592f8647627
+  en: 4d05e503d08b0a45
+  zh: 1b20620b8ad97c5c
