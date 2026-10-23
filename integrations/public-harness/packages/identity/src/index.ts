@@ -57,10 +57,12 @@ export async function startIdentity(config: IdentityConfig, overrides: { mail?: 
     const captcha = overrides.captcha ?? createCaptchaProvider(config.captcha)
     const handler = publicHandler({ config, auth, database, captcha, serviceSecret, pages: createAccountPages(config, captcha), ...sso !== undefined && 'metadata' in sso && sso.metadata ? { ssoMetadata: sso.metadata() } : {},
       ...overrides.clock === undefined ? {} : { clock: overrides.clock }, ...usage === undefined ? {} : { usage }, ...quota === undefined ? {} : { quota },
-      ...config.kbSocket === undefined ? {} : { kbSocket: config.kbSocket } })
+      ...config.kbSocket === undefined ? {} : { kbSocket: config.kbSocket },
+      ...config.pluginsSocket === undefined ? {} : { pluginsSocket: config.pluginsSocket } })
     servers.push(await listenUnix(handler, config.publicSocket, 0o660))
     // Knowledge base gateway: principals and the audit outbox are synced every minute and on every group change.
     if (handler.kb !== undefined) stops.push(handler.kb.start())
+    if (handler.plugins !== undefined) stops.push(handler.plugins.start())
     servers.push(await listenUnix(sessionHandler(auth, userId => database.sso.disabledAt(userId) !== undefined), config.sessionSocket, 0o660, config.sessionSocketGid))
     // Expired counters, login state and assertion IDs are deleted every ten minutes; a failure here is logged and retried next time.
     const prune = () => { try { database.prune(Date.now(), LDAP_LOCKOUT.window) } catch (error) { console.error('identity: prune failed', error instanceof Error ? error.message : error) } }

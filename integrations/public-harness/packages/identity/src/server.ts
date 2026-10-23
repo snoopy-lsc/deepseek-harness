@@ -17,6 +17,7 @@ import { AdminError, adminRoutes } from './admin.ts'
 import { groupAdminRoutes } from './admin-groups.ts'
 import type { QuotaAdmin } from './quota-account.ts'
 import { createKbGateway, type KbGateway } from './kb-gateway.ts'
+import { createPluginsGateway, type PluginsGateway } from './plugins-gateway.ts'
 
 const MAX_BODY = 64 * 1024
 /** SAML responses with many groups exceed the JSON body limit. */
@@ -112,13 +113,15 @@ export interface PublicDeps {
   readonly quota?: QuotaAdmin
   /** Knowledge base service socket; without it `/account/api/me/kb*` and `/api/admin/kb*` answer 404. */
   readonly kbSocket?: string
+  /** Plugins market control socket; without it `/account/api/me/plugins*` and `/api/admin/plugins*` answer 404. */
+  readonly pluginsSocket?: string
 }
 
 /** Handle one public request: origin checks, admission gates, then Better Auth.
  * @param deps Collaborators.
  * @returns Node request listener.
  */
-export function publicHandler(deps: PublicDeps): ((req: IncomingMessage, res: ServerResponse) => void) & { readonly kb?: KbGateway } {
+export function publicHandler(deps: PublicDeps): ((req: IncomingMessage, res: ServerResponse) => void) & { readonly kb?: KbGateway; readonly plugins?: PluginsGateway } {
   const { config, auth, database } = deps, clock = deps.clock ?? Date.now
   const limit = (key: string, windowMs: number, max: number) => {
     let ok: boolean
@@ -145,8 +148,9 @@ export function publicHandler(deps: PublicDeps): ((req: IncomingMessage, res: Se
   }
   const me = meRoutes({ config, auth, database, clock, limit, ip: req => clientIp(req, config.clientIpHeader), ...deps.usage === undefined ? {} : { usage: deps.usage } })
   const kb = deps.kbSocket === undefined ? undefined : createKbGateway({ socket: deps.kbSocket, config, auth, database, clock, limit, log: line => console.error(line) })
+  const plugins = deps.pluginsSocket === undefined ? undefined : createPluginsGateway({ socket: deps.pluginsSocket, config, auth, database, clock, limit, log: line => console.error(line) })
   const admin = adminRoutes({ config, auth, database, clock, limit, ip: req => clientIp(req, config.clientIpHeader), ...deps.quota === undefined ? {} : { quota: deps.quota },
-    modules: [groupAdminRoutes(database, clock), ...kb === undefined ? [] : [kb.admin]], ...kb === undefined ? {} : { budgetPrincipal: kb.budgetPrincipal } })
+    modules: [groupAdminRoutes(database, clock), ...kb === undefined ? [] : [kb.admin], ...plugins === undefined ? [] : [plugins.admin]], ...kb === undefined ? {} : { budgetPrincipal: kb.budgetPrincipal } })
   const handler = (req: IncomingMessage, res: ServerResponse) => {
     void (async () => {
       const path = (req.url ?? '/').split('?')[0]
@@ -175,6 +179,7 @@ export function publicHandler(deps: PublicDeps): ((req: IncomingMessage, res: Se
         return
       }
       if (kb !== undefined && await kb.me(req, res, path)) return
+      if (plugins !== undefined && await plugins.me(req, res, path)) return
       if (await me(req, res, path)) return
       if (await admin(req, res, path)) return
       if (deps.pages !== undefined && await deps.pages(req, res, url)) return
@@ -308,7 +313,7 @@ export function publicHandler(deps: PublicDeps): ((req: IncomingMessage, res: Se
       else send(res, 500, { code: 'internal' })
     })
   }
-  return Object.assign(handler, kb === undefined ? {} : { kb })
+  return Object.assign(handler, kb === undefined ? {} : { kb }, plugins === undefined ? {} : { plugins })
 }
 
 /** Handle private session lookups: `POST /internal/session` with `{ cookie }`, answering the live session or 401.

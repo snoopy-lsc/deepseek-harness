@@ -17,6 +17,9 @@ export interface AuditEvent {
     | 'admin-group-change' | 'kb-create' | 'kb-archive' | 'kb-compile' | 'kb-share-request' | 'kb-share-withdraw' | 'kb-view-apply'
     | 'admin-kb-approve' | 'admin-kb-reject' | 'admin-kb-scope-change' | 'admin-kb-revoke' | 'admin-kb-convert' | 'admin-kb-org-create' | 'admin-kb-org-edit'
     | 'admin-kb-org-compile' | 'admin-kb-rollback' | 'admin-kb-limit-change' | 'admin-kb-limit-delete' | 'admin-kb-content-read'
+    | 'plugin-submit' | 'plugin-withdraw' | 'plugin-expire' | 'plugin-mirror-failed' | 'plugin-delist-request' | 'plugin-default-reenable' | 'plugin-restore' | 'plugin-sync' | 'plugin-reconcile' | 'plugin-store-corrupt'
+    | 'admin-plugin-approve' | 'admin-plugin-reject' | 'admin-plugin-upload' | 'admin-plugin-scope-change' | 'admin-plugin-rollback' | 'admin-plugin-delist' | 'admin-plugin-relist' | 'admin-plugin-revoke'
+    | 'admin-plugin-default-set' | 'admin-plugin-default-clear' | 'admin-plugin-default-reset' | 'admin-plugin-build-allow' | 'admin-plugin-policy-change' | 'admin-plugin-limit-change' | 'admin-plugin-limit-delete' | 'admin-plugin-restore' | 'admin-plugin-content-read'
   readonly outcome: 'ok' | 'denied' | 'error'
   readonly userId?: string
   readonly email?: string

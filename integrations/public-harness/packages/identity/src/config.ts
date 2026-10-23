@@ -58,6 +58,8 @@ export interface IdentityConfig {
   readonly quotaAccountSocket?: string
   /** Knowledge base service socket (`DSH_KB_SOCKET`); unset turns the knowledge base routes off (404). */
   readonly kbSocket?: string
+  /** Plugins market control socket (`DSH_PLUGINS_SOCKET`); unset turns the plugin admin/me routes off (404). */
+  readonly pluginsSocket?: string
 }
 
 /** Parse `DSH_ADMIN_EMAILS`: a comma-separated address list; any malformed or empty entry refuses startup.
@@ -177,6 +179,7 @@ export function parseIdentityConfig(value: unknown, env: ProviderEnv = process.e
   const admins = parseAdminEmails(env.DSH_ADMIN_EMAILS)
   const quotaAccountSocket = env.DSH_QUOTA_ACCOUNT_SOCKET === undefined ? undefined : path(env.DSH_QUOTA_ACCOUNT_SOCKET, 'DSH_QUOTA_ACCOUNT_SOCKET')
   const kbSocket = env.DSH_KB_SOCKET === undefined ? undefined : path(env.DSH_KB_SOCKET, 'DSH_KB_SOCKET')
+  const pluginsSocket = env.DSH_PLUGINS_SOCKET === undefined ? undefined : path(env.DSH_PLUGINS_SOCKET, 'DSH_PLUGINS_SOCKET')
   const l = object(r.limits, ['signupPerIpPerHour', 'signupPerDay', 'resetPerEmailPerHour', 'loginPerIpPerMinute'], [], 'limits')
   if (r.enrollmentOpen !== undefined && typeof r.enrollmentOpen !== 'boolean') throw new IdentityConfigError('enrollmentOpen')
   const sessionSocketGid = r.sessionSocketGid
@@ -189,5 +192,6 @@ export function parseIdentityConfig(value: unknown, env: ProviderEnv = process.e
     sessionTtlSeconds: count(r.sessionTtlSeconds, 'sessionTtlSeconds'), verificationTtlSeconds: count(r.verificationTtlSeconds, 'verificationTtlSeconds'),
     clientIpHeader: text(r.clientIpHeader, 'clientIpHeader', /^[a-z][a-z0-9-]{0,63}$/), enrollmentOpen: r.enrollmentOpen === true, sso, emergency, deprovision, admins,
     ...quotaAccountSocket === undefined ? {} : { quotaAccountSocket }, ...kbSocket === undefined ? {} : { kbSocket },
+    ...pluginsSocket === undefined ? {} : { pluginsSocket },
   }
 }

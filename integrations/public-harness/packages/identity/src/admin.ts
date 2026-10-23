@@ -20,6 +20,7 @@ import type { AuditEvent } from './sso/store.ts'
 import { IdentityUnavailableError } from './transports.ts'
 import { GROUP_ADMIN_ENDPOINTS } from './admin-groups.ts'
 import { KB_ADMIN_ENDPOINTS } from './kb-gateway.ts'
+import { PLUGIN_ADMIN_ENDPOINTS } from './plugins-gateway.ts'
 
 export const ADMIN_PATH = '/api/admin'
 /** How long an SSO sign-in counts as a fresh re-authentication. */
@@ -32,11 +33,11 @@ export class AdminError extends MeError { constructor(status: number, code: stri
 
 /** Endpoints, by method; used by the routing table and by the test that proves members are refused everywhere. */
 export const ADMIN_ENDPOINTS = {
-  GET: ['/invites', '/users', '/audit', '/audit.csv', '/sso', '/quota', ...GROUP_ADMIN_ENDPOINTS.GET, ...KB_ADMIN_ENDPOINTS.GET],
+  GET: ['/invites', '/users', '/audit', '/audit.csv', '/sso', '/quota', ...GROUP_ADMIN_ENDPOINTS.GET, ...KB_ADMIN_ENDPOINTS.GET, ...PLUGIN_ADMIN_ENDPOINTS.GET],
   POST: ['/invites', '/invites/revoke', '/users/disable', '/users/enable', '/users/role', '/quota/default', '/quota/user', '/quota/principal', '/quota/over-limit',
-    ...GROUP_ADMIN_ENDPOINTS.POST, ...KB_ADMIN_ENDPOINTS.POST],
-  PUT: [...KB_ADMIN_ENDPOINTS.PUT],
-  DELETE: [...KB_ADMIN_ENDPOINTS.DELETE],
+    ...GROUP_ADMIN_ENDPOINTS.POST, ...KB_ADMIN_ENDPOINTS.POST, ...PLUGIN_ADMIN_ENDPOINTS.POST],
+  PUT: [...KB_ADMIN_ENDPOINTS.PUT, ...PLUGIN_ADMIN_ENDPOINTS.PUT],
+  DELETE: [...KB_ADMIN_ENDPOINTS.DELETE, ...PLUGIN_ADMIN_ENDPOINTS.DELETE],
 } as const
 type AdminVerb = keyof typeof ADMIN_ENDPOINTS
 

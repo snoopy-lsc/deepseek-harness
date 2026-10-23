@@ -9,5 +9,5 @@ export type MailTransport = (mail: Mail) => Promise<void>
 /** A dependency the request needs is down; the service answers 503 and admits nothing. */
 export class IdentityUnavailableError extends Error {
   override readonly name = 'IdentityUnavailableError'
-  constructor(readonly what: 'mail' | 'captcha' | 'store' | 'sso' | 'kb') { super(`identity ${what} unavailable`) }
+  constructor(readonly what: 'mail' | 'captcha' | 'store' | 'sso' | 'kb' | 'plugins') { super(`identity ${what} unavailable`) }
 }
