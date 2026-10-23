@@ -1,6 +1,6 @@
 /**
  * In-instance default sync plugin (`public-harness-plugin-sync`).
- * Apply core (1D.3) + idle-gated poll loop (1D.4). Snapshots/recovery: 1D.5.
+ * Apply core (1D.3) + idle-gated poll loop (1D.4) + snapshots/recovery (1D.5).
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { startSyncLoop, type SyncLoopDeps, type SyncLoopHandle } from './idle.ts'
@@ -16,6 +16,26 @@ export {
   type SyncOp,
   type SyncOpType,
 } from './oplog.ts'
+
+export {
+  MAX_SNAPSHOTS,
+  MAX_TENANT_FILE_BYTES,
+  PROFILE_LOCKFILE,
+  PROFILE_MANIFEST,
+  hashBytesSha256,
+  listQueuedRestores,
+  listSnapshotIds,
+  queueRestore,
+  readTenantFile,
+  restoreQueuePath,
+  restoreSnapshotFiles,
+  rotateSnapshots,
+  snapshotHashes,
+  writeProfileSnapshot,
+  type QueuedRestore,
+  type RestoreQueueReason,
+  type SnapshotHashes,
+} from './snapshots.ts'
 
 export {
   applySyncEntry,

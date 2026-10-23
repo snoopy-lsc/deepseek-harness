@@ -1,17 +1,17 @@
 /**
  * Apply one sync plan entry: preconditions under package.json lock, then
  * install disabled → re-check → enable (P0.7 / design § Default installs).
- * Idle gating lives in idle.ts (1D.4); full snapshots/recovery are 1D.5.
+ * Idle gating lives in idle.ts (1D.4); snapshots/recovery in snapshots.ts (1D.5).
  */
 import { randomBytes } from 'node:crypto'
-import { mkdir, readFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   appendOp,
   isUserRemoved,
   readOps,
-  snapshotsDir,
 } from './oplog.ts'
+import { restoreSnapshotFiles, writeProfileSnapshot } from './snapshots.ts'
 
 export type SyncAction = 'install' | 'update' | 'downgrade'
 
@@ -180,26 +180,10 @@ export async function pollSyncPlan(
   return options.fetchPlan(syncUrl)
 }
 
-async function writeIntentStub(
-  deps: ApplyDeps,
-  entry: SyncPlanEntry,
-  opId: string,
-): Promise<void> {
-  const snap = join(snapshotsDir(deps.home), opId)
-  // 1D.5 owns real snapshot IO; placeholder dir is enough for intent correlation.
-  await mkdir(snap, { recursive: true, mode: 0o700 })
-  await appendOp(deps.home, {
-    type: 'intent',
-    name: entry.name,
-    version: entry.version,
-    action: entry.action,
-    opId,
-    at: nowMs(deps),
-  })
-}
-
 interface PreconditionOk {
   readonly ok: true
+  readonly opId: string
+  readonly intentAt: number
 }
 interface PreconditionSkip {
   readonly ok: false
@@ -207,7 +191,11 @@ interface PreconditionSkip {
 }
 type Precondition = PreconditionOk | PreconditionSkip
 
-async function checkPreconditions(
+/**
+ * Under package.json lock: check preconditions → write snapshot + intent → release.
+ * Design: check → intent+snapshot → release, then apply outside the lock.
+ */
+async function checkPreconditionsAndIntent(
   entry: SyncPlanEntry,
   deps: ApplyDeps,
 ): Promise<Precondition> {
@@ -219,14 +207,25 @@ async function checkPreconditions(
     if (entry.action === 'install') {
       if (current !== undefined) return { ok: false, reason: 'already-present' }
       if (isUserRemoved(ops, entry.name)) return { ok: false, reason: 'user-removed' }
-      return { ok: true }
+    } else {
+      // update / downgrade: must be installed at exact fromVersion
+      if (current === undefined || current !== entry.fromVersion) {
+        return { ok: false, reason: 'from-version-mismatch' }
+      }
     }
 
-    // update / downgrade: must be installed at exact fromVersion
-    if (current === undefined || current !== entry.fromVersion) {
-      return { ok: false, reason: 'from-version-mismatch' }
-    }
-    return { ok: true }
+    const opId = newOpId()
+    const intentAt = nowMs(deps)
+    await writeProfileSnapshot(deps.home, deps.profileDir, opId)
+    await appendOp(deps.home, {
+      type: 'intent',
+      name: entry.name,
+      version: entry.version,
+      action: entry.action,
+      opId,
+      at: intentAt,
+    })
+    return { ok: true, opId, intentAt }
   })
 }
 
@@ -264,14 +263,12 @@ export async function applySyncEntry(
   entry: SyncPlanEntry,
   deps: ApplyDeps,
 ): Promise<ApplyResult> {
-  const pre = await checkPreconditions(entry, deps)
+  const pre = await checkPreconditionsAndIntent(entry, deps)
   if (!pre.ok) {
     return { outcome: 'skipped', reason: pre.reason, name: entry.name, action: entry.action }
   }
 
-  const opId = newOpId()
-  const intentAt = nowMs(deps)
-  await writeIntentStub(deps, entry, opId)
+  const { opId, intentAt } = pre
 
   const installOpts = {
     registry: deps.registry,
@@ -346,16 +343,20 @@ export async function applySyncEntry(
     }
   }
   if (installed.application === 'failed') {
-    // Recovery stubs: on update, try reinstall fromVersion (full snapshot restore is 1D.5).
+    // Recovery: removeBundle ok + installBundle fail → reinstall fromVersion;
+    // if that fails → restore both files from snapshot; leave intent failed for reconcile.
     if (
       (entry.action === 'update' || entry.action === 'downgrade')
       && entry.fromVersion != null
       && entry.fromVersion !== ''
     ) {
-      await deps.manager.installBundle(`${entry.name}@${entry.fromVersion}`, {
+      const restored = await deps.manager.installBundle(`${entry.name}@${entry.fromVersion}`, {
         ...installOpts,
         approvedBuilds: [...entry.allowedBuilds],
       })
+      if (restored.application === 'failed') {
+        await restoreSnapshotFiles(deps.home, deps.profileDir, opId)
+      }
     }
     await appendOp(deps.home, {
       type: 'failed',
@@ -377,7 +378,7 @@ export async function applySyncEntry(
 
   const check = await recheckAfterInstall(entry, deps, intentAt)
   if (!check.ok) {
-    // Never enable on failed check.
+    // Never enable on failed check — plugin never started / never enabled.
     await deps.manager.removeBundle(entry.name)
     if (
       check.reason === 'integrity-mismatch'
@@ -385,11 +386,14 @@ export async function applySyncEntry(
       && entry.fromVersion != null
       && entry.fromVersion !== ''
     ) {
-      await deps.manager.installBundle(`${entry.name}@${entry.fromVersion}`, {
+      const restored = await deps.manager.installBundle(`${entry.name}@${entry.fromVersion}`, {
         registry: deps.registry,
         enabled: false,
         approvedBuilds: [...entry.allowedBuilds],
       })
+      if (restored.application === 'failed') {
+        await restoreSnapshotFiles(deps.home, deps.profileDir, opId)
+      }
     }
     await appendOp(deps.home, {
       type: 'failed',
