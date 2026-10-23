@@ -216,16 +216,64 @@
 
 ---
 
-## 里程碑 1B：对外服务（大纲）
+## 里程碑 1B：对外服务（TDD）
 
-**创建 / 修改：**
-- `packages/plugins/src/{listen.ts,routes.ts,token.ts,peer-check.ts,index-builder.ts}` — 每用户端口、路由、bearer 比较、`inet_diag` peer 校验（方法取自 P0.9）。
-- `deploy/native/systemd/{dsh-plugins.socket,dsh-plugins.service,dsh-plugins-fetch.socket,dsh-plugins-fetch@.service}` — `LimitNOFILE=16384`、`AF_NETLINK`、`ExecStartPost=-` 加载器。
-- `packages/runtime-systemd/src/{market-firewall.ts,network.ts,probe.ts,units.ts,runtime.ts}` — `dsh_market` 表、`in_<uid>` 中 owner accept、probe 自愈 + 同一锁下的集合精确相等。
-- `packages/contracts/src/web-rows.ts` — `pluginMarketRows`。
-- provisioner：写 `/run/dsh-public/instance-market/<account>.{yml,npmrc}`。
+包落点仍为 `integrations/public-harness/packages/plugins/`。systemd 单元在 `integrations/public-harness/deploy/native/systemd/`。防火墙 / probe 在 `packages/runtime-systemd/`。**不要**宣称 P0.8 systemd cgroup 结果（仍 blocked）；peer 校验用 P0.9 方法，带回 `/proc/net/tcp`。P0.1：`--patch` 覆盖 Settings。
 
-**验收：** 属主可达本端口；异 uid 被 nft 与 peer 校验关闭；表丢失可自愈；Settings/`indexes` 行为与 P0.1 一致；配置拒绝重叠 / `ports.market` > 4096。
+### 任务 1B.1：端口、令牌、HTTP 路由
+
+**文件：** 创建 `packages/plugins/src/{listen.ts,routes.ts,token.ts}`、`tests/serving.spec.ts`（可拆分）。
+
+**接口：** `validateMarketPorts` / `openEndpoint` / `closeEndpoint`（端口↔用户 1:1，上限 `MAX_PLUGIN_ACCOUNTS` = 4096）；`mintMarketToken` + 对 `token_sha256` 的恒定时间 bearer 比较；`startMarketHttpServer({ host: '127.0.0.1', port, ... })` 提供 `GET /index.json`、`GET /npm/<name>`、`GET /npm/<name>/-/<basename>-<version>.tgz`（响应体可先 stub；真正索引构建在 1B.3）。仅回环。
+
+- [ ] **1. 写失败测试：** 端口分配唯一性与 4096 上限；拒绝非 `127.0.0.1` 监听；bearer 拒绝/接受；路由基本 404/200 形态。
+- [ ] **2. 跑** `pnpm --dir integrations/public-harness/packages/plugins test -- serving.spec.ts`；预期失败。
+- [ ] **3. 实现** listen / routes / token。
+- [ ] **4. 验证** 通过；提交 `feat(plugins): per-user market ports tokens and routes`。
+
+### 任务 1B.2：对端 UID 校验
+
+**文件：** 创建 `packages/plugins/src/peer-check.ts`、`tests/peer-check.spec.ts`。
+
+**接口：** `lookupPeerUid(socket)` 走 `NETLINK_SOCK_DIAG` `inet_diag`，`/proc/net/tcp` 回退（P0.9）；accept 时在读字节前拒绝异 uid / 未映射端口 / 查找失败。不宣称 systemd cgroup 结果（P0.8 仍 blocked）。
+
+- [ ] **1. 写失败测试：** 匹配 uid 接受；异 uid / 未映射 / 查找失败关闭；用 fixture 表覆盖回退路径。
+- [ ] **2. 跑** 聚焦 peer-check 测试；预期失败。
+- [ ] **3. 实现** peer-check 并接入 listen accept。
+- [ ] **4. 验证** 通过；提交 `feat(plugins): inet_diag peer uid check on accept`。
+
+### 任务 1B.3：索引构建
+
+**文件：** 创建 `packages/plugins/src/index-builder.ts`、`tests/index-builder.spec.ts`。
+
+**接口：** `buildPersonalizedIndex(db, userId, groups)` — 可见性 scope → 个性化 `index.json`（KB-view 风格）；按 digest 缓存；skill 不进索引（二期）。
+
+- [ ] **1. 写失败测试：** company vs group scope；已下架省略；generation / groups 变化使 digest 失效。
+- [ ] **2. 跑** 测试；预期失败。
+- [ ] **3. 实现** 构建器；把 `GET /index.json` 接到它。
+- [ ] **4. 验证** 通过；提交 `feat(plugins): personalized market index builder`。
+
+### 任务 1B.4：市场防火墙渲染 + probe（单元测试）
+
+**文件：** 创建 / 修改 `packages/runtime-systemd/src/{market-firewall.ts,probe.ts}`，并接入 `network.ts`。
+
+**接口：** 渲染 `inet dsh_market` 表文本 + `in_<uid>` 中的 owner accept；表/链缺失时 probe 自愈；同一锁下 `market_owner` 与 endpoint 行集合精确相等。**不要求 root** — 用 fixture 断言渲染出的 nft/文本与 probe 逻辑。
+
+- [ ] **1. 写失败测试：** 渲染的表/集合/链文本；缺表自愈；多余元素删除；缺失元素补上；锁串行化比较+变更。
+- [ ] **2. 跑** 聚焦 runtime-systemd 市场测试；预期失败。
+- [ ] **3. 实现** 渲染 + probe 助手（仅 fixture）。
+- [ ] **4. 验证** 通过；提交 `feat(runtime-systemd): market firewall render and probe`。
+
+### 任务 1B.5：单元、合约、provisioner 补丁
+
+**文件：** 创建 `deploy/native/systemd/{dsh-plugins.socket,dsh-plugins.service,dsh-plugins-fetch.socket,dsh-plugins-fetch@.service,dsh-plugins-egress.service}`；在 `packages/contracts/src/web-rows.ts` 增加 `pluginMarketRows`；provisioner 写 `instance-market/<account>.{yml,npmrc}`；配置拒绝重叠 / `ports.market` > 4096。
+
+- [ ] **1. 写失败测试：** 单元文件内容（`LimitNOFILE=16384`、`AF_NETLINK`、`ListenStream=127.0.0.1`）；`pluginMarketRows` 形态；配置重叠与 >4096 拒绝；npmrc / patch 写入。
+- [ ] **2. 跑** 聚焦测试；预期失败。
+- [ ] **3. 实现** 单元、合约、provisioner 写入/校验。
+- [ ] **4. 验证** 通过；提交 `feat(plugins): systemd units contracts and market patches`。
+
+**1B 出口：** serving + peer-check + index + 防火墙渲染/probe + 单元/合约测试全绿；不要求 root 装 systemd（P0.8 仍 blocked）。
 
 ## 里程碑 1C：评审流（大纲）
 
@@ -266,5 +314,5 @@
 
 1. 完成第 0 阶段 P0.1–P0.9，填 `phase0-results.md`。若 P0.8/P0.9 证伪假设则停下。
 2. 按序做里程碑 1A。
-3. 1A 审查后再把 1B–1E 大纲展开为任务清单。
+3. 按序做里程碑 1B（大纲已于 2026-10-23 展开）。1B 审查后再把 1C–1E 大纲展开。
 4. 每项绿提交后推 `codex/plugin-market-impl`。合 master 前等「可以合并」。

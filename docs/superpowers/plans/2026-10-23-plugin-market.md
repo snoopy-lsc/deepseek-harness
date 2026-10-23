@@ -216,16 +216,64 @@ Package home: `integrations/public-harness/packages/plugins/` (new). Entry: `int
 
 ---
 
-## Milestone 1B: serving (outline)
+## Milestone 1B: serving (TDD)
 
-**Create / modify:**
-- `packages/plugins/src/{listen.ts,routes.ts,token.ts,peer-check.ts,index-builder.ts}` — per-user ports, routes, bearer compare, `inet_diag` peer check (method from P0.9).
-- `deploy/native/systemd/{dsh-plugins.socket,dsh-plugins.service,dsh-plugins-fetch.socket,dsh-plugins-fetch@.service}` — `LimitNOFILE=16384`, `AF_NETLINK`, `ExecStartPost=-` loader.
-- `packages/runtime-systemd/src/{market-firewall.ts,network.ts,probe.ts,units.ts,runtime.ts}` — `dsh_market` table, owner accept in `in_<uid>`, probe self-heal + exact set under one lock.
-- `packages/contracts/src/web-rows.ts` — `pluginMarketRows`.
-- Provisioner: write `/run/dsh-public/instance-market/<account>.{yml,npmrc}`.
+Package home remains `integrations/public-harness/packages/plugins/`. Systemd units under `integrations/public-harness/deploy/native/systemd/`. Firewall / probe under `packages/runtime-systemd/`. Do **not** claim P0.8 systemd-cgroup results (still blocked); peer check uses P0.9 method with `/proc/net/tcp` fallback. P0.1: `--patch` wins over Settings.
 
-**Acceptance:** owner reaches own port; foreign uid closed by nft and by peer check; table loss self-heals; Settings/`indexes` behaviour matches P0.1; config rejects overlapping/`ports.market` > 4096.
+### Task 1B.1: Ports, tokens, HTTP routes
+
+**Files:** Create `packages/plugins/src/{listen.ts,routes.ts,token.ts}`, `tests/serving.spec.ts` (or split).
+
+**Interfaces:** `validateMarketPorts` / `openEndpoint` / `closeEndpoint` (1:1 port↔user, cap `MAX_PLUGIN_ACCOUNTS` = 4096); `mintMarketToken` + constant-time bearer compare against `token_sha256`; `startMarketHttpServer({ host: '127.0.0.1', port, ... })` serving `GET /index.json`, `GET /npm/<name>`, `GET /npm/<name>/-/<basename>-<version>.tgz` (stub bodies OK; real index builder is 1B.3). Loopback only.
+
+- [ ] **1. Write failing tests:** port allocation uniqueness and 4096 cap; refuse non-`127.0.0.1` listen host; bearer reject/accept; basic route 404/200 shapes.
+- [ ] **2. Run** `pnpm --dir integrations/public-harness/packages/plugins test -- serving.spec.ts`; expect fail.
+- [ ] **3. Implement** listen / routes / token.
+- [ ] **4. Verify** pass; commit `feat(plugins): per-user market ports tokens and routes`.
+
+### Task 1B.2: Peer UID check
+
+**Files:** Create `packages/plugins/src/peer-check.ts`, `tests/peer-check.spec.ts`.
+
+**Interfaces:** `lookupPeerUid(socket)` via `NETLINK_SOCK_DIAG` `inet_diag` with `/proc/net/tcp` fallback (P0.9); on accept, refuse foreign uid / unmapped port / failed lookup before reading a byte. Do not claim systemd cgroup results (P0.8 still blocked).
+
+- [ ] **1. Write failing tests:** matching uid accepted; foreign uid / unmapped / lookup failure closed; fallback path exercised with fixture table.
+- [ ] **2. Run** focused peer-check tests; expect fail.
+- [ ] **3. Implement** peer-check and wire into listen accept path.
+- [ ] **4. Verify** pass; commit `feat(plugins): inet_diag peer uid check on accept`.
+
+### Task 1B.3: Index builder
+
+**Files:** Create `packages/plugins/src/index-builder.ts`, `tests/index-builder.spec.ts`.
+
+**Interfaces:** `buildPersonalizedIndex(db, userId, groups)` — visibility scopes → personalized `index.json` (KB-view style); cache by digest; skills omitted from index (phase 2).
+
+- [ ] **1. Write failing tests:** company vs group scope; delisted omitted; generation / groups change busts cache digest.
+- [ ] **2. Run** tests; expect fail.
+- [ ] **3. Implement** builder; wire `GET /index.json` to it.
+- [ ] **4. Verify** pass; commit `feat(plugins): personalized market index builder`.
+
+### Task 1B.4: Market firewall render + probe (unit tests)
+
+**Files:** Create / modify `packages/runtime-systemd/src/{market-firewall.ts,probe.ts}` and wire `network.ts`.
+
+**Interfaces:** render `inet dsh_market` table text + owner accept in `in_<uid>`; probe self-heal when table/chain missing; exact set equality of `market_owner` vs endpoint rows under one lock. **No root required** — assert rendered nft/text and probe logic with fixtures.
+
+- [ ] **1. Write failing tests:** rendered table/set/chain text; missing-table self-heal; extra element deleted; missing element added; lock serializes compare+mutate.
+- [ ] **2. Run** focused runtime-systemd market tests; expect fail.
+- [ ] **3. Implement** render + probe helpers (fixtures only).
+- [ ] **4. Verify** pass; commit `feat(runtime-systemd): market firewall render and probe`.
+
+### Task 1B.5: Units, contracts, provisioner patches
+
+**Files:** Create `deploy/native/systemd/{dsh-plugins.socket,dsh-plugins.service,dsh-plugins-fetch.socket,dsh-plugins-fetch@.service,dsh-plugins-egress.service}`; add `pluginMarketRows` in `packages/contracts/src/web-rows.ts`; provisioner writes `instance-market/<account>.{yml,npmrc}`; config rejects overlapping / `ports.market` > 4096.
+
+- [ ] **1. Write failing tests:** unit file contents (`LimitNOFILE=16384`, `AF_NETLINK`, `ListenStream=127.0.0.1`); `pluginMarketRows` shape; config overlap and >4096 refusal; npmrc / patch writers.
+- [ ] **2. Run** focused tests; expect fail.
+- [ ] **3. Implement** units, contracts, provisioner writers/validators.
+- [ ] **4. Verify** pass; commit `feat(plugins): systemd units contracts and market patches`.
+
+**1B exit:** serving + peer-check + index + firewall-render/probe + units/contracts tests green; no root systemd install required (P0.8 remains blocked).
 
 ## Milestone 1C: review flow (outline)
 
@@ -266,5 +314,5 @@ Signatures; pure-skill views; optional `egress_lock`.
 
 1. Complete Phase 0 tasks P0.1–P0.9; fill `phase0-results.md`. Stop if P0.8/P0.9 falsify assumptions.
 2. Milestone 1A tasks in order.
-3. Expand 1B–1E task lists from outlines after 1A review.
+3. Milestone 1B tasks in order (outline expanded 2026-10-23). Expand 1C–1E from outlines after 1B review.
 4. Push `codex/plugin-market-impl` after each green task commit. Await「可以合并」before master.

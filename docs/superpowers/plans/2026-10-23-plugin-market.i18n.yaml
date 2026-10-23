@@ -59,9 +59,24 @@
 /company-plugin-market-implementation-plan/milestone-1a-store-and-mirror-tdd/task-1a-5-admin-upload-audit-outbox-path-b-core:
   en: 9ccffe9b5c873a1c
   zh: c220f339f2d02820
-/company-plugin-market-implementation-plan/milestone-1b-serving-outline:
-  en: 2f3d9e982cc42de0
-  zh: 957fcf46138420e8
+/company-plugin-market-implementation-plan/milestone-1b-serving-tdd:
+  en: fb8e7aa3e16dc1a4
+  zh: 60c3f5914e8997e9
+/company-plugin-market-implementation-plan/milestone-1b-serving-tdd/task-1b-1-ports-tokens-http-routes:
+  en: 64de033a198f5fb9
+  zh: cb9aed9c0faad4f3
+/company-plugin-market-implementation-plan/milestone-1b-serving-tdd/task-1b-2-peer-uid-check:
+  en: 0b73874524315928
+  zh: ea9ffc6180dcc4fb
+/company-plugin-market-implementation-plan/milestone-1b-serving-tdd/task-1b-3-index-builder:
+  en: aeb5d1209825d892
+  zh: 3e09f48c231dbd1c
+/company-plugin-market-implementation-plan/milestone-1b-serving-tdd/task-1b-4-market-firewall-render-probe-unit-tests:
+  en: af05920ab6be92e9
+  zh: 59cf8a750f21af91
+/company-plugin-market-implementation-plan/milestone-1b-serving-tdd/task-1b-5-units-contracts-provisioner-patches:
+  en: af080ffdbfc6ef8a
+  zh: 3c56a2b34f1b4347
 /company-plugin-market-implementation-plan/milestone-1c-review-flow-outline:
   en: 49d23c582dae377f
   zh: cc449096994ed886
@@ -75,5 +90,5 @@
   en: 26afa622963f2686
   zh: c382d88f39f42a2c
 /company-plugin-market-implementation-plan/execution-order:
-  en: e0e50eb10f518063
-  zh: ab6ea0ebfefe4ec6
+  en: 27863aeb16c53f3b
+  zh: ba93ebe865f81af8
