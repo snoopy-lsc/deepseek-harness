@@ -1,7 +1,7 @@
 /**
  * Apply one sync plan entry: preconditions under package.json lock, then
  * install disabled → re-check → enable (P0.7 / design § Default installs).
- * Idle gating is 1D.4; full snapshots/recovery are 1D.5 (stubs OK here).
+ * Idle gating lives in idle.ts (1D.4); full snapshots/recovery are 1D.5.
  */
 import { randomBytes } from 'node:crypto'
 import { mkdir, readFile } from 'node:fs/promises'
@@ -24,8 +24,16 @@ export interface SyncPlanEntry {
   readonly allowedBuilds: readonly string[]
 }
 
+/** Local clear learned from admin reset / My plugins re-enable (optional on plan). */
+export interface SyncPlanClear {
+  readonly name: string
+  readonly kind: 'reset' | 're-enable'
+}
+
 export interface SyncPlan {
   readonly entries: readonly SyncPlanEntry[]
+  /** When present, stamp local reset / re-enable before apply. */
+  readonly clears?: readonly SyncPlanClear[]
 }
 
 /** Subset of plugin-manager change results we branch on. */
@@ -164,7 +172,7 @@ function refusalCode(result: ChangeResultLike): string | undefined {
   return undefined
 }
 
-/** Thin GET /sync poll stub (idle/apply wiring is 1D.4). */
+/** GET /sync plan fetch (idle gate + loop in idle.ts). */
 export async function pollSyncPlan(
   syncUrl: string,
   options: { fetchPlan: (url: string) => Promise<SyncPlan> },
@@ -275,8 +283,9 @@ export async function applySyncEntry(
     const removed = await deps.manager.removeBundle(entry.name)
     const code = refusalCode(removed)
     if (code === 'not-removable') {
+      // Close the intent without type 'failed' — abandoned ≠ default-state failed (1D.3 Important #1).
       await appendOp(deps.home, {
-        type: 'failed',
+        type: 'abandoned',
         name: entry.name,
         version: entry.version,
         action: entry.action,
@@ -318,8 +327,9 @@ export async function applySyncEntry(
   )
   const installCode = refusalCode(installed)
   if (installCode === 'already-installed') {
+    // Close the intent without type 'failed' — abandoned ≠ default-state failed (1D.3 Important #1).
     await appendOp(deps.home, {
-      type: 'failed',
+      type: 'abandoned',
       name: entry.name,
       version: entry.version,
       action: entry.action,

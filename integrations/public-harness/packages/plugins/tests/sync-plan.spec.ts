@@ -372,6 +372,43 @@ describe('applySyncReport', () => {
     expect(stateOf(db, 'user-a', pkg.packageId)).toMatchObject({ state: 'failed' })
   })
 
+  it('abandoned_oplog_does_not_mark_default_failed', () => {
+    const db = fixture()
+    const pkg = submitReady(db, { version: '1.2.0', sha: SHA_B })
+    approve(db, pkg.versionId)
+    setDefault({
+      db,
+      adminUserId: 'admin-1',
+      packageId: pkg.packageId,
+      scope: { kind: 'company', target: '*' },
+    })
+    insertState(db, {
+      userId: 'user-a',
+      packageId: pkg.packageId,
+      state: 'pending',
+      installedVersion: null,
+      targetVersion: '1.2.0',
+      updatedAt: 1,
+    })
+
+    const result = applySyncReport({
+      db,
+      userId: 'user-a',
+      groups: new Set(),
+      report: {
+        installed: [],
+        opLog: [
+          { type: 'intent', name: CORP, version: '1.2.0' },
+          { type: 'abandoned', name: CORP, version: '1.2.0' },
+        ],
+        results: [{ name: CORP, action: 'install', outcome: 'abandoned', reason: 'already-installed' }],
+      },
+      now: 300,
+    })
+    expect(result.failed).toEqual([])
+    expect(stateOf(db, 'user-a', pkg.packageId)).toMatchObject({ state: 'pending' })
+  })
+
   it('derives_user_managed_and_installed_count', () => {
     const db = fixture()
     const def = submitReady(db, { version: '1.0.0' })

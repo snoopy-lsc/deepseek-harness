@@ -285,10 +285,17 @@ export function applySyncReport(input: ApplySyncReportInput): ApplySyncReportRes
   for (const entry of report.opLog) {
     if (entry.type === 'failed') failedNames.add(entry.name)
   }
-  // Open intent without a later done/recovered/failed/removed for that name stays failed.
+  // Open intent without a later done/recovered/failed/removed/abandoned for that name stays failed.
+  // `abandoned` closes the intent without marking default-state failed (1D.3 Important #1 / 1D.4).
   const closed = new Set(
     report.opLog
-      .filter((entry) => entry.type === 'done' || entry.type === 'recovered' || entry.type === 'failed' || entry.type === 'removed')
+      .filter((entry) => (
+        entry.type === 'done'
+        || entry.type === 'recovered'
+        || entry.type === 'failed'
+        || entry.type === 'removed'
+        || entry.type === 'abandoned'
+      ))
       .map((entry) => entry.name),
   )
   for (const entry of report.opLog) {

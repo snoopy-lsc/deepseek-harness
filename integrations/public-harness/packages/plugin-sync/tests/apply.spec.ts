@@ -288,6 +288,9 @@ describe('applySyncEntry abandon on manager refusals', () => {
     const result = await applySyncEntry(installEntry(), deps({ home, profileDir, manager }))
     expect(result).toMatchObject({ outcome: 'abandoned', reason: 'already-installed' })
     expect(manager.setBundleEnabled).not.toHaveBeenCalled()
+    const ops = await readOps(home)
+    expect(ops.some((o) => o.type === 'failed' && o.reason === 'already-installed')).toBe(false)
+    expect(ops.some((o) => o.type === 'abandoned' && o.reason === 'already-installed')).toBe(true)
   })
 
   it('abandons_update_on_not_removable', async () => {
@@ -306,6 +309,9 @@ describe('applySyncEntry abandon on manager refusals', () => {
     )
     expect(result).toMatchObject({ outcome: 'abandoned', reason: 'not-removable' })
     expect(manager.installBundle).not.toHaveBeenCalled()
+    const ops = await readOps(home)
+    expect(ops.some((o) => o.type === 'failed' && o.reason === 'not-removable')).toBe(false)
+    expect(ops.some((o) => o.type === 'abandoned' && o.reason === 'not-removable')).toBe(true)
   })
 })
 

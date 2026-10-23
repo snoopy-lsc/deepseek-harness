@@ -13,6 +13,7 @@ export type SyncOpType =
   | 'failed'
   | 'recovered'
   | 'user-removed'
+  | 'abandoned'
   | 'reset'
   | 're-enable'
 
