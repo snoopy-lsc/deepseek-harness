@@ -33,7 +33,7 @@ Plugins reach the catalogue in two ways: a user submits and a different administ
 - [Risks and unverified items](#risks-and-unverified-items)
 - [Test plan](#test-plan)
 - [Phased implementation plan](#phased-implementation-plan)
-- [Open questions and recommended defaults](#open-questions)
+- [Open questions and decided defaults](#open-questions)
 - [Sources](#sources)
 
 <a id="goals-and-non-goals"></a>
@@ -65,10 +65,10 @@ Plugins reach the catalogue in two ways: a user submits and a different administ
 | # | User decision | Where | Status |
 |---|---|---|---|
 | 1 | Company market in the deployment; per-user `index.json` from the server; host proxy serves containers; intranet firewall stays closed; public market later | [Serving instances](#serving-instances), [Public market](#public-market-later) | Met |
-| 2 | Two listing paths, both audited and reversible; reuse the KB share approval | [Listing flows](#listing-flows), [Audit](#permissions-and-audit) | Met; self-approval refused by default (open question 5) |
+| 2 | Two listing paths, both audited and reversible; reuse the KB share approval | [Listing flows](#listing-flows), [Audit](#permissions-and-audit) | Met; self-approval refused (decided) |
 | 3 | Exact npm version plus integrity, exact git commit, install scripts off, internal mirror, signatures phase 2, pure-skill type considered | [Store](#store-and-mirror), [Package kinds](#package-kinds-and-index-extensions), [Plan](#phased-implementation-plan) | Met, with one limit: if phase 0 forces fallback mode (or a version has install scripts), transitive dependencies are limited to reviewed tarballs but not pinned, and Discover installs get no lockfile check. Pure-skill in phase 2 |
-| 4 | Users install; department or company defaults that users can remove; market-only toggle; all install paths kept | [Installation](#installation-and-policy), [Default installs](#default-installs) | Met; market-only is policy unless `egress_lock` (open question 1) |
-| 5 | Manual updates; defaults pushed automatically after approval; re-approval of every version; rollback to the previous snapshot | [Default installs](#default-installs), [Updates](#updates-and-rollback) | Met; live push within minutes when the instance is idle, next start as fallback (open question 3) |
+| 4 | Users install; department or company defaults that users can remove; market-only toggle; all install paths kept | [Installation](#installation-and-policy), [Default installs](#default-installs) | Met; market-only is policy only; `egress_lock` is phase 2 and opt-in per department (decided) |
+| 5 | Manual updates; defaults pushed automatically after approval; re-approval of every version; rollback to the previous snapshot | [Default installs](#default-installs), [Updates](#updates-and-rollback) | Met; live push within about 5 minutes when idle, next start as fallback (decided) |
 
 <a id="current-system-facts"></a>
 ## Current system facts
@@ -391,7 +391,7 @@ Market traffic must pass two drop rules and then reach one accept. In nftables a
 
 - **Native**: the unit gets a second patch, `--patch /run/dsh-public/instance-market/<account>.yml`, root-owned and readable only by the account's group, written atomically by the provisioner before the unit starts. It also gets `NPM_CONFIG_GLOBALCONFIG=/run/dsh-public/instance-market/<account>.npmrc`. The shared `paths.launchPatch` stays untouched. `config.ts` validates the new `paths.instanceMarketDir` as a root-owned directory outside the tenant's writable paths.
 - **Container**: `webPatch` gains the same rows. The npmrc is mounted read-only as `<marketDir>/<account>:/run/dsh-market:ro`, a volume added to the `assertSafeRunArgv` allowlist, with `NPM_CONFIG_GLOBALCONFIG=/run/dsh-market/npmrc`.
-- The npmrc holds `@corp-dsh:registry=http://<host>:<port>/npm/` and `//<host>:<port>/npm/:_authToken=<token>`. Under `market_only` it also sets `registry=http://<host>:<port>/npm/`, so a plugin manager repair or a plain `pnpm install` resolves public-name artifacts from the mirror too. `NPM_CONFIG_GLOBALCONFIG` applies to every npm and pnpm run in the instance, so this also sends the user's own workspace installs to the mirror, where public packages are not available; open question 1 states this. The company scope is a dedicated name such as `@corp-dsh/`, so the mapping does not capture a scope the company already uses for its own development packages (open question 6).
+- The npmrc holds `@corp-dsh:registry=http://<host>:<port>/npm/` and `//<host>:<port>/npm/:_authToken=<token>`. Under `market_only` it also sets `registry=http://<host>:<port>/npm/`, so a plugin manager repair or a plain `pnpm install` resolves public-name artifacts from the mirror too. `NPM_CONFIG_GLOBALCONFIG` applies to every npm and pnpm run in the instance, so this also sends the user's own workspace installs to the mirror, where public packages are not available; decided question 1 states this. The company scope is the dedicated name `@corp-dsh/` (decided question 6).
 - Token exposure: the token is not in any URL, in the patch, in the lockfile, in `plugin_market` output, or in access logs. Any process running as the account can read the npmrc, including model-run shell commands; that is the account's own trust domain, and the token only reaches that account's own port.
 - The patch rows, built by a new `pluginMarketRows` in `contracts/src/web-rows.ts`:
   - insert `plugin-market` and `ui-plugin-market` as the experimental bundle's `cordis.patch.yml` does;
@@ -461,7 +461,7 @@ Market traffic must pass two drop rules and then reach one accept. In nftables a
   - native: `network.ts` omits the public `80` and `443` accept for that account;
   - container: `dsh-public.nft` gains `set egress_locked { type uid; }` and `meta skuid @egress_locked tcp dport { 80, 443 } drop` before the public accept, maintained by the provisioner;
   - model calls are unaffected because they go through the quota loopback listener; browsing, git, pip, and public npm stop working.
-- `egress_lock` is open question 1 and needs a user decision.
+- `egress_lock` is decided question 1: not the default; optional per department, and built in phase 2.
 
 ### Install scripts
 
@@ -694,7 +694,7 @@ Control socket verbs for the provisioner: `open`, `close`, `instance-config` (pa
 - **Closure drift.** A closure is frozen at review; a dependency's later security fix needs a new version and review.
 - **Repacked artifacts.** A company artifact for a public npm name has a different integrity from the public tarball. Under `market_only` the npmrc points `registry=` at the mirror, so repairs resolve there. Without it, a later reinstall of that unscoped name from the public registry fails the lockfile integrity check. It fails safely, and sync or reconcile reinstalls from the mirror; a user's own manual repair needs `--registry=<mirror>`, which My plugins shows.
 - **Sync race window.** Sync cannot hold the plugin manager's lock across `installBundle`, so phase 1 relies on after-the-fact checks: the bundle is installed disabled and enabled only after a second check. During the window at most the administrator-allowed install scripts of that version can have run. Without HMR a started bundle cannot be removed and waits for reconcile.
-- **Account cap.** One `ListenStream` per market port and one port per account, so at most 4,096 accounts can use the market (open question 9). `dsh-plugins` runs with `LimitNOFILE=16384`; phase 0 checks start time.
+- **Account cap.** One `ListenStream` per market port and one port per account, so at most 4,096 accounts can use the market (decided question 9). `dsh-plugins` runs with `LimitNOFILE=16384`; phase 0 checks start time.
 - **Allowlist upkeep.** A registry that moves its tarballs to a new CDN host fails fetches until `egress.allow` is updated.
 - **In-instance sync is tenant-controlled.** A user can disable or alter it; this only affects their own defaults and soft limits.
 - **Separately loaded market table.** `dsh_market` can be lost, for example by `flush ruleset` when `nftables.service` restarts. Until the probe reloads and refills it, within a minute, the range-wide accepts alone would admit any instance account to any market port; the `inet_diag` peer check in `dsh-plugins` keeps them out meanwhile, and the bearer token remains behind it. A stale set element is deleted at the next probe and alerted.
@@ -811,13 +811,13 @@ Milestone 1E, policy, limits, and containers:
 
 1. Generalized `effectiveLimits` and `dsh_plugin_limit`.
 2. `market_only` per company or department; install-script policy.
-3. Container runtime: `market_owner` set, receiving-socket rule, `webPatch` rows, market volume, one-shot reconcile. If open question 4 limits phase 1 to native, this item moves to phase 2.
+3. Container runtime: `market_owner` set, receiving-socket rule, `webPatch` rows, market volume, one-shot reconcile. Containers stay in milestone 1E (decided question 4).
 
 ### Phase 2 (二期)
 
 1. Signature verification: npm provenance or Sigstore on fetch, and a signed personalized index and artifacts.
 2. Pure-skill packages delivered as read-only host views.
-3. `egress_lock`, if open question 1 chooses it.
+3. `egress_lock` as an optional per-department choice (decided question 1).
 
 ### Later
 
@@ -826,22 +826,22 @@ Milestone 1E, policy, limits, and containers:
 3. A four-eyes approval rule.
 
 <a id="open-questions"></a>
-## Open questions and recommended defaults
+## Open questions and decided defaults
 
-Questions 1 to 9 need a user decision; the rest have defaults that can be confirmed with the review.
+Questions 1 to 9 were decided by the user on 2026-10-23 (Asia/Taipei): every recommended default below is **confirmed**. Questions 10 to 18 keep their recommended defaults for confirmation with the review.
 
-1. **Strength of "only allow installing from the market".** Recommended default: policy only; `egress_lock` stays an explicit per-department choice, because it breaks browsing, git, pip, and public npm. Without it a user can change the registry back in their npmrc, and git and tarball installs keep working. Two effects to accept: under `market_only` the global npmrc sends every npm install in the instance to the mirror, including the user's own projects; and because the CLI applies patches after the profile, a user's own `indexes` and registry edits in Settings may be overwritten at each start (phase 0 confirms).
-2. **When signature verification lands.** Recommended default: phase 2 (二期), as decided. The doc places it there; please confirm.
-3. **What "pushed automatically" means for defaults.** Recommended default: live push by the sync plugin within about 5 minutes while the instance is idle; next start as fallback, with a "restart to apply" notice and an admin view of how many users are pending.
-4. **Runtimes in phase 1.** Recommended default: both, with containers in milestone 1E. If the user prefers, phase 1 supports native only and containers move to phase 2.
-5. **Can an administrator approve their own path-A submission?** Recommended default: no; they use path B, which is audited as an upload.
-6. **Mandatory company scope for git and upload sources, and its name.** Recommended default: yes, with a dedicated scope such as `@corp-dsh/` that no in-house development package uses, and the name must not exist upstream.
-7. **Overturning the production README decision.** The container firewall had no per-user rules; the market range now has per-user set elements and a receiving-socket rule, and root, `dsh-router`, `dsh-identity`, and other host accounts are kept off market ports. Recommended default: accept, for the market range only.
-8. **Residual risks accepted for phase 1.** Recommended default: accept all three:
+1. **Strength of "only allow installing from the market".** **Confirmed:** policy only; `egress_lock` stays an explicit per-department choice, because it breaks browsing, git, pip, and public npm. Without it a user can change the registry back in their npmrc, and git and tarball installs keep working. Two effects to accept: under `market_only` the global npmrc sends every npm install in the instance to the mirror, including the user's own projects; and because the CLI applies patches after the profile, a user's own `indexes` and registry edits in Settings may be overwritten at each start (phase 0 confirms).
+2. **When signature verification lands.** **Confirmed:** phase 2 (二期). The doc places it there.
+3. **What "pushed automatically" means for defaults.** **Confirmed:** live push by the sync plugin within about 5 minutes while the instance is idle; next start as fallback, with a "restart to apply" notice and an admin view of how many users are pending.
+4. **Runtimes in phase 1.** **Confirmed:** both, with containers in milestone 1E.
+5. **Can an administrator approve their own path-A submission?** **Confirmed:** no; they use path B, which is audited as an upload.
+6. **Mandatory company scope for git and upload sources, and its name.** **Confirmed:** yes, the dedicated scope `@corp-dsh/`, and the name must not exist upstream.
+7. **Overturning the production README decision.** **Confirmed:** accept, for the market range only. The container firewall gains per-user set elements and a receiving-socket rule for market ports; root, `dsh-router`, `dsh-identity`, and other host accounts stay off those ports.
+8. **Residual risks accepted for phase 1.** **Confirmed:** accept all three:
    - versions with install scripts, or every version if phase 0 rejects bundle mode, use fallback mode: transitive dependencies are limited to reviewed tarballs but not pinned, and Discover and manual installs get no lockfile check;
    - the default-push race window: with install-disabled-then-enable, at most the administrator-allowed install scripts can have run in it;
    - the index is unsigned until phase 2.
-9. **Scale.** Each account holds one market port for as long as it exists; the cap is 4,096, so at most 4,096 accounts can use the market. Recommended default: 4,096; otherwise give the expected number of accounts.
+9. **Scale.** **Confirmed:** at most 4,096 accounts can use the market (one port per account for as long as the account exists).
 10. **Install scripts.** Recommended default: refused unless an administrator allows each such package, `prepare` and `binding.gyp` included.
 11. **Is an opt-out permanent?** Recommended default: yes, until an administrator resets the default or the user re-enables it in My plugins.
 12. **Limit values.** Recommended default: global `max_installed` 50, `max_submissions` 20, `max_submission_bytes` 1 GiB; one version's artifact at most 200 MiB; one uploaded tarball at most 50 MiB.

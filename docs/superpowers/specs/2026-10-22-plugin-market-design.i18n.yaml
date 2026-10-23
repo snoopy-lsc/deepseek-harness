@@ -9,8 +9,8 @@
   en: 93a06ea173c332b2
   zh: 8040f25cd63a156a
 /company-plugin-market-design/contents:
-  en: 03334de763a801da
-  zh: dd6d28827f02316a
+  en: 5029a1fb46ac90e9
+  zh: 4129356c3e3812d2
 /company-plugin-market-design/goals-and-non-goals:
   en: 2a4a824d5e2ebfd8
   zh: 2b2a2e49e5b87c60
@@ -21,8 +21,8 @@
   en: 97a3cf5a86928304
   zh: 074c3186bd8ad860
 /company-plugin-market-design/requirements-mapping:
-  en: 40214073d5dd9108
-  zh: 5d7740df11138ab1
+  en: 5b2a36c29fdc35bc
+  zh: ff6af1ca26941061
 /company-plugin-market-design/current-system-facts:
   en: a979ea29d397adfc
   zh: 11188ab4c757f2aa
@@ -72,8 +72,8 @@
   en: 7d6d342186178918
   zh: 4dd9694464dbe98d
 /company-plugin-market-design/serving-instances/how-the-instance-learns-the-url-and-token:
-  en: 08c4649408841f3c
-  zh: 6c822bdddd7bd693
+  en: 52a599fc4d6c25b7
+  zh: b9327e6f48c6b061
 /company-plugin-market-design/listing-flows-and-state-machine:
   en: 9afe07828c7be02e
   zh: 5723d91d8dab440a
@@ -99,8 +99,8 @@
   en: 3cdf2119ff004de3
   zh: 687c34863f15a7d7
 /company-plugin-market-design/installation-and-policy/only-allow-installing-from-the-market:
-  en: aefb5b721082bd66
-  zh: ea75b743a50b4860
+  en: e45320860feae1cb
+  zh: 821e7e702f304fd3
 /company-plugin-market-design/installation-and-policy/install-scripts:
   en: 16813fa50142e542
   zh: 92b54ed693511e9e
@@ -153,8 +153,8 @@
   en: 6cd3c9e43fc2ec71
   zh: 96a4d9ea00458c40
 /company-plugin-market-design/risks-and-unverified-items/risks:
-  en: 28b4b02b4b5c4aeb
-  zh: c20bd2ba49349c42
+  en: cee04f6b45d8e25f
+  zh: deb0505d17c7afce
 /company-plugin-market-design/risks-and-unverified-items/unverified-items:
   en: 1786f30723e2a161
   zh: 43bae96adf887463
@@ -168,17 +168,17 @@
   en: be64fcb254531610
   zh: 5cd098820b347cd5
 /company-plugin-market-design/phased-implementation-plan/phase-1:
-  en: b74afa38127e6946
-  zh: ca9f1e9271153be8
+  en: 021924296ad7fdf3
+  zh: 3e7b7fd366f4107a
 /company-plugin-market-design/phased-implementation-plan/phase-2:
-  en: 6173e80d1f46e388
-  zh: 31633fc0ec119770
+  en: 8c8794639a9280d6
+  zh: c4f914fa4fad3e61
 /company-plugin-market-design/phased-implementation-plan/later:
   en: 96fd85bccd919a57
   zh: 135d3c1e0964337d
-/company-plugin-market-design/open-questions-and-recommended-defaults:
-  en: cb72ce2802df859d
-  zh: e5047a5b703263bd
+/company-plugin-market-design/open-questions-and-decided-defaults:
+  en: 367f4c09993d17ad
+  zh: 19382be83eb7c29a
 /company-plugin-market-design/sources:
   en: bebdaec016ad6b14
   zh: 59618b3b4392a582

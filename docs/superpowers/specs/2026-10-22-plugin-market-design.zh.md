@@ -33,7 +33,7 @@
 - [风险与未验证项](#risks-and-unverified-items)
 - [测试计划](#test-plan)
 - [分阶段实施计划](#phased-implementation-plan)
-- [开放问题与推荐默认值](#open-questions)
+- [开放问题与已定默认值](#open-questions)
 - [来源](#sources)
 
 <a id="goals-and-non-goals"></a>
@@ -65,10 +65,10 @@
 | # | 用户决定 | 对应章节 | 状态 |
 |---|---|---|---|
 | 1 | 部署内的公司市场；服务器生成每用户 `index.json`；宿主机代理供给容器；内网防火墙保持关闭；以后可加公共市场 | [为实例提供服务](#serving-instances)、[公共市场](#public-market-later) | 满足 |
-| 2 | 两条上架路径，都有审计、都可回滚；复用 KB 共享审批 | [上架流程](#listing-flows)、[审计](#permissions-and-audit) | 满足；默认禁止自审（开放问题 5） |
+| 2 | 两条上架路径，都有审计、都可回滚；复用 KB 共享审批 | [上架流程](#listing-flows)、[审计](#permissions-and-audit) | 满足；禁止自审（已定） |
 | 3 | npm 精确版本加完整性、git 精确提交、默认禁用安装脚本、内部镜像、签名放二期、考虑纯技能包类型 | [存储](#store-and-mirror)、[包类型](#package-kinds-and-index-extensions)、[计划](#phased-implementation-plan) | 满足，但有一个限制：如果第 0 阶段迫使使用兜底模式（或某版本带安装脚本），传递依赖只限于审核过的 tarball 而不固定组合，且 Discover 安装没有 lockfile 检查。纯技能包在二期 |
-| 4 | 用户自行安装；部门或全公司默认安装且用户可卸载；仅市场开关；保留所有安装路径 | [安装](#installation-and-policy)、[默认安装](#default-installs) | 满足；没有 `egress_lock` 时"仅市场"只是策略（开放问题 1） |
-| 5 | 手动更新；默认插件审批后自动推送；每个版本重新审批；可回滚到上一快照 | [默认安装](#default-installs)、[更新](#updates-and-rollback) | 满足；实例空闲时数分钟内实时推送，下次启动兜底（开放问题 3） |
+| 4 | 用户自行安装；部门或全公司默认安装且用户可卸载；仅市场开关；保留所有安装路径 | [安装](#installation-and-policy)、[默认安装](#default-installs) | 满足；"仅市场"只做策略；`egress_lock` 放在二期并按部门可选（已定） |
+| 5 | 手动更新；默认插件审批后自动推送；每个版本重新审批；可回滚到上一快照 | [默认安装](#default-installs)、[更新](#updates-and-rollback) | 满足；空闲时约 5 分钟内实时推送，下次启动兜底（已定） |
 
 <a id="current-system-facts"></a>
 ## 现有系统事实
@@ -391,7 +391,7 @@ CREATE TABLE plugin_audit_outbox (
 
 - **原生**：单元增加第二个 patch `--patch /run/dsh-public/instance-market/<account>.yml`，由 root 拥有、只有该账户的组可读，在单元启动前由 provisioner 原子写入。单元还获得 `NPM_CONFIG_GLOBALCONFIG=/run/dsh-public/instance-market/<account>.npmrc`。共用的 `paths.launchPatch` 保持不变。`config.ts` 校验新增的 `paths.instanceMarketDir` 是 root 拥有、且位于租户可写路径之外的目录。
 - **容器**：`webPatch` 增加同样的行。npmrc 以只读卷 `<marketDir>/<account>:/run/dsh-market:ro` 挂载，该卷加入 `assertSafeRunArgv` 的白名单，并设 `NPM_CONFIG_GLOBALCONFIG=/run/dsh-market/npmrc`。
-- npmrc 包含 `@corp-dsh:registry=http://<host>:<port>/npm/` 和 `//<host>:<port>/npm/:_authToken=<token>`。在 `market_only` 下它还设置 `registry=http://<host>:<port>/npm/`，使插件管理器的修复或普通的 `pnpm install` 也从镜像解析公共包名的产物。`NPM_CONFIG_GLOBALCONFIG` 作用于实例中的每一次 npm 和 pnpm 运行，因此用户自己 workspace 中的安装也会指向镜像，而镜像里没有公共包；开放问题 1 写明了这一点。公司 scope 使用专用名称（如 `@corp-dsh/`），使映射不会劫持公司内部开发已在使用的 scope（开放问题 6）。
+- npmrc 包含 `@corp-dsh:registry=http://<host>:<port>/npm/` 和 `//<host>:<port>/npm/:_authToken=<token>`。在 `market_only` 下它还设置 `registry=http://<host>:<port>/npm/`，使插件管理器的修复或普通的 `pnpm install` 也从镜像解析公共包名的产物。`NPM_CONFIG_GLOBALCONFIG` 作用于实例中的每一次 npm 和 pnpm 运行，因此用户自己 workspace 中的安装也会指向镜像，而镜像里没有公共包；已定问题 1 写明了这一点。公司 scope 使用专用名称 `@corp-dsh/`（已定问题 6）。
 - 令牌暴露面：令牌不出现在任何 URL、patch、lockfile、`plugin_market` 输出或访问日志中。以该账户身份运行的任何进程（包括模型执行的 shell 命令）都能读取 npmrc；这属于账户自己的信任域，而且该令牌只能访问该账户自己的端口。
 - patch 行由 `contracts/src/web-rows.ts` 中新增的 `pluginMarketRows` 生成：
   - 像实验性组合包的 `cordis.patch.yml` 那样插入 `plugin-market` 和 `ui-plugin-market`；
@@ -461,7 +461,7 @@ CREATE TABLE plugin_audit_outbox (
   - 原生：`network.ts` 不再为该账户渲染公网 `80` 和 `443` 的放行规则；
   - 容器：`dsh-public.nft` 增加 `set egress_locked { type uid; }`，并在公网放行之前加入 `meta skuid @egress_locked tcp dport { 80, 443 } drop`，由 provisioner 维护；
   - 模型调用不受影响，因为它们走配额回环监听；浏览、git、pip 和公共 npm 将无法使用。
-- `egress_lock` 是开放问题 1，需要用户决定。
+- `egress_lock` 是已定问题 1：不是默认项；按部门可选，并在二期实现。
 
 ### 安装脚本
 
@@ -694,7 +694,7 @@ provisioner 使用的控制 socket 动词：`open`、`close`、`instance-config`
 - **依赖闭包漂移。** 依赖闭包在审核时冻结；依赖以后的安全修复需要新版本和新审核。
 - **重新打包的产物。** 公开 npm 包名的公司产物与公开 tarball 的完整性值不同。在 `market_only` 下 npmrc 把 `registry=` 指向镜像，因此修复也在镜像中解析。没有它时，以后若从公共 registry 重新安装这个无 scope 的包名，会在 lockfile 完整性校验时失败。失败是安全的，同步或对账会从镜像重新安装；用户自己手动修复需要加 `--registry=<mirror>`，"我的插件"会给出提示。
 - **同步竞争窗口。** 同步插件无法在 `installBundle` 的整个过程中持有插件管理器的锁，因此一期依靠事后检查：组合包先装成禁用，第二次检查通过后才启用。窗口内最多只有管理员为该版本允许的安装脚本运行过。没有 HMR 时，已启动的组合包无法删除，要等对账处理。
-- **账户数上限。** 每个市场端口一行 `ListenStream`，每个账户一个端口，因此最多 4,096 个账户能使用市场（开放问题 9）。`dsh-plugins` 以 `LimitNOFILE=16384` 运行；第 0 阶段检查启动时间。
+- **账户数上限。** 每个市场端口一行 `ListenStream`，每个账户一个端口，因此最多 4,096 个账户能使用市场（已定问题 9）。`dsh-plugins` 以 `LimitNOFILE=16384` 运行；第 0 阶段检查启动时间。
 - **白名单维护。** registry 把 tarball 迁到新的 CDN 主机后，在更新 `egress.allow` 之前拉取会失败。
 - **实例内同步受租户控制。** 用户可以禁用或修改它；这只影响其自己的默认安装和软限额。
 - **单独加载的市场表。** `dsh_market` 可能丢失，例如 `nftables.service` 重启时执行 `flush ruleset`。在探测于一分钟内重新加载并填满它之前，只靠覆盖整个端口段的放行规则，任何实例账户都能访问任何市场端口；这段时间由 `dsh-plugins` 中的 `inet_diag` 对端校验把它们挡在外面，其后还有 bearer 令牌。过期的 set 元素会在下一次探测时删除并告警。
@@ -811,13 +811,13 @@ provisioner 使用的控制 socket 动词：`open`、`close`、`instance-config`
 
 1. 泛化的 `effectiveLimits` 和 `dsh_plugin_limit`。
 2. 按全公司或部门的 `market_only`；安装脚本策略。
-3. 容器运行时：`market_owner` set、接收方 socket 规则、`webPatch` 行、市场卷、一次性对账。如果开放问题 4 决定一期只支持原生，这一项移到二期。
+3. 容器运行时：`market_owner` set、接收方 socket 规则、`webPatch` 行、市场卷、一次性对账。容器留在里程碑 1E（已定问题 4）。
 
 ### 第 2 阶段（二期）
 
 1. 签名校验：拉取时校验 npm provenance 或 Sigstore，并对个性化索引和产物签名。
 2. 以只读主机视图交付的纯技能包。
-3. 如果开放问题 1 选择采用，则实现 `egress_lock`。
+3. 作为按部门可选的 `egress_lock`（已定问题 1）。
 
 ### 以后
 
@@ -826,22 +826,22 @@ provisioner 使用的控制 socket 动词：`open`、`close`、`instance-config`
 3. 四眼审批规则。
 
 <a id="open-questions"></a>
-## 开放问题与推荐默认值
+## 开放问题与已定默认值
 
-问题 1 到 9 需要用户决定；其余问题已有默认值，可随评审一并确认。
+问题 1 到 9 已由用户于 2026-10-23（Asia/Taipei）拍板：下列每一项推荐默认值均为**已确认**。问题 10 到 18 仍保留推荐默认值，可随评审一并确认。
 
-1. **"仅允许从市场安装"的力度。** 推荐默认：只做策略；`egress_lock` 作为按部门的显式选择，因为它会断掉浏览、git、pip 和公共 npm。不开它时，用户可以在自己的 npmrc 中把 registry 改回去，git 和 tarball 安装照常可用。需要接受两个影响：`market_only` 下全局 npmrc 会让实例中所有 npm 安装都走镜像，包括用户自己的项目；而且由于 CLI 在 profile 之后应用 patch，用户在设置页修改的 `indexes` 和 registry 可能在每次启动时被覆盖（第 0 阶段确认）。
-2. **签名校验何时上线。** 推荐默认：按已定需求放在二期。文档已放在那里，请确认。
-3. **默认插件的"自动推送"指什么。** 推荐默认：实例空闲时由同步插件在约 5 分钟内实时推送；下次启动作为兜底，并显示"重启后生效"提示，管理员可看到待生效人数。
-4. **一期支持哪些运行时。** 推荐默认：两种都支持，容器放在里程碑 1E。如果用户倾向，一期只支持原生，容器移到二期。
-5. **管理员能否批准自己通过路径 A 提交的插件。** 推荐默认：不能；他们改走路径 B，并以上传的形式被审计。
-6. **git 和上传来源是否必须使用公司 scope，以及 scope 名称。** 推荐默认：是，使用公司内部开发包都不用的专用 scope（如 `@corp-dsh/`），且包名不得在上游存在。
-7. **推翻 production README 的既有决定。** 容器防火墙原本不放按用户的规则；现在市场端口段增加按用户的 set 元素和接收方 socket 规则，并且 root、`dsh-router`、`dsh-identity` 等宿主机账户被挡在市场端口之外。推荐默认：接受，仅限市场端口段。
-8. **一期接受的剩余风险。** 推荐默认：三项都接受：
+1. **"仅允许从市场安装"的力度。** **已确认：** 只做策略；`egress_lock` 作为按部门的显式选择，因为它会断掉浏览、git、pip 和公共 npm。不开它时，用户可以在自己的 npmrc 中把 registry 改回去，git 和 tarball 安装照常可用。需要接受两个影响：`market_only` 下全局 npmrc 会让实例中所有 npm 安装都走镜像，包括用户自己的项目；而且由于 CLI 在 profile 之后应用 patch，用户在设置页修改的 `indexes` 和 registry 可能在每次启动时被覆盖（第 0 阶段确认）。
+2. **签名校验何时上线。** **已确认：** 放在二期。文档已放在那里。
+3. **默认插件的"自动推送"指什么。** **已确认：** 实例空闲时由同步插件在约 5 分钟内实时推送；下次启动作为兜底，并显示"重启后生效"提示，管理员可看到待生效人数。
+4. **一期支持哪些运行时。** **已确认：** 两种都支持，容器放在里程碑 1E。
+5. **管理员能否批准自己通过路径 A 提交的插件。** **已确认：** 不能；他们改走路径 B，并以上传的形式被审计。
+6. **git 和上传来源是否必须使用公司 scope，以及 scope 名称。** **已确认：** 是，使用专用 scope `@corp-dsh/`，且包名不得在上游存在。
+7. **推翻 production README 的既有决定。** **已确认：** 接受，仅限市场端口段。容器防火墙为市场端口增加按用户的 set 元素和接收方 socket 规则；root、`dsh-router`、`dsh-identity` 等宿主机账户仍被挡在这些端口之外。
+8. **一期接受的剩余风险。** **已确认：** 三项都接受：
    - 带安装脚本的版本（或第 0 阶段否定打包模式后的所有版本）使用兜底模式：传递依赖只限于审核过的 tarball 而不固定组合，Discover 和手动安装没有 lockfile 检查；
    - 默认推送的竞争窗口：采用先禁用安装、检查后再启用之后，窗口内最多只有管理员允许的安装脚本运行过；
    - 二期之前索引未签名。
-9. **规模。** 每个账户在存在期间占用一个市场端口；上限 4,096，即最多 4,096 个账户能使用市场。推荐默认：4,096；否则请给出预期账户数。
+9. **规模。** **已确认：** 最多 4,096 个账户能使用市场（每个账户在存在期间占用一个端口）。
 10. **安装脚本。** 推荐默认：除非管理员逐个允许这些包，否则拒绝，检测范围包括 `prepare` 和 `binding.gyp`。
 11. **卸载默认插件是否永久生效。** 推荐默认：是，直到管理员重置该默认安装，或用户在"我的插件"中重新启用。
 12. **限额值。** 推荐默认：全局 `max_installed` 50、`max_submissions` 20、`max_submission_bytes` 1 GiB；单个版本的产物不超过 200 MiB；单个上传 tarball 不超过 50 MiB。
