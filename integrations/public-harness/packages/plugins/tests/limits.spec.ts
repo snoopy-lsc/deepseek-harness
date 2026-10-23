@@ -10,7 +10,7 @@ import { insertPackage, insertVersion } from '../src/migrate.ts'
 import { newId } from '../src/ids.ts'
 import { submitPluginVersion, SubmitError } from '../src/submit.ts'
 import { buildSyncPlan, applySyncReport } from '../src/sync-plan.ts'
-import { buildPersonalizedIndex } from '../src/index-builder.ts'
+import { createMarketBuildIndex } from '../src/index-builder.ts'
 import { listPendingAudit } from '../src/audit.ts'
 import {
   PLUGIN_LIMIT_NAMES,
@@ -25,7 +25,7 @@ import {
   assertSubmissionWithinLimits,
   installedCountFromReport,
   packumentAllowed,
-  markIndexAtLimit,
+  createMarketLookupPackument,
   PluginLimitError,
   type PluginLimitRow,
   handlePluginLimitsAdmin,
@@ -342,16 +342,56 @@ describe('max_installed packument and index', () => {
       actor: 'admin@example.com', now,
     })
 
-    const built = buildPersonalizedIndex(db, 'user-a', [], {
+    // Adapter must mark on the built index (not only after a manual post-process).
+    const buildIndex = createMarketBuildIndex(db, {
       registryUrl: 'http://127.0.0.1:30100/npm/',
+      groupsFor: () => [],
     })
-    const marked = markIndexAtLimit(built.index, {
-      maxInstalled: 50,
-      installedCount: 50,
-      installedNames: new Set(),
+    const index = buildIndex('user-a')
+    expect(index.plugins[0]?.name).toBe(name)
+    expect(index.plugins[0]?.['x-dsh-at-limit']).toBe(true)
+
+    // Already-installed names stay unmarked.
+    db.db.prepare(
+      `UPDATE plugin_endpoint SET last_report = ? WHERE user_id = ?`,
+    ).run(JSON.stringify({ installedCount: 50, installed: [name] }), 'user-a')
+    const indexInstalled = buildIndex('user-a')
+    expect(indexInstalled.plugins[0]?.['x-dsh-at-limit']).toBeUndefined()
+  })
+
+  it('createMarketLookupPackument_refuses_when_report_at_limit', () => {
+    const db = fixture()
+    const now = Date.now()
+    const name = `${COMPANY_SCOPE_PREFIX}demo`
+    const other = `${COMPANY_SCOPE_PREFIX}other`
+    const packument = { name, versions: { '1.0.0': { name, version: '1.0.0' } } }
+    db.db.prepare(
+      `INSERT INTO plugin_endpoint (user_id, port, instance_id, account_uid, token_sha256, opened_at, last_report)
+       VALUES (?, 30102, 'i1', 1002, 'deadbeef', ?, ?)`,
+    ).run('user-a', now, JSON.stringify({ installedCount: 2, installed: [other] }))
+    setPluginLimit({
+      db, scope: { type: 'global', id: '*' }, name: 'max_installed', value: 2,
+      actor: 'admin@example.com', now,
     })
-    expect(marked.plugins[0]?.['x-dsh-at-limit']).toBe(true)
-    expect(built.index.plugins[0]?.['x-dsh-at-limit']).toBeUndefined()
+
+    const lookup = createMarketLookupPackument(db, {
+      groupsFor: () => [],
+      lookup: (n) => (n === name ? packument : undefined),
+    })
+    expect(lookup(name, 'user-a')).toBeUndefined()
+    expect(lookup(other, 'user-a')).toBeUndefined() // underlying miss
+
+    // Already installed escapes the gate.
+    db.db.prepare(
+      `UPDATE plugin_endpoint SET last_report = ? WHERE user_id = ?`,
+    ).run(JSON.stringify({ installedCount: 2, installed: [name] }), 'user-a')
+    expect(lookup(name, 'user-a')).toEqual(packument)
+
+    // Missing / stale report escapes (best-effort).
+    db.db.prepare(
+      `UPDATE plugin_endpoint SET last_report = NULL WHERE user_id = ?`,
+    ).run('user-a')
+    expect(lookup(name, 'user-a')).toEqual(packument)
   })
 
   it('defaults_still_plan_past_limit_and_report_records_overage', () => {

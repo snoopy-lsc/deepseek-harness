@@ -6,6 +6,7 @@ import { COMPANY_SCOPE_PREFIX } from './schema.ts'
 import { newId } from './ids.ts'
 import { releaseUnclaimedName, type PluginsDbHandle } from './migrate.ts'
 import { assertCompanyPluginName, UploadError } from './upload.ts'
+import { countUserSubmissionBytes, countUserSubmissions } from './limits.ts'
 
 export type SubmitErrorCode =
   | 'scope'
@@ -136,31 +137,6 @@ function pendingExists(db: PluginsDbHandle, packageId: string): boolean {
 }
 
 
-function countUserSubmissionBytesLocal(db: PluginsDbHandle, userId: string): number {
-  const row = db.db.prepare(
-    `SELECT COALESCE(SUM(v.size_bytes), 0) AS n
-     FROM plugin_version v
-     JOIN plugin_package p ON p.id = v.package_id
-     WHERE p.owner_user_id = ?
-       AND v.size_bytes IS NOT NULL
-       AND v.state IN ('pending', 'approved', 'revoked')`,
-  ).get(userId) as { n: number }
-  return Number(row.n)
-}
-
-/** Packages the user owns that are pending or currently listed (design max_submissions). */
-function countUserSubmissions(db: PluginsDbHandle, userId: string): number {
-  const row = db.db.prepare(
-    `SELECT COUNT(*) AS n FROM plugin_package p
-     WHERE p.owner_user_id = ?
-       AND (
-         EXISTS (SELECT 1 FROM plugin_version v WHERE v.package_id = p.id AND v.state = 'pending')
-         OR EXISTS (SELECT 1 FROM plugin_listing l WHERE l.package_id = p.id)
-       )`,
-  ).get(userId) as { n: number }
-  return row.n
-}
-
 function assertCompanyName(name: string): void {
   try {
     assertCompanyPluginName(name)
@@ -249,7 +225,7 @@ export function submitPluginVersion(input: SubmitInput): SubmitResult {
       && input.limits?.maxSubmissionBytes != null
       && sizeBytes > 0
     ) {
-      const used = countUserSubmissionBytesLocal(input.db, input.userId) + sizeBytes
+      const used = countUserSubmissionBytes(input.db, input.userId) + sizeBytes
       if (used > input.limits.maxSubmissionBytes) {
         throw new SubmitError('limit-reached', 'max_submission_bytes')
       }

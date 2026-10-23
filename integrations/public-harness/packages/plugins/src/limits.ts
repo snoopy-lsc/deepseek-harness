@@ -420,6 +420,38 @@ export function markIndexAtLimit(
   return { ...index, plugins }
 }
 
+export interface CreateMarketLookupPackumentOptions {
+  readonly groupsFor: (userId: string) => readonly string[]
+  /** Underlying packument lookup (catalogue / mirror). */
+  readonly lookup: (name: string, userId: string) => unknown | undefined
+}
+
+/**
+ * Adapter for `MarketRouteDeps.lookupPackument`: refuses a listed package the user
+ * does not yet have once the last sync/reconcile report reached `max_installed`.
+ * Returns `undefined` (→ 404) when disallowed. Stale/missing reports escape (as designed).
+ */
+export function createMarketLookupPackument(
+  db: PluginsDbHandle,
+  options: CreateMarketLookupPackumentOptions,
+): (name: string, userId: string) => unknown | undefined {
+  return (name: string, userId: string) => {
+    const packument = options.lookup(name, userId)
+    if (packument === undefined) return undefined
+    const groups = options.groupsFor(userId)
+    const limits = effectivePluginLimits(listPluginLimitRows(db), userId, groups)
+    const installedNames = installedNamesFromReport(db, userId)
+    if (!packumentAllowed({
+      maxInstalled: limits.max_installed.value,
+      installedCount: installedCountFromReport(db, userId),
+      alreadyInstalled: installedNames.has(name),
+    })) {
+      return undefined
+    }
+    return packument
+  }
+}
+
 export interface PluginLimitsAdminActor {
   readonly userId: string
   readonly email: string

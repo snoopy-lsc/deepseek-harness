@@ -5,6 +5,13 @@
 import { createHash } from 'node:crypto'
 import type { PluginsDbHandle } from './migrate.ts'
 import { scopesVisibleToUser } from './visibility.ts'
+import {
+  effectivePluginLimits,
+  installedCountFromReport,
+  installedNamesFromReport,
+  listPluginLimitRows,
+  markIndexAtLimit,
+} from './limits.ts'
 
 /** Format-1 market index document (subset matching upstream plugin-market-index). */
 export interface PersonalizedMarketIndex {
@@ -408,11 +415,20 @@ export function createMarketBuildIndex(
     const registryUrl = typeof options.registryUrl === 'function'
       ? options.registryUrl(userId)
       : options.registryUrl
-    return buildPersonalizedIndex(db, userId, options.groupsFor(userId), {
+    const groups = options.groupsFor(userId)
+    const index = buildPersonalizedIndex(db, userId, groups, {
       registryUrl,
       title: options.title,
       description: options.description,
       cache,
     }).index
+    // Best-effort max_installed mark from last sync/reconcile report (design § Plugin limits).
+    // Applied after cache so report/limit changes do not require catalogue fingerprint churn.
+    const limits = effectivePluginLimits(listPluginLimitRows(db), userId, groups)
+    return markIndexAtLimit(index, {
+      maxInstalled: limits.max_installed.value,
+      installedCount: installedCountFromReport(db, userId),
+      installedNames: installedNamesFromReport(db, userId),
+    })
   }
 }
