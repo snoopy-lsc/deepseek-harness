@@ -1,13 +1,15 @@
 /** Rootless Podman + gVisor runtime: one confined container per account, reached only through a private Unix socket. */
 import { randomBytes } from 'node:crypto'
 import { createServer } from 'node:net'
-import { chmod, chown, rename, writeFile } from 'node:fs/promises'
+import { chmod, chown, mkdir, rename, writeFile } from 'node:fs/promises'
 import { request as httpRequest } from 'node:http'
 import { join } from 'node:path'
-import { kbSkillRows, parseInstanceId, platformModelRows, portsFrom, type InstanceEndpoint, type InstanceId, type RuntimeInstance, type UserId } from '@public-harness/contracts'
+import { kbSkillRows, parseInstanceId, platformModelRows, pluginMarketRows, portsFrom, type InstanceEndpoint, type InstanceId, type RuntimeInstance, type UserId } from '@public-harness/contracts'
 import type { ContainerConfig } from './config.ts'
 import { startUnixForwarder, type Forwarder } from './forwarder.ts'
 import { enforceLimits, LimitsError, networkArgument, type EnforcementProbe } from './limits.ts'
+import { marketOwnerAddArgv, marketOwnerDeleteArgv } from './market-firewall.ts'
+import { renderInstanceMarketNpmrc } from './market-files.ts'
 import { clearReady, ContainerExitedError, readReady, waitForReady } from './token-channel.ts'
 import { KeyedLock, type CommandRunner } from './system.ts'
 import type { UserRecord } from './users.ts'
@@ -17,7 +19,7 @@ export const WEB_PORT = 8080
 /** Port the in-container sidecar exposes inside the instance's own network namespace. */
 export const SIDECAR_PORT = 8081
 /** Mount points inside the container. */
-export const CONTAINER = { home: '/home/harness', workspace: '/workspace', ctl: '/run/harness-ctl', assets: '/opt/public-harness' } as const
+export const CONTAINER = { home: '/home/harness', workspace: '/workspace', ctl: '/run/harness-ctl', assets: '/opt/public-harness', market: '/run/dsh-market' } as const
 
 /**
  * The unprivileged user the image runs as (`useradd --uid 10001` in the Containerfile; a test keeps them equal).
@@ -35,6 +37,22 @@ export interface QuotaBridge {
   open(userId: UserId, instanceId: InstanceId): Promise<{ readonly port: number }>
   issue(userId: UserId, instanceId: InstanceId): Promise<{ readonly token: string; readonly expiresAt: number }>
   close(userId: UserId): Promise<void>
+}
+
+/** Optional plugin-market endpoint for an instance; failures must not block start. */
+export interface MarketBridge {
+  open(userId: UserId, instanceId: InstanceId): Promise<{
+    readonly port: number
+    readonly token: string
+    readonly marketOnly?: boolean
+  }>
+  close(userId: UserId): Promise<void>
+}
+
+/** Optional market rows for {@link webPatch} (registry host is always `config.quota.hostAddress`). */
+export interface WebPatchMarketOptions {
+  readonly port: number
+  readonly marketOnly?: boolean
 }
 
 /** Ordered failures a start can report; messages never include paths, argv, or token material. */
@@ -74,6 +92,8 @@ export interface RuntimeDeps {
   readonly config: ContainerConfig
   readonly runner: CommandRunner
   readonly quota: QuotaBridge
+  /** When set with `paths.marketDir` and `ports.market`, opens the market endpoint around instance life. */
+  readonly market?: MarketBridge
   readonly probe: EnforcementProbe
   readonly startForwarder?: typeof startUnixForwarder
   readonly healthProbe?: (port: number) => Promise<boolean>
@@ -110,6 +130,7 @@ export function buildRunArgv(config: ContainerConfig, record: UserRecord, sideca
   const { limits, tools } = config
   const volume = (source: string, target: string, mode: 'rw' | 'ro'): string[] => ['--volume', `${source}:${target}:${mode},Z`]
   const env = (name: string, value: string): string[] => ['--env', `${name}=${value}`]
+  const market = marketVolumes(config, record)
   return [
     '--runtime', tools.runsc, 'run', '--detach', '--replace', '--name', record.container,
     '--network', networkArgument(limits.network, config.quota.hostAddress), '--userns', INSTANCE_USERNS,
@@ -122,10 +143,12 @@ export function buildRunArgv(config: ContainerConfig, record: UserRecord, sideca
     ...volume(record.layout.home, CONTAINER.home, 'rw'), ...volume(record.layout.workspace, CONTAINER.workspace, 'rw'),
     ...volume(record.layout.ctl, CONTAINER.ctl, 'rw'), ...volume(config.paths.runtimeAssets, CONTAINER.assets, 'ro'),
     ...kbVolumes(config, record).flatMap(value => ['--volume', value]),
+    ...market.flatMap(value => ['--volume', value]),
     ...env('HOME', CONTAINER.home), ...env('DSH_HOME', CONTAINER.home), ...env('DSH_AGENTS_HOME', `${CONTAINER.home}/agents`),
     ...env('DSH_TELEMETRY_DISABLED', '1'), ...env('PUBLIC_HARNESS_READY_FILE', `${CONTAINER.ctl}/ready.json`),
     ...env('PUBLIC_HARNESS_WEB_PORT', String(WEB_PORT)), ...env('PUBLIC_HARNESS_SIDECAR_PORT', String(SIDECAR_PORT)),
     ...env('PUBLIC_HARNESS_WEB_PATCH', `${CONTAINER.home}/public-harness-web.patch.yml`),
+    ...market.length === 0 ? [] : env('NPM_CONFIG_GLOBALCONFIG', `${CONTAINER.market}/npmrc`),
     config.image, 'node', `${CONTAINER.assets}/container-entry.js`,
   ]
 }
@@ -136,6 +159,13 @@ export function kbVolumes(config: ContainerConfig, record: UserRecord): string[]
   const kbRoot = config.paths.kbRoot
   if (kbRoot === undefined) return []
   return [`${record.layout.kb}:${CONTAINER.home}/kb/mine:rw,Z`, `${kbRoot}/views/${record.account}:${CONTAINER.home}/kb/shared:ro,z`]
+}
+
+/** Per-account market npmrc volume when `paths.marketDir` is configured (private `Z` label). */
+export function marketVolumes(config: ContainerConfig, record: UserRecord): string[] {
+  const marketDir = config.paths.marketDir
+  if (marketDir === undefined) return []
+  return [`${marketDir}/${record.account}:${CONTAINER.market}:ro,Z`]
 }
 
 const FORBIDDEN_FLAGS = /^--(privileged|cap-add|device|pid|ipc|userns|uts|cgroupns|security-opt=(?!no-new-privileges)|add-host|dns|mount|volumes-from|group-add|env-file|net|network=host|pod)\b/
@@ -171,7 +201,8 @@ export function assertSafeReconcileArgvDraft(argv: readonly string[]): void {
 export function assertSafeRunArgv(argv: readonly string[], config: ContainerConfig, record: UserRecord): void {
   const allowedVolumes = new Set([
     `${record.layout.home}:${CONTAINER.home}:rw,Z`, `${record.layout.workspace}:${CONTAINER.workspace}:rw,Z`,
-    `${record.layout.ctl}:${CONTAINER.ctl}:rw,Z`, `${config.paths.runtimeAssets}:${CONTAINER.assets}:ro,Z`, ...kbVolumes(config, record)])
+    `${record.layout.ctl}:${CONTAINER.ctl}:rw,Z`, `${config.paths.runtimeAssets}:${CONTAINER.assets}:ro,Z`,
+    ...kbVolumes(config, record), ...marketVolumes(config, record)])
   const seen = new Set<string>()
   let userns = 0
   for (let index = 0; index < argv.length; index += 1) {
@@ -204,8 +235,17 @@ export function httpHealthProbe(port: number): Promise<boolean> {
 }
 
 /** The Harness Web patch a container instance starts with (exported for tests). */
-export function webPatch(config: ContainerConfig, publicHost: string, proxyPort: number, modelId: string): string {
+export function webPatch(config: ContainerConfig, publicHost: string, proxyPort: number, modelId: string,
+  market?: WebPatchMarketOptions): string {
   const bundle = (name: string): string => `file://${CONTAINER.assets}/packages/${name}/lib/index.js`
+  const host = config.quota.hostAddress
+  const marketRows = market === undefined ? [] : pluginMarketRows({
+    host,
+    port: market.port,
+    syncPlugin: bundle('plugin-sync'),
+    syncUrl: `http://${host}:${market.port}/sync`,
+    ...(market.marketOnly === true ? { marketOnly: true } : {}),
+  })
   return `${JSON.stringify([
     { id: 'web-runtime', config: { openBrowser: false, printUrl: false, publicUrl: null, surfaceContext: true, trustedHosts: [publicHost] } },
     { id: 'ui-brand-official', disabled: true },
@@ -215,9 +255,10 @@ export function webPatch(config: ContainerConfig, publicHost: string, proxyPort:
     ...config.paths.kbRoot === undefined ? [] : kbSkillRows(`${CONTAINER.assets}/packages/kb/skills`),
     { insert: [{ id: 'public-harness-web-token', name: bundle('web-token') },
       { id: 'public-harness-quota-provider', name: bundle('quota-provider'), config: {
-        proxyBaseUrl: `http://${config.quota.hostAddress}:${proxyPort}/v1`, credentialFile: `${CONTAINER.home}/quota-credential.json`,
+        proxyBaseUrl: `http://${host}:${proxyPort}/v1`, credentialFile: `${CONTAINER.home}/quota-credential.json`,
         provider: 'platform', modelId, modelName: 'Platform model', contextWindow: 200000, maxTokens: 8192 } },
       { id: 'public-harness-ui', name: bundle('ui') }] },
+    ...marketRows,
   ])}\n`
 }
 
@@ -234,6 +275,8 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
   const imageLock = new KeyedLock()
   const live = new Map<UserId, { forwarder: Forwarder; timer: NodeJS.Timeout; instanceId: InstanceId; port: number }>()
   const reserved = new Map<UserId, number>()
+  /** Ports whose `market_owner` element was added for this user; cleared on stop / failed start. */
+  const marketPorts = new Map<UserId, number>()
   const allocationLock = new KeyedLock()
   let cursor = 0
 
@@ -301,6 +344,19 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     await writePrivate(record, join(record.layout.home, 'quota-credential.json'), `${JSON.stringify(issued)}\n`)
   }
 
+  /** Best-effort remove of the `market_owner` element and market endpoint close (only if admitted). */
+  async function clearMarketOwner(record: UserRecord): Promise<void> {
+    const port = marketPorts.get(record.userId)
+    if (port === undefined) return
+    marketPorts.delete(record.userId)
+    try {
+      await runner.run(config.tools.nft, marketOwnerDeleteArgv(record.uid, port), { timeoutMs: 15_000 })
+    } catch { /* best effort */ }
+    if (deps.market !== undefined) {
+      try { await deps.market.close(record.userId) } catch { /* best effort */ }
+    }
+  }
+
   async function teardown(record: UserRecord): Promise<void> {
     const errors: unknown[] = []
     const entry = live.get(record.userId)
@@ -311,9 +367,40 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     try { await deps.quota.close(record.userId) } catch (error) { errors.push(error) }
     try { await removeContainer(record) } catch (error) { errors.push(error) }
     try { await clearReady(record.layout.ctl) } catch (error) { errors.push(error) }
+    try { await clearMarketOwner(record) } catch (error) { errors.push(error) }
     if (errors.length === 1) throw errors[0]
     if (errors.length) throw new AggregateError(errors, 'runtime cleanup could not be verified')
     live.delete(record.userId); reserved.delete(record.userId)
+  }
+
+  /**
+   * Open the market endpoint, write npmrc, and admit the account into `market_owner` before the container starts.
+   * Any failure is logged and returns undefined so the instance still starts without market rows.
+   */
+  async function tryOpenMarket(record: UserRecord, instanceId: InstanceId): Promise<WebPatchMarketOptions | undefined> {
+    if (deps.market === undefined || config.paths.marketDir === undefined || config.ports.market === undefined) {
+      return undefined
+    }
+    try {
+      const opened = await deps.market.open(record.userId, instanceId)
+      const dir = join(config.paths.marketDir, record.account)
+      await mkdir(dir, { recursive: true, mode: 0o700 })
+      await writePrivate(record, join(dir, 'npmrc'), renderInstanceMarketNpmrc({
+        host: config.quota.hostAddress,
+        port: opened.port,
+        token: opened.token,
+        ...(opened.marketOnly === true ? { marketOnly: true } : {}),
+      }))
+      const added = await runner.run(config.tools.nft, marketOwnerAddArgv(record.uid, opened.port), { timeoutMs: 15_000 })
+      if (added.code !== 0) throw new Error('market_owner add failed')
+      marketPorts.set(record.userId, opened.port)
+      return { port: opened.port, ...(opened.marketOnly === true ? { marketOnly: true } : {}) }
+    } catch {
+      log(`instance ${record.account} market unavailable; starting without market rows`)
+      marketPorts.delete(record.userId)
+      try { await deps.market.close(record.userId) } catch { /* ignore */ }
+      return undefined
+    }
   }
 
   /** The container died while we waited for it: fail now, and send a redacted log tail to the operator log only. */
@@ -365,8 +452,9 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
         const sidecarPort = ports.webPort
         const proxy = { port: ports.quotaPort }
         await writeCredential(record, instanceId)
+        const market = await tryOpenMarket(record, instanceId)
         await writePrivate(record, join(record.layout.home, 'public-harness-web.patch.yml'),
-          webPatch(config, deps.publicHost, proxy.port, 'platform-model'))
+          webPatch(config, deps.publicHost, proxy.port, 'platform-model', market))
         const argv = buildRunArgv(config, record, sidecarPort)
         assertSafeRunArgv(argv, config, record)
         const started = await asAccount(record, argv)

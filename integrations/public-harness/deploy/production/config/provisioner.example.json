@@ -9,7 +9,8 @@
       "storageRoot": "/var/lib/dsh-public/storage",
       "stateDir": "/var/lib/dsh-public/state",
       "socketDir": "/run/dsh-public/instances",
-      "quotaMount": "/var/lib/dsh-public/storage-quota-mount"
+      "quotaMount": "/var/lib/dsh-public/storage-quota-mount",
+      "marketDir": "/run/dsh-public/instance-market"
     },
     "tools": {
       "getent": "/usr/bin/getent",

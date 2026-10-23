@@ -9,6 +9,8 @@ export interface HostPaths {
   readonly storageRoot: string; readonly stateDir: string; readonly socketDir: string; readonly quotaMount: string
   /** Knowledge base root of the `dsh-kb` service; when set, instances get `<home>/kb/mine` (read-write) and `<home>/kb/shared` (read-only). */
   readonly kbRoot?: string
+  /** Root-owned per-account market npmrc directory (`<marketDir>/<account>/npmrc`); mounted read-only at `/run/dsh-market`. */
+  readonly marketDir?: string
 }
 /** Account commands shared by both runtimes. */
 export type HostTools = Pick<AccountToolchain, 'getent' | 'useradd' | 'userdel' | 'nologin'>
@@ -75,12 +77,20 @@ function integer(value: unknown, name: string, minimum = 1): number {
 export function validateProvisionerConfig(value: unknown): ProvisionerConfig {
   const c = record(value, ['paths', 'tools', 'runtime', 'socketGid', 'maxActiveInstances', 'idleStopMs', 'deletionRecoveryMs',
     'limits', 'readyTimeoutMs', 'stopTimeoutMs', 'ports'])
-  const p = record(c.paths, ['storageRoot', 'stateDir', 'socketDir', 'quotaMount'], ['kbRoot'])
+  const p = record(c.paths, ['storageRoot', 'stateDir', 'socketDir', 'quotaMount'], ['kbRoot', 'marketDir'])
   const paths: HostPaths = { storageRoot: path(p.storageRoot, 'storageRoot'), stateDir: path(p.stateDir, 'stateDir'),
-    socketDir: path(p.socketDir, 'socketDir'), quotaMount: path(p.quotaMount, 'quotaMount'), ...p.kbRoot === undefined ? {} : { kbRoot: path(p.kbRoot, 'kbRoot') } }
+    socketDir: path(p.socketDir, 'socketDir'), quotaMount: path(p.quotaMount, 'quotaMount'),
+    ...p.kbRoot === undefined ? {} : { kbRoot: path(p.kbRoot, 'kbRoot') },
+    ...p.marketDir === undefined ? {} : { marketDir: path(p.marketDir, 'marketDir') } }
   if (new Set(Object.values(paths)).size !== Object.keys(paths).length) throw new Error('provisioner paths must be distinct')
   if (paths.kbRoot !== undefined && [paths.storageRoot, paths.stateDir, paths.socketDir].some(other => paths.kbRoot!.startsWith(`${other}/`) || other.startsWith(`${paths.kbRoot}/`))) {
     throw new Error('kbRoot must not overlap other provisioner paths')
+  }
+  if (paths.marketDir !== undefined) {
+    const tenants = [paths.storageRoot, paths.stateDir, paths.socketDir]
+    if (tenants.some(other => paths.marketDir!.startsWith(`${other}/`) || other.startsWith(`${paths.marketDir}/`))) {
+      throw new Error('marketDir must not overlap tenant-writable provisioner paths')
+    }
   }
   const t = record(c.tools, ['getent', 'useradd', 'userdel', 'nologin'])
   const tools: HostTools = { getent: path(t.getent, 'getent'), useradd: path(t.useradd, 'useradd'), userdel: path(t.userdel, 'userdel'), nologin: path(t.nologin, 'nologin') }
