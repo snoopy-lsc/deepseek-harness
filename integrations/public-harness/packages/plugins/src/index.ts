@@ -134,6 +134,28 @@ export {
   type RevokeResult,
 } from './listing.ts'
 export {
+  DefaultError,
+  setDefault,
+  clearDefault,
+  resetDefault,
+  reenableDefault,
+  defaultsVisibleToUser,
+  listDefaults,
+  applyCountsForPackage,
+  type DefaultStateValue,
+  type DefaultErrorCode,
+  type SetDefaultInput,
+  type ClearDefaultInput,
+  type ResetDefaultInput,
+  type ReenableDefaultInput,
+  type DefaultMutationResult,
+  type ResetDefaultResult,
+  type ReenableDefaultResult,
+  type VisibleDefault,
+  type ListedDefault,
+  type DefaultApplyCounts,
+} from './defaults.ts'
+export {
   scopesVisibleToUser,
   packageVisibleInIndex,
   packageArtifactsVisible,
