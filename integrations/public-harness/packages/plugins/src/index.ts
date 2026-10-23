@@ -338,3 +338,9 @@ export {
   type BuildPnpmRepairArgvInput,
 } from './reconcile-entry.ts'
 export { main as reconcileEntryMain } from './reconcile-entry-main.ts'
+export {
+  packageReconcileEntry,
+  RECONCILE_ENTRY_FILENAME,
+  type PackageReconcileEntryOptions,
+  type PackageReconcileEntryResult,
+} from './package-reconcile-entry.ts'

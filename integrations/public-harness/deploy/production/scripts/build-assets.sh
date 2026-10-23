@@ -16,6 +16,10 @@ done
 # Read-only knowledge base skills (kb-query, kb-author), added to instances through customSkillDirs when knowledge bases are enabled.
 mkdir -p "$dest/packages/kb"
 cp -R "$root/packages/kb/skills" "$dest/packages/kb/"
+# Ship reconcile-entry.mjs (+ packages/plugin-sync) for container one-shot; native uses the same basename under release/.
+[[ -f $root/packages/plugins/lib/package-reconcile-entry.js ]] || { echo "build plugins first" >&2; exit 2; }
+[[ -f $root/packages/plugin-sync/lib/index.js ]] || { echo "build plugin-sync first" >&2; exit 2; }
+node "$root/packages/plugins/lib/package-reconcile-entry.js" "$dest" >/dev/null
 # Resolved inside the container (the target exists only in the image), so plugins find their dependencies.
 ln -s /opt/dsh/node_modules "$dest/node_modules"
 chmod -R a-w,a+rX "$dest"

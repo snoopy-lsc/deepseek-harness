@@ -182,13 +182,12 @@ describe('buildReconcileRunArgv / assertSafeReconcileArgv', () => {
     expect(() => assertSafeReconcileArgv(badEntry, config, record)).toThrow(RuntimeStartError)
   })
 
-  it('command allowlist admits pnpm as the only alternative to node reconcile-entry', async () => {
+  it('command allowlist refuses outer pnpm (entry runs pnpm internally)', async () => {
     const { config, record } = await setupReconcile()
     const argv = buildReconcileRunArgv(config, record, 30_001)
     const img = argv.indexOf(config.image)
     const pnpmArgv = [...argv.slice(0, img + 1), 'pnpm', 'add', '@corp-dsh/x@1.0.0']
-    // Still must pass volume/network/userns checks; command allowlist accepts pnpm.
-    expect(() => assertSafeReconcileArgv(pnpmArgv, config, record)).not.toThrow()
+    expect(() => assertSafeReconcileArgv(pnpmArgv, config, record)).toThrow(RuntimeStartError)
   })
 })
 

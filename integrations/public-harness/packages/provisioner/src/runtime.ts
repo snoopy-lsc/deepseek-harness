@@ -244,13 +244,11 @@ const RECONCILE_ENV_KEYS = new Set([
   'HOME', 'DSH_HOME', 'XDG_CACHE_HOME', 'TMPDIR', 'PATH', 'NPM_CONFIG_GLOBALCONFIG',
 ])
 
-/** True when the command after the image is an allowed reconcile entry (`node …/reconcile-entry.mjs` or `pnpm`). */
+/** True when the command after the image is `node …/reconcile-entry.mjs` (pnpm runs inside the entry, not as outer cmd). */
 function reconcileCommandAllowed(argv: readonly string[], image: string): boolean {
   const imageIdx = argv.indexOf(image)
   if (imageIdx < 0 || imageIdx >= argv.length - 1) return false
-  const cmd = argv[imageIdx + 1]
-  if (cmd === 'pnpm') return true
-  if (cmd !== 'node') return false
+  if (argv[imageIdx + 1] !== 'node') return false
   const entry = argv[imageIdx + 2]
   return typeof entry === 'string' && (entry === 'reconcile-entry.mjs' || entry.endsWith('/reconcile-entry.mjs'))
 }
@@ -258,7 +256,7 @@ function reconcileCommandAllowed(argv: readonly string[], image: string): boolea
 /**
  * Reject a one-shot reconcile argv that grants more than the fixed design allows.
  * Same forbid-list spirit as {@link assertSafeRunArgv}; narrower volumes (no ctl/kb);
- * no publish; pasta with `--no-splice`; command allowlist `pnpm` / `node` reconcile entry only.
+ * no publish; pasta with `--no-splice`; command allowlist `node` reconcile-entry only.
  */
 export function assertSafeReconcileArgv(argv: readonly string[], config: ContainerConfig, record: UserRecord): void {
   const allowedVolumes = new Set(reconcileVolumes(config, record))
