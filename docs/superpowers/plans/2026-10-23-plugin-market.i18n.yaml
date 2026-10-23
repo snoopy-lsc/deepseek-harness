@@ -1,0 +1,79 @@
+# Bilingual-pair consistency record for 2026-10-23-plugin-market.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/superpowers/plans/2026-10-23-plugin-market.md
+/company-plugin-market-implementation-plan:
+  en: a8be95fc91d24c40
+  zh: ec4b86e005e86f92
+/company-plugin-market-implementation-plan/global-constraints:
+  en: ded1f9f57a3cc315
+  zh: 5a68ec5356c4a3db
+/company-plugin-market-implementation-plan/review-focus:
+  en: abad429b33bcb749
+  zh: 5a49a1b65c14f9af
+/company-plugin-market-implementation-plan/phase-0-verification-spikes:
+  en: ef4cc34e86958352
+  zh: c1d2d83d52b9bebb
+/company-plugin-market-implementation-plan/phase-0-verification-spikes/task-p0-1-second-patch-and-settings-overrides:
+  en: 5f4bdc1c9a47a99e
+  zh: 670fb1d747718c88
+/company-plugin-market-implementation-plan/phase-0-verification-spikes/task-p0-2-pnpm-11-against-a-loopback-registry:
+  en: e97d659bd7624702
+  zh: c3e415d166d09561
+/company-plugin-market-implementation-plan/phase-0-verification-spikes/task-p0-3-bundledependencies-and-allow-build:
+  en: 570d285fba076df2
+  zh: a819d388c8c737f1
+/company-plugin-market-implementation-plan/phase-0-verification-spikes/task-p0-4-reconcile-transient-unit-flags:
+  en: 10502d725055fc52
+  zh: 19bd61e90efba35b
+/company-plugin-market-implementation-plan/phase-0-verification-spikes/task-p0-5-container-pasta-matching-and-one-shot-reconcile:
+  en: c1136dd4005c8588
+  zh: a4e28cf5911096e0
+/company-plugin-market-implementation-plan/phase-0-verification-spikes/task-p0-6-git-blob-tarball-vs-npm-pack:
+  en: c38866b62d147d76
+  zh: 8f2454f040649669
+/company-plugin-market-implementation-plan/phase-0-verification-spikes/task-p0-7-idle-signal-and-installbundle-enabled-false:
+  en: c4fab8227fbd8856
+  zh: 33e407bd56e20921
+/company-plugin-market-implementation-plan/phase-0-verification-spikes/task-p0-8-socket-unit-cgroup-and-dsh-market-loader:
+  en: b40a65972a12a64d
+  zh: 8e7d493206e7c4ff
+/company-plugin-market-implementation-plan/phase-0-verification-spikes/task-p0-9-inet-diag-peer-check-from-unprivileged-service:
+  en: 92446a2fa872a16b
+  zh: 9eae8d526077f135
+/company-plugin-market-implementation-plan/milestone-1a-store-and-mirror-tdd:
+  en: b04dffbebbd6a5a8
+  zh: 06f06d7bd42adae8
+/company-plugin-market-implementation-plan/milestone-1a-store-and-mirror-tdd/task-1a-1-schema-partial-indexes-migrations:
+  en: d2f0577765031dc9
+  zh: 4df1748fc0ddb375
+/company-plugin-market-implementation-plan/milestone-1a-store-and-mirror-tdd/task-1a-2-egress-proxy-and-ssrf-checks:
+  en: 1fc0af621ae847e9
+  zh: c50cf8c4cba8381c
+/company-plugin-market-implementation-plan/milestone-1a-store-and-mirror-tdd/task-1a-3-fetch-service-verbs:
+  en: 5a3fa7063003238c
+  zh: 319e163c22f36626
+/company-plugin-market-implementation-plan/milestone-1a-store-and-mirror-tdd/task-1a-4-mirror-pipeline-npm-upload:
+  en: f43823f110f8bba4
+  zh: 68c8c5370cf3ff10
+/company-plugin-market-implementation-plan/milestone-1a-store-and-mirror-tdd/task-1a-5-admin-upload-audit-outbox-path-b-core:
+  en: 9ccffe9b5c873a1c
+  zh: c220f339f2d02820
+/company-plugin-market-implementation-plan/milestone-1b-serving-outline:
+  en: 2f3d9e982cc42de0
+  zh: 957fcf46138420e8
+/company-plugin-market-implementation-plan/milestone-1c-review-flow-outline:
+  en: 49d23c582dae377f
+  zh: cc449096994ed886
+/company-plugin-market-implementation-plan/milestone-1d-defaults-and-updates-outline:
+  en: 82175d4f867437e9
+  zh: 52ba7744879aa705
+/company-plugin-market-implementation-plan/milestone-1e-policy-limits-containers-outline:
+  en: e88942618d1b4dd5
+  zh: 819d383400c69d5a
+/company-plugin-market-implementation-plan/phase-2-later-not-in-this-plan-s-coding-tasks:
+  en: 26afa622963f2686
+  zh: c382d88f39f42a2c
+/company-plugin-market-implementation-plan/execution-order:
+  en: e0e50eb10f518063
+  zh: ab6ea0ebfefe4ec6
