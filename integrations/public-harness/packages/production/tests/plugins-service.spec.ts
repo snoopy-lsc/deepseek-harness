@@ -19,6 +19,7 @@ import {
   startProductionMarketServer,
   startProductionPlugins,
 } from '../src/plugins-service.ts'
+import { parsePluginsFetchConfig } from '../src/plugins-fetch.ts'
 
 const roots: string[] = []
 const dbs: PluginsDb[] = []
@@ -83,22 +84,34 @@ function seedListed(db: PluginsDb, name: string): void {
 }
 
 describe('plugins profile config', () => {
-  it('example_plugins_json_ports_market_passes_validator', () => {
-    const raw = JSON.parse(readFileSync(join(deployNativeConfig, 'plugins.json.example'), 'utf8')) as {
-      database: string
-      storeDir: string
-      ports: { market: { min: number; max: number } }
-      controlSocket: string
-    }
-    const parsed = parsePluginsProfileConfig({
-      database: raw.database,
-      storeDir: raw.storeDir,
-      ports: raw.ports,
-      controlSocket: raw.controlSocket,
-    })
+  it('example_plugins_json_full_file_passes_catalogue_and_fetch_parsers', () => {
+    // Shared /etc/dsh-public/plugins.json must parse as-is for both catalogue and fetch
+    // (no hand-stripping of egressPort/egress — that masked B4).
+    const raw = JSON.parse(readFileSync(join(deployNativeConfig, 'plugins.json.example'), 'utf8'))
+    const parsed = parsePluginsProfileConfig(raw)
     expect(parsed.ports.market).toEqual({ min: 28_672, max: 32_767 })
     expect(parsed.controlSocket).toBe('/run/dsh-plugins/control.sock')
     expect(parsed.ports.market.max - parsed.ports.market.min + 1).toBe(4096)
+    // Catalogue ignores fetch/egress keys; they must not appear on the profile result.
+    expect(parsed).not.toHaveProperty('egressPort')
+    expect(parsed).not.toHaveProperty('egress')
+
+    const fetchParsed = parsePluginsFetchConfig(raw)
+    expect(fetchParsed.egressPort).toBe(18_787)
+    expect(fetchParsed.allow).toEqual(['registry.npmjs.org'])
+  })
+
+  it('ignores_egress_keys_but_still_rejects_other_unknown_keys', () => {
+    const base = {
+      database: '/var/lib/dsh-plugins/plugins.sqlite',
+      storeDir: '/var/lib/dsh-plugins/store',
+      ports: { market: { min: 30_000, max: 30_099 } },
+      controlSocket: '/run/dsh-plugins/control.sock',
+      egressPort: 18_787,
+      egress: { allow: ['registry.npmjs.org'], intranet: {} },
+    }
+    expect(parsePluginsProfileConfig(base).ports.market).toEqual({ min: 30_000, max: 30_099 })
+    expect(() => parsePluginsProfileConfig({ ...base, unexpected: true })).toThrow(/exactly/)
   })
 
   it('validates_ports_market_and_requires_controlSocket', () => {

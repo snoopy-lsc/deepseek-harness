@@ -47,10 +47,15 @@ function portRange(value: unknown): { min: number; max: number } {
   return validateMarketPorts(value as { min: number; max: number })
 }
 
-/** Strict parse of the plugins profile file (ports.market + controlSocket required). */
+/**
+ * Strict parse of the plugins profile file (ports.market + controlSocket required).
+ * Shared `/etc/dsh-public/plugins.json` also carries `egressPort` / `egress` for
+ * `dsh-plugins-fetch@.service`; catalogue allows and ignores those keys so one
+ * file can start both units (B4).
+ */
 export function parsePluginsProfileConfig(value: unknown): PluginsProfileConfig {
   const raw = value as Record<string, unknown> | null
-  const optional = ['listenPort', 'controlSocketGid', 'hostAddress'].filter(
+  const optional = ['listenPort', 'controlSocketGid', 'hostAddress', 'egressPort', 'egress'].filter(
     key => typeof raw === 'object' && raw !== null && key in raw,
   )
   const record = exactRecord(
