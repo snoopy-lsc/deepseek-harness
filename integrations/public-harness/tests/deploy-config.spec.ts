@@ -223,15 +223,100 @@ describe('host artifacts', () => {
     // The sidecar range is published for the host-side forwarder only; instances must not be able to reach it.
     expect(portRangesOverlap(provisioner.ports.sidecar, range)).toBe(false)
     const loopback = (await rules()).filter(line => line.startsWith('oif "lo"'))
-    expect(loopback).toEqual(['oif "lo" ip daddr 127.0.0.1 tcp dport $QUOTA_PORTS accept', 'oif "lo" drop'])
+    // Market accept (Q7) sits with quota before the final loopback drop; covered in detail below.
+    expect(loopback[0]).toBe('oif "lo" ip daddr 127.0.0.1 tcp dport $QUOTA_PORTS accept')
+    expect(loopback.at(-1)).toBe('oif "lo" drop')
     expect(file).not.toMatch(/1024-65535/)
     expect(file).not.toContain(String(provisioner.ports.sidecar.min))
+  })
+
+  describe('plugin market firewall (Q7)', () => {
+    it('accepts MARKET_PORTS on loopback before the final lo drop and matches ports.market', async () => {
+      const file = await text('deploy/production/nftables/dsh-public.nft')
+      const defined = /^define MARKET_PORTS = (\d+)-(\d+)$/m.exec(file)
+      expect(defined).not.toBeNull()
+      const market = { min: Number(defined![1]), max: Number(defined![2]) }
+      expect(market.max - market.min + 1).toBeLessThanOrEqual(4096)
+      const provisioner = resolveContainerConfig(parseProvisionerProfileConfig(await json('deploy/production/config/provisioner.example.json')).provisioner)
+      expect(provisioner.ports.market).toEqual(market)
+      expect(portRangesOverlap(provisioner.ports.quota, market)).toBe(false)
+      expect(portRangesOverlap(provisioner.ports.sidecar, market)).toBe(false)
+      const loopback = (await rules()).filter(line => line.startsWith('oif "lo"'))
+      expect(loopback).toEqual([
+        'oif "lo" ip daddr 127.0.0.1 tcp dport $QUOTA_PORTS accept',
+        'oif "lo" ip daddr 127.0.0.1 tcp dport $MARKET_PORTS accept',
+        'oif "lo" drop',
+      ])
+      // Phase 2 only: do not land egress_locked drops here.
+      expect(file).not.toMatch(/egress_locked/)
+    })
+
+    it('keeps dsh-plugins-fetch to egressPort only', async () => {
+      const file = await text('deploy/production/nftables/dsh-public.nft')
+      expect(file).toMatch(/^define EGRESS_PORT = \d+$/m)
+      expect(file).toMatch(/^define PLUGINS_FETCH_UID = /m)
+      expect(file).toContain('meta skuid $PLUGINS_FETCH_UID ip daddr 127.0.0.1 tcp dport $EGRESS_PORT accept')
+      expect(file).toContain('meta skuid $PLUGINS_FETCH_UID drop')
+      const list = await rules()
+      const fetchAccept = list.findIndex(line => /meta skuid \$PLUGINS_FETCH_UID.*EGRESS_PORT accept/.test(line))
+      const fetchDrop = list.findIndex(line => line === 'meta skuid $PLUGINS_FETCH_UID drop')
+      const instanceMin = list.findIndex(line => line.startsWith('meta skuid < $INSTANCE_UID_MIN'))
+      expect(fetchAccept).toBeGreaterThanOrEqual(0)
+      expect(fetchDrop).toBeGreaterThan(fetchAccept)
+      // Fetch rules must run before the instance-UID early accepts, or the fetch UID would fall through.
+      expect(instanceMin).toBeGreaterThan(fetchDrop)
+    })
+
+    it('ships a separately loaded dsh_market table with listener and owner-drop chains', async () => {
+      const market = await text('deploy/production/nftables/dsh-market.nft')
+      const publicNft = await text('deploy/production/nftables/dsh-public.nft')
+      expect(market).toMatch(/table inet dsh_market \{/)
+      expect(market).toMatch(/set market_owner \{[\s\S]*?type uid \. inet_service/)
+      expect(market).toMatch(/chain market_listener/)
+      expect(market).toMatch(/chain input \{[\s\S]*?type filter hook input priority filter - 2/)
+      expect(market).toMatch(/chain output \{[\s\S]*?type filter hook output priority filter - 2/)
+      expect(market).toContain('iif "lo" tcp dport $MARKET_PORTS jump market_listener')
+      expect(market).toContain('oif "lo" tcp dport $MARKET_PORTS meta skuid . tcp dport != @market_owner drop')
+      expect(market).toMatch(/socket cgroupv2 level \d+ "/)
+      expect(market).toMatch(/^define MARKET_PORTS = (\d+)-(\d+)$/m)
+      const defined = /^define MARKET_PORTS = (\d+)-(\d+)$/m.exec(market)!
+      const range = { min: Number(defined[1]), max: Number(defined[2]) }
+      expect(range.max - range.min + 1).toBeLessThanOrEqual(4096)
+      const provisioner = resolveContainerConfig(parseProvisionerProfileConfig(await json('deploy/production/config/provisioner.example.json')).provisioner)
+      expect(provisioner.ports.market).toEqual(range)
+      // Never defines/loads the market table; comments may name it as a separate file.
+      expect(publicNft).not.toMatch(/table\s+inet\s+dsh_market/)
+      expect(publicNft).not.toMatch(/add\s+table\s+inet\s+dsh_market/)
+      expect(publicNft).not.toContain('include "dsh-market.nft"')
+      expect(publicNft).not.toContain('include "/etc/nftables.d/dsh-market.nft"')
+      const readme = await text('deploy/production/README.md')
+      expect(readme).toMatch(/ExecStartPost=-/)
+      expect(readme).toMatch(/dsh-market\.nft|dsh_market/)
+      expect(readme).not.toMatch(/nft -f [^\n]*dsh-market\.nft/)
+    })
+
+    it('records the Q7 market-range firewall exception in the production README', async () => {
+      const readme = await text('deploy/production/README.md')
+      expect(readme.toLowerCase()).toMatch(/market[- ]range/)
+      expect(readme).toMatch(/market_owner|per-user/)
+      expect(readme).toMatch(/receiving-socket|receiving socket|socket cgroup/i)
+      expect(readme).toMatch(/dsh-router/)
+      expect(readme).toMatch(/dsh-identity/)
+      expect(readme).toMatch(/flush ruleset/)
+      expect(readme).toMatch(/peer check|inet_diag/i)
+      expect(readme).toMatch(/MARKET_PORTS|ports\.market/)
+    })
   })
 
   const nft = process.env.NFT_BIN
   it.skipIf(nft === undefined)('is accepted by the real nft parser', () => {
     // `nft -c` needs CAP_NET_ADMIN, so it runs inside an unprivileged user and network namespace.
     const checked = spawnSync('unshare', ['-Urn', nft!, '-c', '-f', join(root, 'deploy/production/nftables/dsh-public.nft')], { encoding: 'utf8' })
+    expect(checked.status, checked.stderr).toBe(0)
+  })
+
+  it.skipIf(nft === undefined)('accepts the market table file with the real nft parser', () => {
+    const checked = spawnSync('unshare', ['-Urn', nft!, '-c', '-f', join(root, 'deploy/production/nftables/dsh-market.nft')], { encoding: 'utf8' })
     expect(checked.status, checked.stderr).toBe(0)
   })
 

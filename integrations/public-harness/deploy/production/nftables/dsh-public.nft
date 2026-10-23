@@ -8,23 +8,36 @@
 define INSTANCE_UID_MIN = 200000
 define INSTANCE_UID_MAX = 299999
 define RESOLVERS = { 192.0.2.53 }
-# Loopback ports an instance may reach: exactly the range where the quota service opens instance listeners
-# (`listenPorts` in quota.json, `ports.quota` in provisioner.json; all three must match). Everything else on
-# loopback is dropped: other users' sidecars (`ports.sidecar`), the router, the Caddy edge, authentik, databases.
-# Keep both ranges below 32768, outside the kernel's ephemeral range.
+# Loopback ports an instance may reach: the quota listener range and the plugin market range
+# (`ports.quota` / `listenPorts`, and `ports.market` in provisioner.json / plugins.json; examples must match).
+# Everything else on loopback is dropped: other users' sidecars (`ports.sidecar`), the router, the Caddy edge,
+# authentik, databases. Keep all ranges below 32768, outside the kernel's ephemeral range.
 define QUOTA_PORTS = 20000-20199
+define MARKET_PORTS = 28672-32767
+# dsh-plugins-fetch may connect only to the egress proxy (set PLUGINS_FETCH_UID to `id -u dsh-plugins-fetch`
+# after systemd-sysusers; never leave as 0/root. EGRESS_PORT must match plugins.json egressPort).
+define PLUGINS_FETCH_UID = 65533
+define EGRESS_PORT = 18787
 
 table inet dsh_instances {
 	chain output {
 		type filter hook output priority filter; policy accept;
+
+		# Host fetch service: only 127.0.0.1:$EGRESS_PORT (before instance-UID early accepts).
+		meta skuid $PLUGINS_FETCH_UID ct state established,related accept
+		meta skuid $PLUGINS_FETCH_UID ip daddr 127.0.0.1 tcp dport $EGRESS_PORT accept
+		meta skuid $PLUGINS_FETCH_UID drop
 
 		meta skuid < $INSTANCE_UID_MIN accept
 		meta skuid > $INSTANCE_UID_MAX accept
 
 		ct state established,related accept
 
-		# The model quota proxy listens on 127.0.0.1 (reached through pasta's host-loopback mapping), only in QUOTA_PORTS.
+		# Quota and market listeners on 127.0.0.1 (pasta host-loopback). Market traffic is further
+		# narrowed by the separately loaded inet dsh_market table (see dsh-market.nft); do not load
+		# that table from this file.
 		oif "lo" ip daddr 127.0.0.1 tcp dport $QUOTA_PORTS accept
+		oif "lo" ip daddr 127.0.0.1 tcp dport $MARKET_PORTS accept
 		oif "lo" drop
 
 		# Resolver accepts come first: a resolver inside a private range (typical for cloud VPCs) would otherwise be

@@ -1,0 +1,35 @@
+#!/usr/sbin/nft -f
+# Separately loaded inet dsh_market table for the container runtime.
+# Loaded only by dsh-plugins.socket ExecStartPost=- (or the provisioner probe restore), never by
+# `nft -f` of dsh-public.nft / nftables.service's include of that file.
+#
+# MARKET_PORTS must match ports.market in provisioner.json (and plugins.json) and the define in
+# dsh-public.nft. Container owner drop uses meta skuid (pasta connects as the account UID); the set
+# type is uid . inet_service. Native uses a different shape (ct mark) rendered by market-firewall.ts.
+#
+# Listener cgroup path/level are an assumption until phase 0 measures them (candidate: socket unit
+# cgroup). A missing or stale cgroup fails closed (all market traffic dropped).
+define MARKET_PORTS = 28672-32767
+
+table inet dsh_market {
+	set market_owner {
+		type uid . inet_service
+	}
+
+	chain input {
+		type filter hook input priority filter - 2; policy accept;
+
+		iif "lo" tcp dport $MARKET_PORTS jump market_listener
+	}
+
+	chain market_listener {
+		socket cgroupv2 level 2 "system.slice/dsh-plugins.socket" return
+		drop
+	}
+
+	chain output {
+		type filter hook output priority filter - 2; policy accept;
+
+		oif "lo" tcp dport $MARKET_PORTS meta skuid . tcp dport != @market_owner drop
+	}
+}

@@ -37,8 +37,11 @@ install -m 0644 deploy/production/systemd/*.service deploy/production/systemd/*.
 install -D -m 0644 deploy/production/caddy-dropin/dsh-public.conf /etc/systemd/system/caddy.service.d/dsh-public.conf
 install -m 0644 deploy/production/Caddyfile /etc/caddy/Caddyfile
 install -m 0644 deploy/production/nftables/dsh-public.nft /etc/nftables.d/dsh-public.nft
+install -m 0644 deploy/production/nftables/dsh-market.nft /etc/nftables.d/dsh-market.nft
 systemd-sysusers && systemd-tmpfiles --create && nft -f /etc/nftables.d/dsh-public.nft
 ```
+
+把 `dsh-market.nft` 放到位，供插件市场 socket 单元使用，但**不要**用上面的 `nft -f`（或 `nftables.service` 对 `dsh-public.nft` 的 include）加载它。`dsh-plugins.socket` 通过 `ExecStartPost=-`（失败不致命）加载 `inet dsh_market`；配置服务的探测也会恢复它。若与 `dsh-public.nft` 同路径加载，会把两张表绑在一起，并在 `flush ruleset` 清空后缺少 socket 单元的重载路径。
 
 把每个 `deploy/production/config/*.example.json` 去掉 `.example` 后复制到 `/etc/dsh-public/`，属主为 root 且其他用户不可写，并替换所有占位符：两个组 ID、authentik audience 和密钥文件、模型上游、实例镜像以及主机名。把平台模型密钥、令牌密钥和健康密钥作为属主为 `dsh-quota` 的 `0600` 文件放入 `/etc/dsh-public/secrets/`。将 `deploy/authentik/brand.yml` 和 `deploy/authentik/public-harness.yaml` 作为 authentik 蓝图导入，CAPTCHA 密钥放在 authentik 的环境变量中。用 `scripts/build-image.sh` 和 `scripts/build-assets.sh` 构建镜像和运行时资源发布版，把 `/opt/dsh-public/assets/current` 指向该发布版，用 `deploy/production-profile.ts` 生成三个配置，再启动 `dsh-public.target`。在出站表、限制和 gVisor 验证通过之前，配置服务拒绝启动任何实例。
 
@@ -47,7 +50,9 @@ systemd-sysusers && systemd-tmpfiles --create && nft -f /etc/nftables.d/dsh-publ
 <a id="network-boundaries"></a>
 ## 网络边界
 
-实例只能通过 pasta 的主机回环映射访问主机，防火墙只允许一段回环端口：`dsh-public.nft` 中的 `QUOTA_PORTS`。它必须与 `quota.json` 的 `listenPorts` 和 `provisioner.json` 的 `ports.quota` 相等，测试会比较三份示例。配置服务从另一段 `ports.sidecar` 为每个实例发布 sidecar，只有主机侧转发器使用它，防火墙不放行，因此实例无法连接其他实例的 sidecar，也无法连接任何其他回环服务（路由器健康 socket、Caddy、authentik、数据库）。端口段必须很窄（至多 4096 个端口）、位于 1024-32767 以避开内核的临时端口范围、互不重叠、至少容纳 `maxActiveInstances` 个端口，并且不得与其他服务使用的端口冲突。放行范围内其他用户的额度监听地址仍可连通，所以每个监听地址只接受绑定到自己实例的凭据；这一决定让防火墙不必按用户建规则。其他服务仍应尽量绑定到 Unix socket。
+实例只能通过 pasta 的主机回环映射访问主机。在 `dsh-public.nft` 中，实例 UID 范围在 `127.0.0.1` 上只能到达两段回环端口：`QUOTA_PORTS` 与 `MARKET_PORTS`。`QUOTA_PORTS` 必须与 `quota.json` 的 `listenPorts` 和 `provisioner.json` 的 `ports.quota` 相等；`MARKET_PORTS` 必须与 `provisioner.json`（以及 `plugins.json`）的 `ports.market` 相等；测试会比较这些示例。配置服务从另一段 `ports.sidecar` 为每个实例发布 sidecar，只有主机侧转发器使用它，防火墙不放行，因此实例无法连接其他实例的 sidecar，也无法连接任何其他回环服务（路由器健康 socket、Caddy、authentik、数据库）。端口段必须很窄（至多 4096 个端口）、位于 1024-32767 以避开内核的临时端口范围、互不重叠、额度/sidecar 至少容纳 `maxActiveInstances` 个端口（市场段为账户上限，≤ 4096），并且不得与其他服务使用的端口冲突。额度放行范围内其他用户的监听地址仍可连通，所以每个监听地址只接受绑定到自己实例的凭据。其他服务仍应尽量绑定到 Unix socket。
+
+**Q7（仅对市场端口范围推翻原决定）。** 「容器防火墙没有按用户规则」这一记录决定对额度和所有其他回环服务仍然成立。仅对 `ports.market`，生产侧在单独加载的 `inet dsh_market` 表（`deploy/production/nftables/dsh-market.nft`）中增加 per-user 的 `market_owner` 集合元素与收包 socket 规则：优先级为 `filter - 2` 的输出链丢弃不在集合中的 UID/端口对，输入侧 `market_listener` 子链只放行 systemd 持有的监听 cgroup。再配合 `dsh-public.nft` 中整段 `MARKET_PORTS` 的 accept，只有属主实例账户能到达自己的市场端口，且只有 `dsh-plugins` 能在这些端口上收包。root、`dsh-router`、`dsh-identity` 及其他主机账户仍不能进入市场端口范围。重启 `nftables.service` 会执行 `flush ruleset`，一并清掉 `dsh_market`；配置服务探测会在一分钟内恢复表与集合——运维不应单独重载规则集。表缺失期间，仅靠整段 accept 会使任一实例账户都能访问任一市场端口；`dsh-plugins` 中的 `inet_diag` 对端校验（及其后的 bearer 令牌）仍是纵深防御。`dsh-plugins-fetch` 由 `dsh-public.nft` 限制为只能连接 `127.0.0.1:$EGRESS_PORT`（在 `systemd-sysusers` 之后设置 `PLUGINS_FETCH_UID`）。二期的 `egress_locked` drop 不在此落地。
 
 Caddy 的管理 API 只监听 `unix//run/caddy/admin.sock`（权限 0600），从不监听 TCP，因此用 `caddy reload --address unix//run/caddy/admin.sock` 重新加载。请把每个 DNS 解析器都列入 `RESOLVERS`：解析器规则排在私有网段丢弃规则之前，所以位于 10/8、172.16/12 或 192.168/16 的解析器也能工作。配置服务自己构造 pasta 参数，带有 `--map-host-loopback` 和 `--no-splice`（缺少 `--no-splice` 时，gVisor 下已发布端口会返回连接重置），因此配置里只需写 `pasta`。
 
@@ -86,4 +91,4 @@ Caddy 的管理 API 只监听 `unix//run/caddy/admin.sock`（权限 0600），�
 <a id="dev-note"></a>
 ## 开发说明
 
-测试以静态方式和模拟方式检查这些文件；设置 `CADDY_BIN` 和 `NFT_BIN` 后，Caddy 和 `nft -c` 也能解析 Caddyfile 和防火墙文件。在没有 systemd 的主机上做过一次实验室验证（真实的 Podman、gVisor、nftables 和 Caddy 2.11.7，身份提供方为桩），发现了本指南现已处理的问题；端口段、防火墙规则顺序、pasta 选项、控制器列表、镜像加载和被杀恢复此后只在模拟环境中运行过。`hidepid`、这些单元、真实防火墙、容器镜像、authentik 蓝图、备份、恢复以及上述每项演练仍需在真实主机上运行。
+测试以静态方式和模拟方式检查这些文件；设置 `CADDY_BIN` 和 `NFT_BIN` 后，Caddy 和 `nft -c` 也能解析 Caddyfile 和防火墙文件。市场 nftables 覆盖仅为文本/夹具（CI 机器上的 Q7 市场表不要求真实 `nft` apply）。在没有 systemd 的主机上做过一次实验室验证（真实的 Podman、gVisor、nftables 和 Caddy 2.11.7，身份提供方为桩），发现了本指南现已处理的问题；端口段、防火墙规则顺序、pasta 选项、控制器列表、镜像加载和被杀恢复此后只在模拟环境中运行过。`hidepid`、这些单元、真实防火墙（含经 `ExecStartPost=-` 加载的 `dsh_market`）、容器镜像、authentik 蓝图、备份、恢复以及上述每项演练仍需在真实主机上运行。
