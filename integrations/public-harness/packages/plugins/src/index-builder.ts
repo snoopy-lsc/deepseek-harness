@@ -4,6 +4,7 @@
  */
 import { createHash } from 'node:crypto'
 import type { PluginsDbHandle } from './migrate.ts'
+import { scopesVisibleToUser } from './visibility.ts'
 
 /** Format-1 market index document (subset matching upstream plugin-market-index). */
 export interface PersonalizedMarketIndex {
@@ -162,12 +163,6 @@ function parseExactSemVer(version: string): { core: [number, number, number]; pr
   return { core, pre }
 }
 
-function visibleToUser(scopes: readonly ScopeRow[], groups: ReadonlySet<string>): boolean {
-  return scopes.some(
-    (scope) => scope.kind === 'company' || (scope.kind === 'group' && groups.has(scope.target)),
-  )
-}
-
 function parseDisplay(raw: string): DisplayJson {
   try {
     const parsed = JSON.parse(raw) as unknown
@@ -288,7 +283,7 @@ function loadVisiblePackages(
   )
   return rows.filter((row) => {
     const scopes = scopeStmt.all(row.id) as ScopeRow[]
-    return visibleToUser(scopes, groups)
+    return scopesVisibleToUser(scopes, groups)
   })
 }
 

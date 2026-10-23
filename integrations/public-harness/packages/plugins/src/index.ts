@@ -115,6 +115,30 @@ export {
   type ApproveResult,
   type RejectInput,
 } from './approve.ts'
+
+export {
+  ListingError,
+  changeScope,
+  delistPackage,
+  relistPackage,
+  rollbackListing,
+  revokeVersion,
+  type ListingErrorCode,
+  type ChangeScopeInput,
+  type ChangeScopeResult,
+  type DelistInput,
+  type RelistInput,
+  type RollbackInput,
+  type RollbackResult,
+  type RevokeInput,
+  type RevokeResult,
+} from './listing.ts'
+export {
+  scopesVisibleToUser,
+  packageVisibleInIndex,
+  packageArtifactsVisible,
+  type ScopeRow,
+} from './visibility.ts'
 export {
   writeAuditOutbox,
   listPendingAudit,
