@@ -147,3 +147,18 @@ export {
   type PeerLookupResult,
   type SockDiagTransport,
 } from './peer-check.ts'
+
+export {
+  buildPersonalizedIndex,
+  createMarketBuildIndex,
+  compareSemVerDescending,
+  toPublishTimestampSeconds,
+  type PersonalizedMarketIndex,
+  type PersonalizedMarketPlugin,
+  type PersonalizedMarketVersion,
+  type PersonalizedIndexResult,
+  type BuildPersonalizedIndexOptions,
+  type CreateMarketBuildIndexOptions,
+  type IndexCache,
+  type IndexCacheEntry,
+} from './index-builder.ts'
