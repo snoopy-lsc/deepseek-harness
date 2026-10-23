@@ -1,4 +1,5 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { statSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { pluginMarketRows } from '@public-harness/contracts'
@@ -84,16 +85,22 @@ async function setupMarket(options: {
     }
     return undefined
   }
+  const chownCalls: string[] = []
   const runtime = createRuntime({
     config, runner, quota, probe: controllers, publicHost: 'harness.example.test',
     ...(options.skipMarketBridge ? {} : { market }),
+    chownFile: async (path, fileUid, fileGid) => {
+      chownCalls.push(path)
+      void fileUid
+      void fileGid
+    },
     startForwarder: async () => ({ close: async () => {} }),
     healthProbe: async () => true,
     portFree: async () => true,
     sleep: async ms => { now += ms },
     clock: () => now,
   })
-  return { config, record, runner, runtime, marketCalls, marketDir: siblingMarket, account: account.account }
+  return { config, record, runner, runtime, marketCalls, marketDir: siblingMarket, account: account.account, chownCalls }
 }
 
 describe('container market webPatch', () => {
@@ -188,7 +195,7 @@ describe('market_owner set element helpers', () => {
 
 describe('container market_owner lifecycle', () => {
   it('adds market_owner before start and removes on stop; writes npmrc under marketDir', async () => {
-    const { config, record, runner, runtime, marketCalls, marketDir, account } = await setupMarket()
+    const { config, record, runner, runtime, marketCalls, marketDir, account, chownCalls } = await setupMarket()
     await runtime.start(record)
 
     const nftAdds = runner.calls.filter(call =>
@@ -206,10 +213,15 @@ describe('container market_owner lifecycle', () => {
     expect(patch).toContain(`http://${config.quota.hostAddress}:30001/index.json`)
     expect(patch).not.toContain('plugin-manager')
 
-    const npmrc = await readFile(join(marketDir, account, 'npmrc'), 'utf8')
+    const npmrcPath = join(marketDir, account, 'npmrc')
+    const npmrc = await readFile(npmrcPath, 'utf8')
     expect(npmrc).toContain(`@corp-dsh:registry=http://${config.quota.hostAddress}:30001/npm/`)
     expect(npmrc).toContain(`//${config.quota.hostAddress}:30001/npm/:_authToken=market-bearer-token`)
     expect(npmrc).not.toMatch(/^registry=/m)
+    const st = statSync(npmrcPath)
+    expect(st.mode & 0o777).toBe(0o600)
+    // S1: market npmrc stays root-owned (writeRootPrivate) — never chowned to the tenant.
+    expect(chownCalls.some(path => path.endsWith('/npmrc'))).toBe(false)
 
     expect(marketCalls).toEqual(['open'])
 

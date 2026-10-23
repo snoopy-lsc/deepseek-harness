@@ -436,7 +436,7 @@ export function applyCountsForPackage(db: PluginsDbHandle, packageId: string): D
     `SELECT state, COUNT(*) AS n FROM plugin_default_state WHERE package_id = ? GROUP BY state`,
   ).all(packageId) as Array<{ state: string; n: number | bigint }>
 
-  const counts: DefaultApplyCounts = {
+  const counts = {
     installed: 0,
     pending: 0,
     failed: 0,
@@ -467,5 +467,5 @@ export function applyCountsForPackage(db: PluginsDbHandle, packageId: string): D
         break
     }
   }
-  return counts
+  return counts satisfies DefaultApplyCounts
 }

@@ -189,6 +189,22 @@ describe('buildReconcileRunArgv / assertSafeReconcileArgv', () => {
     const pnpmArgv = [...argv.slice(0, img + 1), 'pnpm', 'add', '@corp-dsh/x@1.0.0']
     expect(() => assertSafeReconcileArgv(pnpmArgv, config, record)).toThrow(RuntimeStartError)
   })
+
+  it('requires --rm and --runtime matching tools.runsc', async () => {
+    const { config, record } = await setupReconcile()
+    const argv = buildReconcileRunArgv(config, record, 30_001)
+    expect(argv).toEqual(expect.arrayContaining(['--rm', '--runtime', config.tools.runsc]))
+
+    const noRm = argv.filter(arg => arg !== '--rm')
+    expect(() => assertSafeReconcileArgv(noRm, config, record)).toThrow(RuntimeStartError)
+
+    const badRuntime = [...argv]
+    badRuntime[badRuntime.indexOf('--runtime') + 1] = '/usr/bin/runc'
+    expect(() => assertSafeReconcileArgv(badRuntime, config, record)).toThrow(RuntimeStartError)
+
+    const noRuntime = argv.filter((_, i, all) => all[i] !== '--runtime' && all[i - 1] !== '--runtime')
+    expect(() => assertSafeReconcileArgv(noRuntime, config, record)).toThrow(RuntimeStartError)
+  })
 })
 
 describe('container pre-start reconcile wiring', () => {

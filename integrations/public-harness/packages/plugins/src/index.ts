@@ -344,3 +344,37 @@ export {
   type PackageReconcileEntryOptions,
   type PackageReconcileEntryResult,
 } from './package-reconcile-entry.ts'
+
+export {
+  buildCataloguePackument,
+  lookupCatalogueTarball,
+  createCatalogueMarketRouteDeps,
+  type CatalogueServeOptions,
+} from './catalogue-serve.ts'
+
+export {
+  LISTEN_FDS_START,
+  readInheritedListenFds,
+  startMarketHttpServerOnFd,
+  startMarketHttpServersFromListenFds,
+  type InheritedListenFd,
+  type MultiPortMarketListenBase,
+} from './listen.ts'
+
+export {
+  PluginsControlError,
+  buildPluginsControlRoutes,
+  pluginsControlHandler,
+  startPluginsControlServer,
+  type PluginsControlActor,
+  type PluginsControlRequest,
+  type PluginsControlRoute,
+  type PluginsControlRoutes,
+  type PluginsControlDeps,
+  type PluginsControlServer,
+} from './control-server.ts'
+
+export {
+  createPluginsMarketBridge,
+  type PluginsMarketBridge,
+} from './market-bridge-client.ts'

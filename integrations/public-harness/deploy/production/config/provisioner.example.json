@@ -64,5 +64,6 @@
         "max": 21199
       }
     }
-  }
+  },
+  "pluginsSocket": "/run/dsh-plugins/control.sock"
 }

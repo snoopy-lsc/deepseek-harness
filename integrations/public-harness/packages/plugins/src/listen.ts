@@ -189,3 +189,130 @@ export async function startMarketHttpServer(options: MarketHttpServerOptions): P
     },
   }
 }
+
+/** systemd socket-activation: FDs start at this number (`SD_LISTEN_FDS_START`). */
+export const LISTEN_FDS_START = 3
+
+export interface InheritedListenFd {
+  readonly fd: number
+  readonly port: number
+}
+
+/**
+ * Read `LISTEN_FDS` / `LISTEN_PID` from the environment. Returns an empty list when
+ * unset, PID mismatches, or the count is not a positive safe integer.
+ */
+export function readInheritedListenFds(env: NodeJS.ProcessEnv = process.env): number[] {
+  const raw = env.LISTEN_FDS
+  if (raw === undefined || raw === '') return []
+  const count = Number(raw)
+  if (!Number.isSafeInteger(count) || count <= 0) return []
+  const pidRaw = env.LISTEN_PID
+  if (pidRaw !== undefined && pidRaw !== '') {
+    const pid = Number(pidRaw)
+    if (!Number.isSafeInteger(pid) || pid !== process.pid) return []
+  }
+  return Array.from({ length: count }, (_, i) => LISTEN_FDS_START + i)
+}
+
+/**
+ * Start one market HTTP server on an already-listening socket FD (systemd
+ * `ListenStream`). The local port is taken from `server.address()` after attach.
+ */
+export async function startMarketHttpServerOnFd(
+  fd: number,
+  options: Omit<MarketHttpServerOptions, 'port'> & { readonly port?: number },
+): Promise<MarketHttpServer> {
+  if (!Number.isSafeInteger(fd) || fd < 0) throw new Error('listen fd must be a non-negative safe integer')
+  if (options.host !== '127.0.0.1') throw new Error('market HTTP server requires host 127.0.0.1 (loopback only)')
+
+  const deps: MarketRouteDeps = {
+    lookup: options.lookup,
+    buildIndex: options.buildIndex,
+    lookupPackument: options.lookupPackument,
+    lookupTarball: options.lookupTarball,
+    buildSyncPlan: options.buildSyncPlan,
+    applySyncReport: options.applySyncReport,
+  }
+
+  const server: Server = createServer((request, response) => {
+    void handleMarketRequest(request, response, deps).catch(() => {
+      if (!response.headersSent) {
+        response.writeHead(404, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+        response.end('{"error":"not-found"}')
+      } else {
+        response.destroy()
+      }
+    })
+  })
+
+  if (options.peerCheck !== undefined) {
+    const hooks = options.peerCheck
+    const lookupOpts = options.peerLookup ?? defaultLookupOptions()
+    server.prependListener('connection', (socket) => {
+      enforcePeerCheck(socket, hooks, lookupOpts)
+    })
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen({ fd }, () => resolve())
+  })
+
+  const address = server.address() as AddressInfo
+  return {
+    address: '127.0.0.1',
+    port: address.port,
+    async close() {
+      server.close()
+      await once(server, 'close')
+    },
+  }
+}
+
+export type MultiPortMarketListenBase = {
+  readonly host: '127.0.0.1'
+  readonly peerCheck?: PeerCheckHooks
+  readonly peerLookup?: LookupPeerUidOptions
+  /** Build per-port route deps (lookup must bind that port's endpoint row). */
+  readonly depsForPort: (port: number) => MarketRouteDeps
+}
+
+/**
+ * Attach one HTTP server to each inherited listen FD and return them with resolved ports.
+ */
+export async function startMarketHttpServersFromListenFds(
+  fds: readonly number[],
+  base: MultiPortMarketListenBase,
+): Promise<readonly MarketHttpServer[]> {
+  if (fds.length === 0) throw new Error('LISTEN_FDS produced no file descriptors')
+  const servers: MarketHttpServer[] = []
+  try {
+    for (const fd of fds) {
+      // Probe port with a temporary attach so depsForPort can close over the real port.
+      // startMarketHttpServerOnFd needs deps up front; resolve port via a first listen then
+      // rebuild is awkward — instead listen once with a port-lazy lookup wrapper.
+      let boundPort = 0
+      const lazyDeps: MarketRouteDeps = {
+        lookup: () => base.depsForPort(boundPort).lookup(),
+        buildIndex: (userId) => base.depsForPort(boundPort).buildIndex(userId),
+        lookupPackument: (name, userId) => base.depsForPort(boundPort).lookupPackument(name, userId),
+        lookupTarball: (name, version, userId) => base.depsForPort(boundPort).lookupTarball(name, version, userId),
+        buildSyncPlan: (userId) => base.depsForPort(boundPort).buildSyncPlan!(userId),
+        applySyncReport: (userId, report) => base.depsForPort(boundPort).applySyncReport!(userId, report),
+      }
+      const server = await startMarketHttpServerOnFd(fd, {
+        host: base.host,
+        ...(base.peerCheck !== undefined ? { peerCheck: base.peerCheck } : {}),
+        ...(base.peerLookup !== undefined ? { peerLookup: base.peerLookup } : {}),
+        ...lazyDeps,
+      })
+      boundPort = server.port
+      servers.push(server)
+    }
+  } catch (error) {
+    for (const server of servers.splice(0)) await server.close().catch(() => {})
+    throw error
+  }
+  return servers
+}

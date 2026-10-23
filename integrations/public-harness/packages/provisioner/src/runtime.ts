@@ -41,7 +41,7 @@ export interface QuotaBridge {
 
 /** Optional plugin-market endpoint for an instance; failures must not block start. */
 export interface MarketBridge {
-  open(userId: UserId, instanceId: InstanceId): Promise<{
+  open(userId: UserId, instanceId: InstanceId, accountUid?: number): Promise<{
     readonly port: number
     readonly token: string
     readonly marketOnly?: boolean
@@ -287,6 +287,9 @@ export function assertSafeReconcileArgv(argv: readonly string[], config: Contain
   if (seen.size !== allowedVolumes.size || userns !== 1) throw new RuntimeStartError('unsafe-argv')
   if (envKeys.size !== RECONCILE_ENV_KEYS.size) throw new RuntimeStartError('unsafe-argv')
   if (!argv.includes('--read-only') || argv[argv.indexOf('--cap-drop') + 1] !== 'all') throw new RuntimeStartError('unsafe-argv')
+  if (!argv.includes('--rm')) throw new RuntimeStartError('unsafe-argv')
+  const runtimeIdx = argv.indexOf('--runtime')
+  if (runtimeIdx < 0 || argv[runtimeIdx + 1] !== config.tools.runsc) throw new RuntimeStartError('unsafe-argv')
   if (!reconcileCommandAllowed(argv, config.image)) throw new RuntimeStartError('unsafe-argv')
 }
 
@@ -432,6 +435,14 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     await rename(temporary, path)
   }
 
+  /** Root-owned secret file (market npmrc): mode 0600, never chown to the tenant. */
+  async function writeRootPrivate(path: string, contents: string): Promise<void> {
+    const temporary = `${path}.${randomBytes(6).toString('hex')}.tmp`
+    await writeFile(temporary, contents, { flag: 'wx', mode: 0o600 })
+    await chmod(temporary, 0o600)
+    await rename(temporary, path)
+  }
+
   async function writeCredential(record: UserRecord, instanceId: InstanceId): Promise<void> {
     const issued = await deps.quota.issue(record.userId, instanceId)
     await writePrivate(record, join(record.layout.home, 'quota-credential.json'), `${JSON.stringify(issued)}\n`)
@@ -475,10 +486,10 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
       return undefined
     }
     try {
-      const opened = await deps.market.open(record.userId, instanceId)
+      const opened = await deps.market.open(record.userId, instanceId, record.uid)
       const dir = join(config.paths.marketDir, record.account)
       await mkdir(dir, { recursive: true, mode: 0o700 })
-      await writePrivate(record, join(dir, 'npmrc'), renderInstanceMarketNpmrc({
+      await writeRootPrivate(join(dir, 'npmrc'), renderInstanceMarketNpmrc({
         host: config.quota.hostAddress,
         port: opened.port,
         token: opened.token,
@@ -552,8 +563,14 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
           try {
             const reconcileArgv = buildReconcileRunArgv(config, record, market.port)
             assertSafeReconcileArgv(reconcileArgv, config, record)
-            await asAccount(record, reconcileArgv, 300_000)
-          } catch { /* start anyway */ }
+            const reconcileResult = await asAccount(record, reconcileArgv, 300_000)
+            if (reconcileResult.code !== 0) {
+              log(`instance ${record.account} reconcile exited ${reconcileResult.code}; starting instance anyway`)
+            }
+          } catch (error) {
+            log(`instance ${record.account} reconcile failed; starting instance anyway`)
+            void error
+          }
         }
         await writePrivate(record, join(record.layout.home, 'public-harness-web.patch.yml'),
           webPatch(config, deps.publicHost, proxy.port, 'platform-model', market))

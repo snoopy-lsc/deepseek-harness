@@ -250,7 +250,7 @@ function fingerprintFor(
   ).all() as Array<{ id: string; name: string; kind: string; delisted_at: number | null }>
   const scopes = db.db.prepare(
     `SELECT package_id, kind, target FROM plugin_scope ORDER BY package_id, kind, target`,
-  ).all() as ScopeRow[]
+  ).all() as unknown as ScopeRow[]
   const versions = db.db.prepare(
     `SELECT id, package_id, version, state, mirror_state, artifact_sha512, engines_dsh, created_at, reviewed_at
      FROM plugin_version ORDER BY id`,
@@ -285,13 +285,13 @@ function loadVisiblePackages(
      JOIN plugin_listing l ON l.package_id = p.id
      WHERE p.delisted_at IS NULL AND p.kind = 'bundle'
      ORDER BY p.name COLLATE NOCASE`,
-  ).all() as PackageRow[]
+  ).all() as unknown as PackageRow[]
 
   const scopeStmt = db.db.prepare(
     `SELECT package_id, kind, target FROM plugin_scope WHERE package_id = ?`,
   )
   return rows.filter((row) => {
-    const scopes = scopeStmt.all(row.id) as ScopeRow[]
+    const scopes = scopeStmt.all(row.id) as unknown as ScopeRow[]
     return scopesVisibleToUser(scopes, groups)
   })
 }
@@ -302,7 +302,7 @@ function loadApprovedReadyVersions(db: PluginsDbHandle, packageId: string): Vers
      FROM plugin_version
      WHERE package_id = ? AND state = 'approved' AND mirror_state = 'ready'
      ORDER BY version`,
-  ).all(packageId) as VersionRow[]
+  ).all(packageId) as unknown as VersionRow[]
 }
 
 function buildPlugin(

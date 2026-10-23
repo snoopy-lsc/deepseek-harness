@@ -9,8 +9,11 @@
   },
   "egressPort": 18787,
   "egress": {
-    "allow": ["registry.npmjs.org"],
+    "allow": [
+      "registry.npmjs.org"
+    ],
     "intranet": {},
     "gitPathPrefixes": {}
-  }
+  },
+  "controlSocket": "/run/dsh-plugins/control.sock"
 }

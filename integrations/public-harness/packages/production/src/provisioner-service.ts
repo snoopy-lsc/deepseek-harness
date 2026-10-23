@@ -16,16 +16,20 @@ export interface ProvisionerProfileConfig {
   readonly publicHost: string
   readonly reconcileIntervalMs: number
   readonly provisioner: ProvisionerConfig
+  /** Plugins control socket for MarketBridge (`DSH_PLUGINS_SOCKET`). Optional until market is enabled. */
+  readonly pluginsSocket?: string
 }
 
 /** Strict parse; the provisioner configuration is validated before any host change. */
 export function parseProvisionerProfileConfig(value: unknown): ProvisionerProfileConfig {
-  const record = exactRecord(value, ['controlSocket', 'adminSocket', 'quotaSocket', 'publicHost', 'reconcileIntervalMs', 'provisioner'], 'provisioner profile')
+  const optional = ['pluginsSocket'].filter(key => typeof value === 'object' && value !== null && key in (value as object))
+  const record = exactRecord(value, ['controlSocket', 'adminSocket', 'quotaSocket', 'publicHost', 'reconcileIntervalMs', 'provisioner', ...optional], 'provisioner profile')
   if (typeof record.publicHost !== 'string' || !/^[A-Za-z0-9.-]+$/.test(record.publicHost)) throw new Error('publicHost must be a host name')
   return { controlSocket: absolutePath(record.controlSocket, 'controlSocket'), adminSocket: absolutePath(record.adminSocket, 'adminSocket'),
     quotaSocket: absolutePath(record.quotaSocket, 'quotaSocket'), publicHost: record.publicHost,
     reconcileIntervalMs: positiveInt(record.reconcileIntervalMs, 'reconcileIntervalMs'),
-    provisioner: validateProvisionerConfig(record.provisioner) }
+    provisioner: validateProvisionerConfig(record.provisioner),
+    ...record.pluginsSocket === undefined ? {} : { pluginsSocket: absolutePath(record.pluginsSocket, 'pluginsSocket') } }
 }
 
 /** Start sockets and the periodic reconcile/idle loop. */
