@@ -1,0 +1,28 @@
+{
+  "name": "@public-harness/plugin-sync",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./*": {
+      "types": "./lib/*.d.ts",
+      "default": "./lib/*.js"
+    }
+  },
+  "files": ["lib"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "cd ../.. && vitest run --config vitest.config.ts packages/plugin-sync/tests"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.5-alpha.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5-alpha.1"
+  }
+}
