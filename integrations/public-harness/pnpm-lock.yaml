@@ -90,6 +90,8 @@ importers:
 
   packages/kb: {}
 
+  packages/plugins: {}
+
   packages/production:
     dependencies:
       '@deepseek-ai/schemastery':
