@@ -1,4 +1,4 @@
-/** Plugin market catalogue, egress proxy, and socket-activated fetch framing. */
+/** Plugin market catalogue, egress proxy, fetch framing, and mirror pipeline. */
 export { newId, ID_PATTERN } from './ids.ts'
 export { openPluginsDb, type PluginsDb } from './db.ts'
 export {
@@ -57,3 +57,27 @@ export {
   type NpmVersionArgs,
   type ValidatedArgs,
 } from './fetch/server.ts'
+export {
+  MirrorError,
+  mirrorVersion,
+  refuseNonSemVerDeps,
+  validateClosureEntries,
+  detectInstallScripts,
+  chooseArtifactMode,
+  compareExpectedArtifactSha512,
+  buildArtifact,
+  storeArtifact,
+  assertNotReady,
+  resolveUpload,
+  resolveNpmVersion,
+  sha512Hex,
+  sha512Integrity,
+  verifyIntegrity,
+  MAX_ARTIFACT_BYTES,
+  type ClosurePackage,
+  type MirrorSource,
+  type MirrorVersionInput,
+  type MirrorVersionResult,
+  type ArtifactMode,
+  type InstallScriptKind,
+} from './mirror/index.ts'
