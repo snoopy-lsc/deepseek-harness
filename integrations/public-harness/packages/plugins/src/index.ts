@@ -92,6 +92,20 @@ export {
   type AdminUploadInput,
   type AdminUploadResult,
 } from './upload.ts'
+
+export {
+  SubmitError,
+  submitPluginVersion,
+  withdrawSubmission,
+  expireSubmission,
+  type SubmitErrorCode,
+  type SubmitSource,
+  type SubmitLimits,
+  type SubmitInput,
+  type SubmitResult,
+  type WithdrawInput,
+  type ExpireInput,
+} from './submit.ts'
 export {
   writeAuditOutbox,
   listPendingAudit,
