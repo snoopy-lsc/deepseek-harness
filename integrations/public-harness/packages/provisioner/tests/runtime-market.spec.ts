@@ -74,7 +74,7 @@ async function setupMarket(options: {
   }
   let now = 0
   runner.handler = async (_command, args) => {
-    if (args.includes('run')) {
+    if (args.includes('run') && args.includes('--detach')) {
       await writeFile(
         join(layout.ctl, 'ready.json'),
         JSON.stringify({ kind: 'public-harness/web-ready', port: 8080, token: TOKEN }),
@@ -196,7 +196,7 @@ describe('container market_owner lifecycle', () => {
     expect(nftAdds).toHaveLength(1)
     expect(nftAdds[0]!.args).toEqual(marketOwnerAddArgv(record.uid, 30_001))
 
-    const runIdx = runner.calls.findIndex(call => call.args.includes('run'))
+    const runIdx = runner.calls.findIndex(call => call.args.includes('run') && call.args.includes('--detach'))
     const addIdx = runner.calls.findIndex(call =>
       call.command === config.tools.nft && call.args[0] === 'add' && call.args.includes('market_owner'))
     expect(addIdx).toBeGreaterThanOrEqual(0)

@@ -187,14 +187,109 @@ function loopbackPortFree(port: number): Promise<boolean> {
   })
 }
 
-/** Draft allowlist for the container one-shot reconcile (P0.5 / 1E).
- * Same forbid-list spirit as {@link assertSafeRunArgv}; narrower volumes (workspace + market
- * snapshot paths only); no publish; pasta `--no-splice`; command allowlist `pnpm` / `node` entry.
- * Full enforcement lands in milestone 1E — this stub documents the contract for 1D.6.
+/** Container path of the reconcile plan (under DSH_HOME / home mount). */
+export function reconcilePlanContainerPath(): string {
+  return `${CONTAINER.home}/.dsh-market/reconcile-plan.json`
+}
+
+/** One-shot reconcile container name derived from the instance container name. */
+export function reconcileContainerName(record: UserRecord): string {
+  return `${record.container}-reconcile`
+}
+
+/**
+ * Volumes for the one-shot reconcile container: home (profile + `.dsh-market` snapshots/plan),
+ * workspace, optional market npmrc, and read-only release assets for `reconcile-entry.mjs`.
+ * Narrower than the instance: no ctl / kb mounts.
  */
-export function assertSafeReconcileArgvDraft(argv: readonly string[]): void {
-  if (argv.some(arg => FORBIDDEN_FLAGS.test(arg))) throw new RuntimeStartError('unsafe-argv')
-  if (argv.includes('--publish')) throw new RuntimeStartError('unsafe-argv')
+export function reconcileVolumes(config: ContainerConfig, record: UserRecord): string[] {
+  return [
+    `${record.layout.home}:${CONTAINER.home}:rw,Z`,
+    `${record.layout.workspace}:${CONTAINER.workspace}:rw,Z`,
+    `${config.paths.runtimeAssets}:${CONTAINER.assets}:ro,Z`,
+    ...marketVolumes(config, record),
+  ]
+}
+
+/**
+ * Exact argv for `podman` (after the executable) that runs the pre-start one-shot reconcile.
+ * `--rm` (not detach), no `--publish`, pasta `--no-splice` + `--map-host-loopback`, same userns.
+ * Live pasta/runsc remains P0.5-blocked — fixtures only.
+ */
+export function buildReconcileRunArgv(config: ContainerConfig, record: UserRecord, marketPort: number): string[] {
+  const { limits, tools } = config
+  const volume = (value: string): string[] => ['--volume', value]
+  const env = (name: string, value: string): string[] => ['--env', `${name}=${value}`]
+  const volumes = reconcileVolumes(config, record)
+  const pathValue = '/usr/local/bin:/usr/bin:/bin'
+  return [
+    '--runtime', tools.runsc, 'run', '--rm', '--replace', '--name', reconcileContainerName(record),
+    '--network', networkArgument(limits.network, config.quota.hostAddress), '--userns', INSTANCE_USERNS,
+    '--cap-drop', 'all', '--security-opt', 'no-new-privileges', '--read-only',
+    '--tmpfs', '/tmp:rw,nosuid,nodev,size=256m,mode=1777',
+    '--pids-limit', String(limits.pids), '--memory', String(limits.memoryBytes), '--memory-swap', String(limits.memoryBytes),
+    '--cpus', String(limits.cpus), '--ulimit', `nofile=${limits.openFiles}:${limits.openFiles}`,
+    '--label', 'public-harness-reconcile=1', '--workdir', CONTAINER.home,
+    ...volumes.flatMap(volume),
+    ...env('HOME', CONTAINER.home), ...env('DSH_HOME', CONTAINER.home),
+    ...env('XDG_CACHE_HOME', `${CONTAINER.home}/.cache`), ...env('TMPDIR', '/tmp'),
+    ...env('PATH', pathValue),
+    ...env('NPM_CONFIG_GLOBALCONFIG', `${CONTAINER.market}/npmrc`),
+    config.image, 'node', `${CONTAINER.assets}/reconcile-entry.mjs`,
+    reconcilePlanContainerPath(), `--market-port=${marketPort}`,
+  ]
+}
+
+const RECONCILE_ENV_KEYS = new Set([
+  'HOME', 'DSH_HOME', 'XDG_CACHE_HOME', 'TMPDIR', 'PATH', 'NPM_CONFIG_GLOBALCONFIG',
+])
+
+/** True when the command after the image is an allowed reconcile entry (`node …/reconcile-entry.mjs` or `pnpm`). */
+function reconcileCommandAllowed(argv: readonly string[], image: string): boolean {
+  const imageIdx = argv.indexOf(image)
+  if (imageIdx < 0 || imageIdx >= argv.length - 1) return false
+  const cmd = argv[imageIdx + 1]
+  if (cmd === 'pnpm') return true
+  if (cmd !== 'node') return false
+  const entry = argv[imageIdx + 2]
+  return typeof entry === 'string' && (entry === 'reconcile-entry.mjs' || entry.endsWith('/reconcile-entry.mjs'))
+}
+
+/**
+ * Reject a one-shot reconcile argv that grants more than the fixed design allows.
+ * Same forbid-list spirit as {@link assertSafeRunArgv}; narrower volumes (no ctl/kb);
+ * no publish; pasta with `--no-splice`; command allowlist `pnpm` / `node` reconcile entry only.
+ */
+export function assertSafeReconcileArgv(argv: readonly string[], config: ContainerConfig, record: UserRecord): void {
+  const allowedVolumes = new Set(reconcileVolumes(config, record))
+  const seen = new Set<string>()
+  let userns = 0
+  const envKeys = new Set<string>()
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index]!
+    if (arg === '--volume') {
+      const value = argv[index + 1] ?? ''
+      if (!allowedVolumes.has(value) || seen.has(value)) throw new RuntimeStartError('unsafe-argv')
+      seen.add(value); index += 1
+    } else if (arg === '--userns') {
+      if (argv[index + 1] !== INSTANCE_USERNS || ++userns > 1) throw new RuntimeStartError('unsafe-argv')
+      index += 1
+    } else if (arg === '--env') {
+      const value = argv[index + 1] ?? ''
+      const eq = value.indexOf('=')
+      const key = eq > 0 ? value.slice(0, eq) : value
+      if (!RECONCILE_ENV_KEYS.has(key) || envKeys.has(key)) throw new RuntimeStartError('unsafe-argv')
+      envKeys.add(key); index += 1
+    } else if (arg === '--publish' || arg.startsWith('--publish=')) throw new RuntimeStartError('unsafe-argv')
+    else if (FORBIDDEN_FLAGS.test(arg)) throw new RuntimeStartError('unsafe-argv')
+    else if (arg === '--network' && argv[index + 1] !== networkArgument(config.limits.network, config.quota.hostAddress)) {
+      throw new RuntimeStartError('unsafe-argv')
+    }
+  }
+  if (seen.size !== allowedVolumes.size || userns !== 1) throw new RuntimeStartError('unsafe-argv')
+  if (envKeys.size !== RECONCILE_ENV_KEYS.size) throw new RuntimeStartError('unsafe-argv')
+  if (!argv.includes('--read-only') || argv[argv.indexOf('--cap-drop') + 1] !== 'all') throw new RuntimeStartError('unsafe-argv')
+  if (!reconcileCommandAllowed(argv, config.image)) throw new RuntimeStartError('unsafe-argv')
 }
 
 /** Reject an argv that grants more than the fixed design allows. */
@@ -453,6 +548,15 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
         const proxy = { port: ports.quotaPort }
         await writeCredential(record, instanceId)
         const market = await tryOpenMarket(record, instanceId)
+        // Container order: network/set (market_owner) → one-shot reconcile → instance.
+        // Reconcile failures must not block the instance start (design § Fallback).
+        if (market !== undefined) {
+          try {
+            const reconcileArgv = buildReconcileRunArgv(config, record, market.port)
+            assertSafeReconcileArgv(reconcileArgv, config, record)
+            await asAccount(record, reconcileArgv, 300_000)
+          } catch { /* start anyway */ }
+        }
         await writePrivate(record, join(record.layout.home, 'public-harness-web.patch.yml'),
           webPatch(config, deps.publicHost, proxy.port, 'platform-model', market))
         const argv = buildRunArgv(config, record, sidecarPort)
