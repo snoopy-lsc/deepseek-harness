@@ -1,5 +1,6 @@
 /** Per-account nftables policy in one owned table; every change is a single `nft -f` transaction. */
-import type { RuntimeInstance } from '@public-harness/contracts'
+import type { PortRange, RuntimeInstance } from '@public-harness/contracts'
+import { formatMarketPorts } from './market-firewall.ts'
 import { runChecked, type CommandRunner } from '@public-harness/provisioner/system'
 import { NativeHostError, type SystemdConfig } from './config.ts'
 import { writeControlFile } from './storage.ts'
@@ -46,15 +47,22 @@ function rules(chain: string, lines: string[]): string[] { return lines.map(line
  * the resolver, then deny local/private/metadata ranges and allow only configured public ports.
  * Input (matched by the unit cgroup of the receiving socket, and by the sender mark for this UID's own connects):
  * the owner may reach any of its own loopback listeners and its quota port; root may reach only its Web port.
+ * When `options.marketPorts` is set, also accept the owner's loopback connects to that range before the final drop
+ * (the `dsh_market` drops still narrow it to the port owner and the systemd listener).
  * @param instance Allocated account with recorded ports.
  * @param config Resolver and public egress ports.
- * @returns nft script text; `installNetwork` loads it in one transaction.
+ * @param options Optional market port range for the owner accept; omitted keeps prior behaviour.
+ * @returns nft script text; `installNetwork` loads it in one transaction. Never loads `dsh_market`.
  */
-export function renderUserNetwork(instance: RuntimeInstance, config: SystemdConfig): string {
+export function renderUserNetwork(instance: RuntimeInstance, config: SystemdConfig,
+  options: { readonly marketPorts?: PortRange } = {}): string {
   const { uid } = instance, out = `out_${uid}`, inn = `in_${uid}`, { path, level } = unitCgroup(instance)
   const resolver = config.resolver.includes(':') ? `ip6 daddr ${config.resolver}` : `ip daddr ${config.resolver}`
   const tcp = config.publicEgress.tcp, udp = config.publicEgress.udp
   const own = `socket cgroupv2 level ${level} "${path}"`
+  const marketAccept = options.marketPorts === undefined
+    ? []
+    : [`ct mark ${uid} iif "lo" tcp dport ${formatMarketPorts(options.marketPorts)} accept`]
   return [
     renderBaseTable(),
     `add chain inet ${NATIVE_TABLE} ${out}`, `flush chain inet ${NATIVE_TABLE} ${out}`,
@@ -76,8 +84,9 @@ export function renderUserNetwork(instance: RuntimeInstance, config: SystemdConf
       `${own} ct mark ${uid} accept`,
       `${own} ct mark 0 tcp dport ${instance.webPort} accept`,
       `${own} counter drop`,
-      // New connections this account opened elsewhere on loopback: only its quota listener.
+      // New connections this account opened elsewhere on loopback: quota, then the market range, then drop.
       `ct mark ${uid} iif "lo" tcp dport ${instance.quotaPort} accept`,
+      ...marketAccept,
       `ct mark ${uid} iif "lo" counter drop`,
     ]),
     `add element inet ${NATIVE_TABLE} users_out { ${uid} : jump ${out} }`,

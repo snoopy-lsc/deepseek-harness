@@ -5,6 +5,7 @@ import type { CommandRunner } from '@public-harness/provisioner/system'
 import { NativeHostError, type SystemdConfig } from './config.ts'
 import { BROWSER_CHILD_PROFILE } from './apparmor.ts'
 import { NATIVE_TABLE, unitCgroup } from './network.ts'
+import { marketEndpointKey, type MarketEndpoint } from './market-firewall.ts'
 
 /** Host reads used by the probe; injectable so tests never touch the real kernel interfaces. */
 export interface ProbeHost {
@@ -75,4 +76,72 @@ export async function verifyEnforcement(instance: RuntimeInstance, config: Syste
   if (chains.code !== 0 || !chains.stdout.includes('counter') || map.code !== 0 || !new RegExp(`\\b${instance.uid} : jump out_${instance.uid}\\b`).test(map.stdout)) {
     refuse('network', 'account rules are not installed')
   }
+}
+
+/** Observed presence of the separately loaded market table and its chains. */
+export interface MarketTablePresence {
+  readonly table: boolean
+  readonly input: boolean
+  readonly market_listener: boolean
+}
+
+/**
+ * Host side of the market probe: every compare and mutate runs inside `withLock`, and endpoint rows
+ * plus the live set are read only after the lock is taken.
+ */
+export interface MarketProbeHost {
+  /** Provisioner lock shared with element add/remove. */
+  withLock<T>(task: () => Promise<T>): Promise<T>
+  /** `plugin_endpoint` rows (uid/port), read under the lock. */
+  listEndpoints(): Promise<readonly MarketEndpoint[]>
+  /** Whether the table and both chains exist. */
+  inspect(): Promise<MarketTablePresence>
+  /** Rerun the socket-unit loader (create table/set, flush+refill chains). */
+  loadTable(): Promise<void>
+  /** Current `market_owner` elements, read under the lock. */
+  listSet(): Promise<readonly MarketEndpoint[]>
+  addElements(rows: readonly MarketEndpoint[]): Promise<void>
+  deleteElements(rows: readonly MarketEndpoint[]): Promise<void>
+  /** Security alert when the same extra element is present in two consecutive probes. */
+  alertExtra(row: MarketEndpoint): void
+}
+
+/** Carry extra elements across probes so a repeated stale pair raises an alert. */
+export interface MarketProbeState {
+  readonly previousExtras: ReadonlySet<string>
+}
+
+/**
+ * Make `market_owner` exactly equal to `plugin_endpoint` under one lock.
+ * Missing table/chain → reload loader then refill; extras deleted immediately (alert on two consecutive);
+ * missing elements added (owner shut out only — never a global failure).
+ */
+export async function reconcileMarketFirewall(
+  host: MarketProbeHost,
+  state: MarketProbeState,
+): Promise<MarketProbeState> {
+  return host.withLock(async () => {
+    const presence = await host.inspect()
+    const missing = !presence.table || !presence.input || !presence.market_listener
+    // Table or chain gone (e.g. flush ruleset): rerun the loader, then exact-set refill below.
+    if (missing) await host.loadTable()
+
+    const endpoints = await host.listEndpoints()
+    const current = await host.listSet()
+    const want = new Map(endpoints.map(row => [marketEndpointKey(row), row]))
+    const have = new Map(current.map(row => [marketEndpointKey(row), row]))
+    const extras = [...have.values()].filter(row => !want.has(marketEndpointKey(row)))
+    const absent = [...want.values()].filter(row => !have.has(marketEndpointKey(row)))
+
+    if (extras.length > 0) {
+      await host.deleteElements(extras)
+      for (const row of extras) {
+        const key = marketEndpointKey(row)
+        if (state.previousExtras.has(key)) host.alertExtra(row)
+      }
+    }
+    if (absent.length > 0) await host.addElements(absent)
+
+    return { previousExtras: new Set(extras.map(marketEndpointKey)) }
+  })
 }
