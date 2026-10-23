@@ -41,7 +41,7 @@ export {
   type PackumentVersion,
   type ResolveNpmOptions,
 } from './resolve.ts'
-export { readNpmTarball, readUstar, stripPackagePrefix, MAX_UPLOAD_ENTRIES, MAX_UNPACKED_BYTES } from './tar.ts'
+export { readNpmTarball, readUstar, writeNpmTarball, writeUstar, stripPackagePrefix, MAX_UPLOAD_ENTRIES, MAX_UNPACKED_BYTES } from './tar.ts'
 
 export type MirrorSource =
   | { readonly type: 'upload'; readonly tarball: Buffer }

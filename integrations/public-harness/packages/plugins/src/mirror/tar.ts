@@ -1,5 +1,5 @@
 /** Safe npm-style ustar reader for upload / packument tarballs (no links, 10k / 200 MiB). */
-import { gunzipSync } from 'node:zlib'
+import { gunzipSync, gzipSync } from 'node:zlib'
 import { MirrorError } from './errors.ts'
 
 export interface TarFile { readonly path: string; readonly data: Buffer }
@@ -87,4 +87,69 @@ export function stripPackagePrefix(files: readonly TarFile[]): TarFile[] {
   return files
     .filter(f => f.path.startsWith(`${root}/`))
     .map(f => ({ path: f.path.slice(root.length + 1), data: f.data }))
+}
+
+
+/** Write a plain ustar archive (regular files only). Paths may use ustar prefix. */
+export function writeUstar(files: readonly { readonly path: string; readonly data: Buffer }[]): Buffer {
+  const parts: Buffer[] = []
+  const pad = (data: Buffer) => (data.length % 512 === 0 ? data : Buffer.concat([data, Buffer.alloc(512 - (data.length % 512))]))
+  for (const file of files) {
+    const data = file.data
+    const rawPath = file.path
+    if (
+      rawPath.length === 0
+      || rawPath.includes('\0')
+      || rawPath.startsWith('/')
+      || rawPath.includes('\\')
+      || rawPath.split('/').some(s => s === '' || s === '.' || s === '..')
+    ) {
+      throw new MirrorError('upload', 'path')
+    }
+    const pathBytes = Buffer.byteLength(rawPath, 'utf8')
+    let name = rawPath
+    let prefix = ''
+    if (pathBytes > 100) {
+      const segments = rawPath.split('/')
+      let split = -1
+      for (let i = segments.length - 1; i >= 1; i--) {
+        const namePart = segments.slice(i).join('/')
+        const prefixPart = segments.slice(0, i).join('/')
+        if (Buffer.byteLength(namePart, 'utf8') <= 100 && Buffer.byteLength(prefixPart, 'utf8') <= 155) {
+          split = i
+          break
+        }
+      }
+      if (split < 0) throw new MirrorError('upload', 'path-too-long')
+      prefix = segments.slice(0, split).join('/')
+      name = segments.slice(split).join('/')
+    }
+    const block = Buffer.alloc(512)
+    block.write(name, 0, Math.min(Buffer.byteLength(name, 'utf8'), 100), 'utf8')
+    block.write('0000644\0', 100, 'ascii')
+    block.write('0000000\0', 108, 'ascii')
+    block.write('0000000\0', 116, 'ascii')
+    block.write(`${data.length.toString(8).padStart(11, '0')}\0`, 124, 'ascii')
+    block.write('00000000000\0', 136, 'ascii')
+    block.fill(0x20, 148, 156)
+    block.write('0', 156, 'ascii')
+    block.write('ustar\0', 257, 'ascii')
+    block.write('00', 263, 'ascii')
+    if (prefix) block.write(prefix, 345, Math.min(Buffer.byteLength(prefix, 'utf8'), 155), 'utf8')
+    let sum = 0
+    for (const byte of block) sum += byte
+    block.write(`${sum.toString(8).padStart(6, '0')}\0 `, 148, 'ascii')
+    parts.push(block, pad(data))
+  }
+  parts.push(Buffer.alloc(1024))
+  return Buffer.concat(parts)
+}
+
+/** Pack files as an npm-style `package/…` gzipped tarball. */
+export function writeNpmTarball(files: readonly { readonly path: string; readonly data: Buffer }[]): Buffer {
+  const entries = files.map(f => ({
+    path: f.path.startsWith('package/') ? f.path : `package/${f.path}`,
+    data: f.data,
+  }))
+  return gzipSync(writeUstar(entries))
 }

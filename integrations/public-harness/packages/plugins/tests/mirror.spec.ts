@@ -12,11 +12,13 @@ import {
   compareExpectedArtifactSha512,
   detectInstallScripts,
   mirrorVersion,
+  readNpmTarball,
   refuseNonSemVerDeps,
   resolveUpload,
   sha512Hex,
   sha512Integrity,
   storeArtifact,
+  stripPackagePrefix,
   validateClosureEntries,
   verifyIntegrity,
   type ClosurePackage,
@@ -173,19 +175,24 @@ describe('mirrorVersion (fixtures)', () => {
       version: '1.0.0',
       dependencies: { 'left-pad': '^1.0.0' },
     })
+    const depTgz = npmTgz({ name: 'left-pad', version: '1.0.0' }, [{ path: 'index.js', data: 'module.exports = x => x\n' }])
     const closure: ClosurePackage[] = [
-      { name: 'left-pad', version: '1.0.0', integrity: sha512Integrity(Buffer.from('left-pad-bytes')), installScript: null },
+      { name: 'left-pad', version: '1.0.0', integrity: sha512Integrity(depTgz), installScript: null },
     ]
     const result = await mirrorVersion({
       source: { type: 'upload', tarball },
       storeRoot: join(root, 'store'),
       closure,
-      fetchClosureTarball: async () => Buffer.from('left-pad-bytes'),
+      fetchClosureTarball: async () => depTgz,
     })
     expect(result.mode).toBe('bundle')
     expect(result.artifactSha512).toMatch(/^[0-9a-f]{128}$/)
     expect(result.closure).toHaveLength(1)
     expect(existsSync(join(root, 'store', 'sha512', result.artifactSha512))).toBe(true)
+    const stored = readFileSync(join(root, 'store', 'sha512', result.artifactSha512))
+    expect(stored.subarray(0, 4).toString('utf8')).not.toBe('DSHB')
+    expect(stored[0]).toBe(0x1f)
+    expect(stored[1]).toBe(0x8b)
     // freeze: second mirror of same ready sha path refuses different content via store
     expect(() => assertNotReady('ready')).toThrow(/ready-frozen/)
   })
@@ -218,6 +225,45 @@ describe('mirrorVersion (fixtures)', () => {
       dependencies: { bad: 'git+https://github.com/a/b.git' },
     })
     expect(() => resolveUpload(tarball)).toThrow(/closure-source/)
+  })
+
+  it('buildArtifact_bundle_emits_npm_tgz_with_bundleDependencies_not_DSHB', () => {
+    const plugin = npmTgz({
+      name: '@corp-dsh/demo',
+      version: '1.0.0',
+      dependencies: { 'left-pad': '^1.0.0' },
+    }, [{ path: 'index.js', data: 'export default 1\n' }])
+    const dep = npmTgz({
+      name: 'left-pad',
+      version: '1.0.0',
+    }, [{ path: 'index.js', data: 'module.exports = function leftPad() {}\n' }])
+    const closure: ClosurePackage[] = [
+      { name: 'left-pad', version: '1.0.0', integrity: sha512Integrity(dep), installScript: null },
+    ]
+    const { bytes, mode } = buildArtifact({
+      mode: 'bundle',
+      pluginTarball: plugin,
+      closure,
+      closureTarballs: [dep],
+    })
+    expect(mode).toBe('bundle')
+    expect(bytes.subarray(0, 4).toString('utf8')).not.toBe('DSHB')
+    expect(bytes[0]).toBe(0x1f)
+    expect(bytes[1]).toBe(0x8b)
+    const files = stripPackagePrefix(readNpmTarball(bytes))
+    const manifestEntry = files.find(f => f.path === 'package.json')
+    expect(manifestEntry).toBeTruthy()
+    const manifest = JSON.parse(manifestEntry!.data.toString('utf8')) as {
+      bundleDependencies?: string[]
+      bundledDependencies?: string[]
+      dependencies?: Record<string, string>
+    }
+    const bundled = manifest.bundleDependencies ?? manifest.bundledDependencies
+    expect(bundled).toEqual(['left-pad'])
+    expect(manifest.dependencies?.['left-pad']).toBe('1.0.0')
+    expect(files.some(f => f.path === 'index.js')).toBe(true)
+    expect(files.some(f => f.path === 'node_modules/left-pad/package.json')).toBe(true)
+    expect(files.some(f => f.path === 'node_modules/left-pad/index.js')).toBe(true)
   })
 
   it('buildArtifact_caps_at_200_MiB', () => {

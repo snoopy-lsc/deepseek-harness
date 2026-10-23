@@ -2,6 +2,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 import type { ClosurePackage } from './closure.ts'
 import { MirrorError } from './errors.ts'
+import { readNpmTarball, stripPackagePrefix, writeNpmTarball } from './tar.ts'
 
 export type ArtifactMode = 'bundle' | 'fallback'
 
@@ -58,38 +59,82 @@ export interface BuildArtifactInput {
   readonly mode: ArtifactMode
   readonly pluginTarball: Buffer
   readonly closure: readonly ClosurePackage[]
-  /** Optional raw closure tarballs (same order as `closure`); used for provenance pinning. */
+  /** Raw closure package tarballs (same order as `closure`); required for bundle mode when closure is non-empty. */
   readonly closureTarballs?: readonly Buffer[]
+}
+
+function asStringRecord(value: unknown): Record<string, string> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {}
+  const out: Record<string, string> = {}
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof entry === 'string') out[key] = entry
+  }
+  return out
+}
+
+/**
+ * Repack the plugin as a real npm `.tgz` with the reviewed closure under
+ * `node_modules/` and listed in `bundleDependencies` (design § Mirroring step 5).
+ * Flat layout is enough for 1A.4; lockfile-driven nest order can land later.
+ */
+function buildBundleTarball(input: BuildArtifactInput): Buffer {
+  if (input.closure.length > 0) {
+    if (!input.closureTarballs || input.closureTarballs.length !== input.closure.length) {
+      throw new MirrorError('package', 'closure-tarballs')
+    }
+  }
+  const pluginFiles = stripPackagePrefix(readNpmTarball(input.pluginTarball))
+  const manifestEntry = pluginFiles.find(f => f.path === 'package.json')
+  if (!manifestEntry) throw new MirrorError('package', 'package.json')
+  let parsed: unknown
+  try { parsed = JSON.parse(manifestEntry.data.toString('utf8')) } catch { throw new MirrorError('package', 'json') }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new MirrorError('package', 'json')
+  const manifest = { ...(parsed as Record<string, unknown>) }
+
+  const baseFiles = pluginFiles.filter(f => f.path !== 'package.json' && !f.path.startsWith('node_modules/'))
+  const packed: { path: string; data: Buffer }[] = []
+  const bundledNames: string[] = []
+  const exactByName = new Map<string, string>()
+
+  for (let i = 0; i < input.closure.length; i++) {
+    const entry = input.closure[i]!
+    const tarball = input.closureTarballs![i]!
+    verifyIntegrity(tarball, entry.integrity)
+    const depFiles = stripPackagePrefix(readNpmTarball(tarball))
+    const prefix = `node_modules/${entry.name}`
+    for (const file of depFiles) {
+      packed.push({ path: `${prefix}/${file.path}`, data: file.data })
+    }
+    bundledNames.push(entry.name)
+    exactByName.set(entry.name, entry.version)
+  }
+
+  const dependencies = asStringRecord(manifest.dependencies)
+  for (const [name, version] of exactByName) {
+    if (Object.prototype.hasOwnProperty.call(dependencies, name)) dependencies[name] = version
+  }
+  const nextManifest: Record<string, unknown> = {
+    ...manifest,
+    bundleDependencies: bundledNames,
+  }
+  delete nextManifest.bundledDependencies
+  if (Object.keys(dependencies).length > 0) nextManifest.dependencies = dependencies
+
+  packed.push({ path: 'package.json', data: Buffer.from(`${JSON.stringify(nextManifest, null, 2)}\n`, 'utf8') })
+  for (const file of baseFiles) packed.push({ path: file.path, data: file.data })
+  packed.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+  return writeNpmTarball(packed)
 }
 
 /**
  * Build the pinned artifact bytes.
  * - fallback: the original plugin tarball (reviewed upstream bytes).
- * - bundle: deterministic envelope with mode, plugin digest, and closure pins
- *   (full `bundleDependencies` layout lands when fetch handlers pack for serve;
- *   digest stability is what approve binds to).
+ * - bundle: npm pack with reviewed closure under `bundleDependencies` / `node_modules`.
  */
 export function buildArtifact(input: BuildArtifactInput): { bytes: Buffer; sha512: string; mode: ArtifactMode } {
-  let bytes: Buffer
-  if (input.mode === 'fallback') {
-    bytes = input.pluginTarball
-  } else {
-    const pins = input.closure.map((entry, i) => ({
-      name: entry.name,
-      version: entry.version,
-      integrity: entry.integrity,
-      sha512: input.closureTarballs?.[i] ? sha512Hex(input.closureTarballs[i]!) : null,
-    }))
-    const header = Buffer.from(JSON.stringify({
-      dshArtifact: 1,
-      mode: 'bundle',
-      pluginSha512: sha512Hex(input.pluginTarball),
-      closure: pins,
-    }), 'utf8')
-    const len = Buffer.alloc(4)
-    len.writeUInt32BE(header.length, 0)
-    bytes = Buffer.concat([Buffer.from('DSHB'), len, header, input.pluginTarball])
-  }
+  const bytes = input.mode === 'fallback'
+    ? input.pluginTarball
+    : buildBundleTarball(input)
   if (bytes.length > MAX_ARTIFACT_BYTES) throw new MirrorError('artifact-too-large', String(bytes.length))
   return { bytes, sha512: sha512Hex(bytes), mode: input.mode }
 }
