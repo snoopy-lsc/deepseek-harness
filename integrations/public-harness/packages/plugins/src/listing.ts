@@ -229,6 +229,12 @@ function applyRollbackPointers(
   const toVersionId = listing.previous_version_id
   if (toVersionId == null) throw new ListingError('no-previous')
 
+  // Refuse promoting a revoked/missing previous (pointer must stay approved+unrevoked).
+  const toRow = loadVersion(db, toVersionId)
+  if (toRow.state !== 'approved') {
+    throw new ListingError('no-previous', 'previous-not-approved')
+  }
+
   const toVersion = versionString(db, toVersionId)
   const newPrevious = highestApprovedBelow(db, listing.package_id, toVersion)
 
@@ -497,7 +503,25 @@ export function revokeVersion(input: RevokeInput): RevokeResult {
         })
       }
     } else {
-      bumpGeneration(input.db, pkg.id)
+      // Keep previous_version_id = highest approved unrevoked below current.
+      // Revoking the previous (or leaving it dangling) must recompute the pointer
+      // so rollback cannot promote a revoked version.
+      const currentVersionStr = versionString(input.db, listing.current_version_id)
+      let previousNeedsFix = listing.previous_version_id === version.id
+      if (!previousNeedsFix && listing.previous_version_id != null) {
+        const prev = loadVersion(input.db, listing.previous_version_id)
+        if (prev.state !== 'approved') previousNeedsFix = true
+      }
+      if (previousNeedsFix) {
+        const newPrevious = highestApprovedBelow(input.db, pkg.id, currentVersionStr)
+        input.db.db.prepare(
+          `UPDATE plugin_listing
+           SET previous_version_id = ?, generation = generation + 1
+           WHERE package_id = ?`,
+        ).run(newPrevious, pkg.id)
+      } else {
+        bumpGeneration(input.db, pkg.id)
+      }
     }
 
     writeHistory(input.db, {

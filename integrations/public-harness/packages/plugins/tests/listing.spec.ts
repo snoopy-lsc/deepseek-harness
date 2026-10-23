@@ -446,4 +446,80 @@ describe('revokeVersion', () => {
       expect((error as ListingError).status).toBe(409)
     }
   })
+
+  it('revoking_previous_clears_pointer_so_rollback_cannot_promote_revoked', () => {
+    const db = fixture()
+    const v1 = submitReady(db, { version: '1.0.0', artifactSha512: SHA_A })
+    approve(db, v1.versionId, { kind: 'company', target: '*' }, SHA_A)
+    const v2 = submitReady(db, { version: '2.0.0', artifactSha512: SHA_B })
+    approve(db, v2.versionId, { kind: 'company', target: '*' }, SHA_B)
+
+    const before = listingOf(db, v1.packageId)!
+    expect(before.current_version_id).toBe(v2.versionId)
+    expect(before.previous_version_id).toBe(v1.versionId)
+
+    revokeVersion({
+      db, adminUserId: 'admin-1', versionId: v1.versionId, reason: 'old bad',
+    })
+
+    const after = listingOf(db, v1.packageId)!
+    expect(after.current_version_id).toBe(v2.versionId)
+    // previous must not stay on revoked 1.0.0
+    expect(after.previous_version_id).toBeNull()
+    expect(after.generation).toBe(before.generation + 1)
+
+    const ver = db.db.prepare('SELECT state FROM plugin_version WHERE id = ?').get(v1.versionId) as { state: string }
+    expect(ver.state).toBe('revoked')
+
+    expect(() => rollbackListing({
+      db, adminUserId: 'admin-1', packageId: v1.packageId,
+    })).toThrow(/no-previous/)
+    try {
+      rollbackListing({ db, adminUserId: 'admin-1', packageId: v1.packageId })
+    } catch (error) {
+      expect((error as ListingError).code).toBe('no-previous')
+      expect((error as ListingError).status).toBe(409)
+    }
+
+    // current must still be approved 2.0.0 — never promoted revoked 1.0.0
+    const finalListing = listingOf(db, v1.packageId)!
+    expect(finalListing.current_version_id).toBe(v2.versionId)
+    const currentState = db.db.prepare('SELECT state FROM plugin_version WHERE id = ?')
+      .get(finalListing.current_version_id) as { state: string }
+    expect(currentState.state).toBe('approved')
+  })
+
+  it('revoking_previous_recomputes_to_next_approved_below_current', () => {
+    const db = fixture()
+    const v1 = submitReady(db, { version: '1.0.0', artifactSha512: SHA_A })
+    approve(db, v1.versionId, { kind: 'company', target: '*' }, SHA_A)
+    const v15 = submitReady(db, { version: '1.5.0', artifactSha512: SHA_C })
+    approve(db, v15.versionId, { kind: 'company', target: '*' }, SHA_C)
+    const v2 = submitReady(db, { version: '2.0.0', artifactSha512: SHA_B })
+    approve(db, v2.versionId, { kind: 'company', target: '*' }, SHA_B)
+
+    const before = listingOf(db, v1.packageId)!
+    expect(before.current_version_id).toBe(v2.versionId)
+    expect(before.previous_version_id).toBe(v15.versionId)
+
+    revokeVersion({
+      db, adminUserId: 'admin-1', versionId: v15.versionId, reason: 'mid bad',
+    })
+
+    const after = listingOf(db, v1.packageId)!
+    expect(after.current_version_id).toBe(v2.versionId)
+    expect(after.previous_version_id).toBe(v1.versionId)
+
+    const result = rollbackListing({
+      db, adminUserId: 'admin-1', packageId: v1.packageId,
+    })
+    expect(result.toVersionId).toBe(v1.versionId)
+    expect(result.toVersion).toBe('1.0.0')
+
+    const rolled = listingOf(db, v1.packageId)!
+    expect(rolled.current_version_id).toBe(v1.versionId)
+    const currentState = db.db.prepare('SELECT state FROM plugin_version WHERE id = ?')
+      .get(rolled.current_version_id) as { state: string }
+    expect(currentState.state).toBe('approved')
+  })
 })
