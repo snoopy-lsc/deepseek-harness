@@ -1,6 +1,7 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { openPluginsDb, type PluginsDb } from '@public-harness/plugins'
 import {
@@ -27,7 +28,28 @@ function fixtureDb(): PluginsDb {
   return db
 }
 
+const deployNativeConfig = join(
+  dirname(fileURLToPath(import.meta.url)),
+  '../../../deploy/native/config',
+)
+
 describe('plugins profile config', () => {
+  it('example_plugins_json_ports_market_passes_validator', () => {
+    const raw = JSON.parse(readFileSync(join(deployNativeConfig, 'plugins.json.example'), 'utf8')) as {
+      database: string
+      storeDir: string
+      ports: { market: { min: number; max: number } }
+    }
+    // Profile parser is strict on keys; example also documents egress which is owned by the egress service.
+    const parsed = parsePluginsProfileConfig({
+      database: raw.database,
+      storeDir: raw.storeDir,
+      ports: raw.ports,
+    })
+    expect(parsed.ports.market).toEqual({ min: 28_672, max: 32_767 })
+    expect(parsed.ports.market.max - parsed.ports.market.min + 1).toBe(4096)
+  })
+
   it('validates_ports_market_and_refuses_oversized_or_out_of_range', () => {
     const base = {
       database: '/var/lib/dsh-plugins/plugins.sqlite',

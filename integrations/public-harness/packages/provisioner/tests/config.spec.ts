@@ -1,6 +1,14 @@
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { validateProvisionerConfig } from '../src/config.ts'
 import { makeConfig } from './helpers.ts'
+
+const deployNativeConfig = join(
+  dirname(fileURLToPath(import.meta.url)),
+  '../../../deploy/native/config',
+)
 
 describe('provisioner configuration', () => {
   it('accepts a complete configuration', async () => { const config = await makeConfig(); expect(() => validateProvisionerConfig(config)).not.toThrow() })
@@ -54,6 +62,15 @@ it('rejects native configuration without an absolute companion file', async () =
 })
 
 describe('ports.market', () => {
+  it('example_provisioner_json_ports_market_passes_validator', () => {
+    const raw = JSON.parse(readFileSync(join(deployNativeConfig, 'provisioner.json.example'), 'utf8')) as {
+      provisioner: unknown
+    }
+    const ok = validateProvisionerConfig(raw.provisioner)
+    expect(ok.ports.market).toEqual({ min: 28_672, max: 32_767 })
+    expect(ok.ports.market!.max - ok.ports.market!.min + 1).toBe(4096)
+  })
+
   it('accepts_optional_market_range_and_rejects_overlap_or_cap', async () => {
     const c = await makeConfig()
     const ok = validateProvisionerConfig({

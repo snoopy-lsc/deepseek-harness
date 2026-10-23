@@ -3,8 +3,8 @@
   "storeDir": "/var/lib/dsh-plugins/store",
   "ports": {
     "market": {
-      "min": 30000,
-      "max": 34095
+      "min": 28672,
+      "max": 32767
     }
   },
   "egressPort": 18787,
