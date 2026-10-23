@@ -275,15 +275,66 @@
 
 **1B 出口：** serving + peer-check + index + 防火墙渲染/probe + 单元/合约测试全绿；不要求 root 装 systemd（P0.8 仍 blocked）。
 
-## 里程碑 1C：评审流（大纲）
+## 里程碑 1C：评审流（TDD）
 
-**创建 / 修改：**
-- `packages/plugins/src/{submit.ts,approve.ts,listing.ts,visibility.ts}` — 状态迁移、`expected_artifact_sha512`、拒绝自批、包名释放。
-- `packages/identity/src/plugins-gateway.ts` — `PLUGIN_ADMIN_ENDPOINTS`、`PLUGIN_REAUTH`、`PLUGIN_EVENTS`。
-- identity/web admin-kit 管理页：评审队列、已上架、上传、默认、策略、限额。
-- 个人 **我的插件** 页。
+包仍在 `integrations/public-harness/packages/plugins/`。Identity 网关在 `packages/identity/`。管理 UI 在 `packages/ui/src/client/`（沿用 admin-kit）。状态迁移表见设计文档「上架流程」一节（约 410–440 行）。路径 B 上传已在 1A.5；本里程碑负责路径 A 提交/批准与上架操作。
 
-**验收：** 迁移表每行 + 拒绝码有测；部门可见性；批准/上传/scope/回滚/下架/吊销需 reauth。
+### 任务 1C.1：提交 + 所有权 + 包名释放
+
+**文件：** 创建 `packages/plugins/src/submit.ts`、`tests/submit.spec.ts`；从 `index.ts` 导出。
+
+**接口：** `submitPluginVersion` / `withdrawSubmission` / `expireSubmission` — 未归属 `@corp-dsh/` 包名的首个版本写入 `owner_user_id`（占住；`claimed_at` 仍为 NULL，批准时再设）；每包至多一个 pending；对未归属首版本的撤回（提交者）/过期（系统）/驳回（1C.2 前可用状态辅助）调用 `releaseUnclaimedName`；后续版本对非所有者 403 `not-owner`（管理员可提交）；另有 409 `pending-exists`、`version-exists`、`limit-reached`、`name-taken`（被他人占住）。镜像保持 `queued`（fetch 稍后跑）。
+
+- [ ] **1. 写失败测试：** 首版本占名；pending 唯一；撤回/过期/驳回后可重提并释放包名；拒绝外人民所有权；公司 scope。
+- [ ] **2. 跑** `pnpm --dir integrations/public-harness/packages/plugins test -- submit.spec.ts`；预期失败。
+- [ ] **3. 实现** `submit.ts`（含导出），复用 1A.1 schema 辅助。
+- [ ] **4. 验证** 通过；提交 `feat(plugins): plugin submit ownership and name release`。
+
+### 任务 1C.2：批准 / 驳回（路径 A）
+
+**文件：** 创建 `packages/plugins/src/approve.ts`、`tests/approve.spec.ts`。
+
+**接口：** `approveSubmission` / `rejectSubmission` — 批准需 `expected_artifact_sha512`（409 `artifact-mismatch` / `mirror-not-ready` / `install-scripts`）；403 `self-approval`；写 `reviewed_by` / `reviewed_at`；首次批准设 `claimed_at`；上架指针：高于当前 → 成为 current 且旧版进 `previous_version_id`，否则仅进历史。
+
+- [ ] **1. 写失败测试：** sha512 绑定、自批拒绝、mirror-not-ready、install-scripts 白名单、listing current/previous、驳回后 `not-pending`。
+- [ ] **2. 跑** 聚焦 approve 测试；预期失败。
+- [ ] **3. 实现** 批准/驳回；复用 1A.4 的 `compareExpectedArtifactSha512`。
+- [ ] **4. 验证** 通过；提交 `feat(plugins): path A approve reject and listing pointers`。
+
+### 任务 1C.3：上架操作
+
+**文件：** 创建 `packages/plugins/src/{listing.ts,visibility.ts}`、`tests/listing.spec.ts`。
+
+**接口：** `changeScope` / `delistPackage` / `relistPackage` / `rollbackListing` / `revokeVersion` — 改写 scope；下架保留 scope 行且原范围仍可镜像；重新上架清 `delisted_at`；按指针规则回滚（409 `no-previous`）；吊销非当前从 packument/索引移除，吊销当前则回滚或以下架原因 `revoked` 下架。
+
+- [ ] **1. 写失败测试：** scope 变更可见性；下架/重新上架；回滚指针；吊销当前 vs 非当前。
+- [ ] **2. 跑** 聚焦 listing 测试；预期失败。
+- [ ] **3. 实现** listing + visibility；必要时接入 index builder。
+- [ ] **4. 验证** 通过；提交 `feat(plugins): listing scope delist rollback revoke`。
+
+### 任务 1C.4：Identity 网关
+
+**文件：** 创建 `packages/identity/src/plugins-gateway.ts`、`tests/plugins-gateway.spec.ts`（对照 `kb-gateway.ts`）。
+
+**接口：** `PLUGIN_ADMIN_ENDPOINTS`、`PLUGIN_REAUTH`、`PLUGIN_EVENTS`（及所需 me 端点）；批准/上传/scope/回滚/下架/吊销需 reauth；转发到 plugins 控制 socket 并带 `x-dsh-user` / role；抽干 `plugin_audit_outbox`。
+
+- [ ] **1. 写失败测试：** 端点表；reauth 集合；转发剥离密码；审计抽干过滤 `PLUGIN_EVENTS`。
+- [ ] **2. 跑** 聚焦 identity 测试；预期失败。
+- [ ] **3. 实现** 网关并挂到 admin/me 路由。
+- [ ] **4. 验证** 通过；提交 `feat(identity): plugins admin gateway with reauth`。
+
+### 任务 1C.5：管理端 + 我的插件 UI
+
+**文件：** 创建/修改 `packages/ui/src/client/admin-plugins*.tsx` 与个人 **我的插件** 页；复用 `admin-kit` 的 `Card` / `Row` / `useReauth` / field 辅助。保持现有按钮、图标与组件形态。
+
+**界面：** 系统管理 > 插件市场 — 评审队列、已上架、上传、默认、策略、限额（API 未齐时可 stub）。个人 > 我的插件 — 提交、撤回、申请下架。
+
+- [ ] **1. 写失败测试 / 冒烟：** 路由用 admin-kit 原语渲染；批准/上传/scope/回滚/下架/吊销动作挂 reauth。
+- [ ] **2. 跑** 聚焦 UI / identity 页面测试；预期失败。
+- [ ] **3. 实现** 最小页面，对齐现有 identity 管理 UI 模式。
+- [ ] **4. 验证** 通过；提交 `feat(ui): plugin market admin and my-plugins pages`。
+
+**1C 出口：** 迁移表每行 + 拒绝码有测；部门可见性；批准/上传/scope/回滚/下架/吊销需 reauth；管理端与「我的插件」页就位。
 
 ## 里程碑 1D：默认与更新（大纲）
 
@@ -314,5 +365,5 @@
 
 1. 完成第 0 阶段 P0.1–P0.9，填 `phase0-results.md`。若 P0.8/P0.9 证伪假设则停下。
 2. 按序做里程碑 1A。
-3. 按序做里程碑 1B（大纲已于 2026-10-23 展开）。1B 审查后再把 1C–1E 大纲展开。
+3. 按序做里程碑 1B（大纲已于 2026-10-23 展开）。按序做里程碑 1C（大纲已于 2026-10-23 展开）。1C 审查后再把 1D–1E 大纲展开。
 4. 每项绿提交后推 `codex/plugin-market-impl`。合 master 前等「可以合并」。

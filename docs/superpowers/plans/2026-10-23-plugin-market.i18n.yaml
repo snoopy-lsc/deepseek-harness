@@ -77,9 +77,24 @@
 /company-plugin-market-implementation-plan/milestone-1b-serving-tdd/task-1b-5-units-contracts-provisioner-patches:
   en: af080ffdbfc6ef8a
   zh: 3c56a2b34f1b4347
-/company-plugin-market-implementation-plan/milestone-1c-review-flow-outline:
-  en: 49d23c582dae377f
-  zh: cc449096994ed886
+/company-plugin-market-implementation-plan/milestone-1c-review-flow-tdd:
+  en: ef1937acdacea671
+  zh: dff9acc40702e4ef
+/company-plugin-market-implementation-plan/milestone-1c-review-flow-tdd/task-1c-1-submit-ownership-name-release:
+  en: 420b2c20a70fb5ee
+  zh: cac0df6934aa6205
+/company-plugin-market-implementation-plan/milestone-1c-review-flow-tdd/task-1c-2-approve-reject-path-a:
+  en: a77943e19fe54b9b
+  zh: 82a3f95d0a7b293a
+/company-plugin-market-implementation-plan/milestone-1c-review-flow-tdd/task-1c-3-listing-ops:
+  en: 60594981a39c1100
+  zh: 6ff97c5747980951
+/company-plugin-market-implementation-plan/milestone-1c-review-flow-tdd/task-1c-4-identity-gateway:
+  en: 111113563df4f9b4
+  zh: 747f1891aab646b8
+/company-plugin-market-implementation-plan/milestone-1c-review-flow-tdd/task-1c-5-admin-my-plugins-ui:
+  en: f7996b157b640278
+  zh: 6c67d864de568a79
 /company-plugin-market-implementation-plan/milestone-1d-defaults-and-updates-outline:
   en: 82175d4f867437e9
   zh: 52ba7744879aa705
@@ -90,5 +105,5 @@
   en: 26afa622963f2686
   zh: c382d88f39f42a2c
 /company-plugin-market-implementation-plan/execution-order:
-  en: 27863aeb16c53f3b
-  zh: ba93ebe865f81af8
+  en: 9e7bfa178f3413b1
+  zh: b404285523bc36e5

@@ -275,15 +275,66 @@ Package home remains `integrations/public-harness/packages/plugins/`. Systemd un
 
 **1B exit:** serving + peer-check + index + firewall-render/probe + units/contracts tests green; no root systemd install required (P0.8 remains blocked).
 
-## Milestone 1C: review flow (outline)
+## Milestone 1C: review flow (TDD)
 
-**Create / modify:**
-- `packages/plugins/src/{submit.ts,approve.ts,listing.ts,visibility.ts}` — transitions, `expected_artifact_sha512`, self-approval refuse, name release.
-- `packages/identity/src/plugins-gateway.ts` — `PLUGIN_ADMIN_ENDPOINTS`, `PLUGIN_REAUTH`, `PLUGIN_EVENTS`.
-- Admin UI pages under identity/web admin-kit: review queue, listed plugins, upload, defaults, policy, limits.
-- Personal **My plugins** page.
+Package home remains `integrations/public-harness/packages/plugins/`. Identity gateway under `packages/identity/`. Admin UI under `packages/ui/src/client/` (admin-kit patterns). Transition table: design § Listing flows (~410–440). Path B upload already in 1A.5; this milestone owns path A submit/approve and listing ops.
 
-**Acceptance:** every transition table row + refusal code tested; department visibility; reauth on approve/upload/scope/rollback/delist/revoke.
+### Task 1C.1: Submit + ownership + name release
+
+**Files:** Create `packages/plugins/src/submit.ts`, `tests/submit.spec.ts`; export from `index.ts`.
+
+**Interfaces:** `submitPluginVersion` / `withdrawSubmission` / `expireSubmission` — first version of an unclaimed `@corp-dsh/` name sets `owner_user_id` (held; `claimed_at` stays NULL until approve); one pending per package; withdraw (submitter) / expire (system) / reject (via state helper until 1C.2) of an unclaimed first version calls `releaseUnclaimedName`; later versions refuse foreign users with 403 `not-owner` (admin may submit); also 409 `pending-exists`, `version-exists`, `limit-reached`, `name-taken` (held by another). Mirror stays `queued` (fetch runs later).
+
+- [ ] **1. Write failing tests:** first version claims name; pending uniqueness; withdraw/expire/reject allow resubmit + name release; refuse foreign ownership; company scope.
+- [ ] **2. Run** `pnpm --dir integrations/public-harness/packages/plugins test -- submit.spec.ts`; expect fail.
+- [ ] **3. Implement** `submit.ts` (+ exports), reusing schema helpers from 1A.1.
+- [ ] **4. Verify** pass; commit `feat(plugins): plugin submit ownership and name release`.
+
+### Task 1C.2: Approve / reject (path A)
+
+**Files:** Create `packages/plugins/src/approve.ts`, `tests/approve.spec.ts`.
+
+**Interfaces:** `approveSubmission` / `rejectSubmission` — approve requires `expected_artifact_sha512` (409 `artifact-mismatch` / `mirror-not-ready` / `install-scripts`); 403 `self-approval`; sets `reviewed_by` / `reviewed_at`; first approval sets `claimed_at`; listing pointer: newer than current → current + old to `previous_version_id`, else history only.
+
+- [ ] **1. Write failing tests:** sha512 bind, self-approval, mirror-not-ready, install-scripts allow-list, listing current/previous, reject → `not-pending` after.
+- [ ] **2. Run** focused approve tests; expect fail.
+- [ ] **3. Implement** approve/reject; reuse `compareExpectedArtifactSha512` from 1A.4.
+- [ ] **4. Verify** pass; commit `feat(plugins): path A approve reject and listing pointers`.
+
+### Task 1C.3: Listing ops
+
+**Files:** Create `packages/plugins/src/{listing.ts,visibility.ts}`, `tests/listing.spec.ts`.
+
+**Interfaces:** `changeScope` / `delistPackage` / `relistPackage` / `rollbackListing` / `revokeVersion` — scope rewrite; delist keeps scope rows and mirror for original scope; relist clears `delisted_at`; rollback by pointer rules (409 `no-previous`); revoke non-current removes from packuments/index, revoke current rolls back or delists with reason `revoked`.
+
+- [ ] **1. Write failing tests:** scope change visibility; delist/relist; rollback pointer; revoke current vs non-current.
+- [ ] **2. Run** focused listing tests; expect fail.
+- [ ] **3. Implement** listing + visibility helpers; wire index builder if needed.
+- [ ] **4. Verify** pass; commit `feat(plugins): listing scope delist rollback revoke`.
+
+### Task 1C.4: Identity gateway
+
+**Files:** Create `packages/identity/src/plugins-gateway.ts`, `tests/plugins-gateway.spec.ts` (mirror `kb-gateway.ts`).
+
+**Interfaces:** `PLUGIN_ADMIN_ENDPOINTS`, `PLUGIN_REAUTH`, `PLUGIN_EVENTS` (+ me endpoints as needed); reauth on approve / upload / scope / rollback / delist / revoke; forward to plugins control socket with `x-dsh-user` / role; drain `plugin_audit_outbox`.
+
+- [ ] **1. Write failing tests:** endpoint maps; reauth set membership; forward strips password; audit drain filters `PLUGIN_EVENTS`.
+- [ ] **2. Run** focused identity tests; expect fail.
+- [ ] **3. Implement** gateway module and wire into admin/me routers.
+- [ ] **4. Verify** pass; commit `feat(identity): plugins admin gateway with reauth`.
+
+### Task 1C.5: Admin + My plugins UI
+
+**Files:** Create / modify `packages/ui/src/client/admin-plugins*.tsx` and a personal **My plugins** page; reuse `admin-kit` `Card` / `Row` / `useReauth` / field helpers. Keep existing buttons, icons, and component shapes.
+
+**Surfaces:** System Admin > Plugin market — review queue, listed plugins, upload, defaults, policy, limits (stubs OK if API not fully wired). Personal > My plugins — submit, withdraw, ask delist.
+
+- [ ] **1. Write failing tests / smoke:** routes render with admin-kit primitives; reauth hook on approve/upload/scope/rollback/delist/revoke actions.
+- [ ] **2. Run** focused UI / identity page tests; expect fail.
+- [ ] **3. Implement** minimal pages matching existing identity admin UI patterns.
+- [ ] **4. Verify** pass; commit `feat(ui): plugin market admin and my-plugins pages`.
+
+**1C exit:** every transition-table row + refusal code tested; department visibility; reauth on approve/upload/scope/rollback/delist/revoke; admin + My plugins pages present.
 
 ## Milestone 1D: defaults and updates (outline)
 
@@ -314,5 +365,5 @@ Signatures; pure-skill views; optional `egress_lock`.
 
 1. Complete Phase 0 tasks P0.1–P0.9; fill `phase0-results.md`. Stop if P0.8/P0.9 falsify assumptions.
 2. Milestone 1A tasks in order.
-3. Milestone 1B tasks in order (outline expanded 2026-10-23). Expand 1C–1E from outlines after 1B review.
+3. Milestone 1B tasks in order (outline expanded 2026-10-23). Milestone 1C tasks in order (outline expanded 2026-10-23). Expand 1D–1E from outlines after 1C review.
 4. Push `codex/plugin-market-impl` after each green task commit. Await「可以合并」before master.
