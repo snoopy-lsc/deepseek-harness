@@ -289,4 +289,39 @@ describe('adminUpload existing package new version', () => {
       closure: [],
     })).rejects.toThrow(/version-exists/)
   })
+
+  it('path_b_first_list_of_existing_package_upserts_plugin_scope', async () => {
+    // Existing package (e.g. user-submitted) with no listing and no scope → Path B
+    // first list must still write plugin_scope (not only when createdPackage).
+    const { db, storeRoot } = fixtureDb()
+    const name = `${COMPANY_SCOPE_PREFIX}path-b-scope`
+    const now = 1_700_000_000_000
+    const packageId = newId('plg')
+    insertPackage(db, {
+      id: packageId, name, kind: 'bundle', origin: 'submitted', ownerUserId: 'u1', claimedAt: now,
+      display: JSON.stringify({ title: 'Path B', description: '', author: '', homepage: '', repository: '', metadata: {} }),
+      iconSha512: null, createdAt: now,
+    })
+    const scopesBefore = db.db.prepare('SELECT COUNT(*) AS n FROM plugin_scope WHERE package_id = ?').get(packageId) as { n: number }
+    expect(scopesBefore.n).toBe(0)
+
+    const result = await adminUpload({
+      db,
+      storeRoot,
+      adminUserId: 'admin-path-b',
+      scope: { kind: 'company', target: '*' },
+      source: { type: 'upload', tarball: npmTgz({ name, version: '1.0.0' }, [{ path: 'index.js', data: 'ok\n' }]) },
+      closure: [],
+      now: now + 1,
+    })
+    expect(result.packageId).toBe(packageId)
+    const listing = db.db.prepare(
+      'SELECT current_version_id FROM plugin_listing WHERE package_id = ?',
+    ).get(packageId) as { current_version_id: string } | undefined
+    expect(listing?.current_version_id).toBe(result.versionId)
+    const scope = db.db.prepare('SELECT kind, target FROM plugin_scope WHERE package_id = ?').get(packageId) as {
+      kind: string; target: string
+    }
+    expect(scope).toEqual({ kind: 'company', target: '*' })
+  })
 })

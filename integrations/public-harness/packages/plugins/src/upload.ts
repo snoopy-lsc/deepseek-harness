@@ -225,12 +225,10 @@ export async function adminUpload(input: AdminUploadInput): Promise<AdminUploadR
     ).get(mirrored.name) as { id: string; kind: string } | undefined
 
     let packageId: string
-    let createdPackage = false
     if (existing !== undefined) {
       packageId = existing.id
     } else {
       packageId = newId('plg')
-      createdPackage = true
       input.db.db.prepare(`INSERT INTO plugin_package
         (id, name, kind, origin, owner_user_id, claimed_at, display, icon_sha512, created_at)
         VALUES (?, ?, ?, 'admin', NULL, ?, ?, NULL, ?)`).run(
@@ -282,11 +280,12 @@ export async function adminUpload(input: AdminUploadInput): Promise<AdminUploadR
         `INSERT INTO plugin_listing_history (package_id, version_id, action, detail, by, at)
          VALUES (?, ?, 'list', ?, ?, ?)`,
       ).run(packageId, versionId, JSON.stringify({ source: input.source.type }), input.adminUserId, now)
-      if (createdPackage) {
-        input.db.db.prepare(
-          `INSERT INTO plugin_scope (package_id, kind, target) VALUES (?, ?, ?)`,
-        ).run(packageId, input.scope.kind, input.scope.target)
-      }
+      // Always ensure scope on first listing — including Path B (reuse existing package
+      // with no listing yet). Guarding on createdPackage-only missed that case.
+      input.db.db.prepare(
+        `INSERT INTO plugin_scope (package_id, kind, target) VALUES (?, ?, ?)
+         ON CONFLICT(package_id, kind, target) DO NOTHING`,
+      ).run(packageId, input.scope.kind, input.scope.target)
     } else {
       const currentVer = input.db.db.prepare(
         'SELECT version FROM plugin_version WHERE id = ?',
