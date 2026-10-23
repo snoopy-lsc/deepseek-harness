@@ -1,4 +1,4 @@
-/** Plugin market catalogue, egress proxy, fetch framing, mirror pipeline, and admin upload. */
+/** Plugin market catalogue, egress, fetch, mirror, upload, and per-user serving. */
 export { newId, ID_PATTERN } from './ids.ts'
 export { openPluginsDb, type PluginsDb } from './db.ts'
 export {
@@ -99,3 +99,30 @@ export {
   type PluginAuditWrite,
   type PluginAuditRow,
 } from './audit.ts'
+
+export {
+  hashMarketToken,
+  mintMarketToken,
+  bearerMatches,
+  tokenHashLogPrefix,
+  type MintedMarketToken,
+} from './token.ts'
+export {
+  handleMarketRequest,
+  parseNpmName,
+  parseTarballVersion,
+  type MarketEndpointAuth,
+  type MarketRouteDeps,
+} from './routes.ts'
+export {
+  validateMarketPorts,
+  openEndpoint,
+  closeEndpoint,
+  lookupEndpointByPort,
+  startMarketHttpServer,
+  type MarketPortRange,
+  type OpenEndpointInput,
+  type OpenEndpointResult,
+  type MarketHttpServer,
+  type MarketHttpServerOptions,
+} from './listen.ts'
