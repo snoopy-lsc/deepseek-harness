@@ -3,6 +3,12 @@ import { once } from 'node:events'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import type { PluginsDb } from './db.ts'
+import {
+  defaultLookupOptions,
+  enforcePeerCheck,
+  type LookupPeerUidOptions,
+  type PeerCheckHooks,
+} from './peer-check.ts'
 import { MAX_PLUGIN_ACCOUNTS } from './schema.ts'
 import { handleMarketRequest, type MarketEndpointAuth, type MarketRouteDeps } from './routes.ts'
 import { mintMarketToken } from './token.ts'
@@ -35,6 +41,14 @@ export type MarketHttpServerOptions = {
   readonly host: string
   /** Fixed port, or `0` to let the OS choose (tests). */
   readonly port: number
+  /**
+   * Peer UID check on each accept (design: refuse foreign / unmapped / failed
+   * lookup before serving). When omitted, no peer check runs (unit tests that
+   * only exercise HTTP routing). Production must pass hooks.
+   */
+  readonly peerCheck?: PeerCheckHooks
+  /** Lookup options for the default peer UID path (inet_diag + /proc fallback). */
+  readonly peerLookup?: LookupPeerUidOptions
 } & MarketRouteDeps
 
 /** Validate `ports.market`: 1024–32767 inclusive, at most 4096 ports. */
@@ -148,6 +162,15 @@ export async function startMarketHttpServer(options: MarketHttpServerOptions): P
       }
     })
   })
+
+  if (options.peerCheck !== undefined) {
+    const hooks = options.peerCheck
+    const lookupOpts = options.peerLookup ?? defaultLookupOptions()
+    server.prependListener('connection', (socket) => {
+      // Run before the HTTP parser attaches; refuse without reading a byte.
+      enforcePeerCheck(socket, hooks, lookupOpts)
+    })
+  }
 
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)

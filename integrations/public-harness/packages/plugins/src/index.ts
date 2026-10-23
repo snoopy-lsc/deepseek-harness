@@ -126,3 +126,24 @@ export {
   type MarketHttpServer,
   type MarketHttpServerOptions,
 } from './listen.ts'
+
+export {
+  buildInetDiagRequestV2,
+  decidePeerAccess,
+  defaultLookupOptions,
+  enforcePeerCheck,
+  fourTupleFromAccepted,
+  lookupPeerUid,
+  lookupPeerUidFromSocket,
+  lookupPeerUidInetDiag,
+  lookupPeerUidProcNetTcp,
+  parseInetDiagUid,
+  parseProcNetTcpUid,
+  tryCreateLinuxSockDiagTransport,
+  type Ipv4FourTuple,
+  type LookupPeerUidOptions,
+  type PeerCheckDecision,
+  type PeerCheckHooks,
+  type PeerLookupResult,
+  type SockDiagTransport,
+} from './peer-check.ts'
