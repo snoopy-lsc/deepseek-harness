@@ -1,8 +1,10 @@
-/** HTTP route dispatch for one market listener (index + read-only npm registry). */
+/** HTTP route dispatch for one market listener (index + read-only npm registry + sync). */
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { bearerMatches } from './token.ts'
+import type { ApplySyncReportResult, SyncPlan } from './sync-plan.ts'
+import { SyncPlanError } from './sync-plan.ts'
 
-/** Endpoint row needed to authorize npm routes on this listener. */
+/** Endpoint row needed to authorize npm / sync routes on this listener. */
 export interface MarketEndpointAuth {
   readonly userId: string
   readonly accountUid: number
@@ -14,10 +16,15 @@ export interface MarketRouteDeps {
   readonly buildIndex: (userId: string) => unknown
   readonly lookupPackument: (name: string, userId: string) => unknown | undefined
   readonly lookupTarball: (name: string, version: string, userId: string) => Buffer | undefined
+  /** Optional: wired when sync plan API is enabled (1D.2). */
+  readonly buildSyncPlan?: (userId: string) => SyncPlan
+  /** Optional: wired when sync report API is enabled (1D.2). */
+  readonly applySyncReport?: (userId: string, report: unknown) => ApplySyncReportResult
 }
 
 const NOT_FOUND_BODY = '{"error":"not-found"}'
 const NOT_FOUND_TYPE = 'application/json; charset=utf-8'
+const MAX_REPORT_BYTES = 1024 * 1024
 
 function send(response: ServerResponse, status: number, body: string | Buffer, contentType: string): void {
   const length = Buffer.isBuffer(body) ? body.byteLength : Buffer.byteLength(body)
@@ -78,6 +85,23 @@ function singleAuthorization(request: IncomingMessage): string | undefined {
   return request.headers.authorization
 }
 
+async function readJsonBody(request: IncomingMessage, maxBytes: number): Promise<unknown> {
+  const chunks: Buffer[] = []
+  let size = 0
+  for await (const chunk of request as AsyncIterable<Buffer>) {
+    size += chunk.byteLength
+    if (size > maxBytes) throw new SyncPlanError('bad-report', 'body-too-large', 413)
+    chunks.push(chunk)
+  }
+  const raw = Buffer.concat(chunks).toString('utf8')
+  if (raw.length === 0) return {}
+  try {
+    return JSON.parse(raw) as unknown
+  } catch {
+    throw new SyncPlanError('bad-report', 'json')
+  }
+}
+
 /** Handle one HTTP request on a market port. Never redirects. */
 export async function handleMarketRequest(
   request: IncomingMessage,
@@ -87,6 +111,37 @@ export async function handleMarketRequest(
   const method = request.method ?? 'GET'
   const url = new URL(request.url ?? '/', 'http://127.0.0.1')
   const pathname = url.pathname
+
+  // Sync report is the only POST on the market listener.
+  if (method === 'POST' && pathname === '/sync/report') {
+    const endpoint = deps.lookup()
+    const authorization = singleAuthorization(request)
+    if (
+      endpoint === undefined
+      || deps.applySyncReport === undefined
+      || !bearerMatches(authorization, endpoint.tokenSha256)
+    ) {
+      notFound(response)
+      return
+    }
+    try {
+      const body = await readJsonBody(request, MAX_REPORT_BYTES)
+      const result = deps.applySyncReport(endpoint.userId, body)
+      send(response, 200, JSON.stringify(result), 'application/json; charset=utf-8')
+    } catch (error) {
+      if (error instanceof SyncPlanError) {
+        send(
+          response,
+          error.status,
+          JSON.stringify({ error: error.code, detail: error.detail }),
+          'application/json; charset=utf-8',
+        )
+        return
+      }
+      notFound(response)
+    }
+    return
+  }
 
   if (method !== 'GET' && method !== 'HEAD') {
     notFound(response)
@@ -101,6 +156,30 @@ export async function handleMarketRequest(
       return
     }
     const body = JSON.stringify(deps.buildIndex(endpoint.userId))
+    if (method === 'HEAD') {
+      response.writeHead(200, {
+        'content-type': 'application/json; charset=utf-8',
+        'content-length': Buffer.byteLength(body),
+        'cache-control': 'no-store',
+      })
+      response.end()
+      return
+    }
+    send(response, 200, body, 'application/json; charset=utf-8')
+    return
+  }
+
+  if (pathname === '/sync') {
+    const authorization = singleAuthorization(request)
+    if (
+      endpoint === undefined
+      || deps.buildSyncPlan === undefined
+      || !bearerMatches(authorization, endpoint.tokenSha256)
+    ) {
+      notFound(response)
+      return
+    }
+    const body = JSON.stringify(deps.buildSyncPlan(endpoint.userId))
     if (method === 'HEAD') {
       response.writeHead(200, {
         'content-type': 'application/json; charset=utf-8',

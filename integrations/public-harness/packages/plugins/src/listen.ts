@@ -150,6 +150,8 @@ export async function startMarketHttpServer(options: MarketHttpServerOptions): P
     buildIndex: options.buildIndex,
     lookupPackument: options.lookupPackument,
     lookupTarball: options.lookupTarball,
+    buildSyncPlan: options.buildSyncPlan,
+    applySyncReport: options.applySyncReport,
   }
 
   const server: Server = createServer((request, response) => {

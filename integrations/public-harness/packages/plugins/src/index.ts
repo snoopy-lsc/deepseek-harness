@@ -156,6 +156,28 @@ export {
   type DefaultApplyCounts,
 } from './defaults.ts'
 export {
+  SyncPlanError,
+  buildSyncPlan,
+  applySyncReport,
+  reconcilePlan,
+  handleReconcilePlan,
+  parseSyncReport,
+  type SyncAction,
+  type SyncPlanErrorCode,
+  type SyncPlanEntry,
+  type SyncPlan,
+  type ReconcilePlanEntry,
+  type ReconcilePlan,
+  type SyncReport,
+  type SyncReportInstalled,
+  type SyncReportResult,
+  type SyncReportOpLog,
+  type ApplySyncReportResult,
+  type BuildSyncPlanInput,
+  type ApplySyncReportInput,
+  type ReconcilePlanInput,
+} from './sync-plan.ts'
+export {
   scopesVisibleToUser,
   packageVisibleInIndex,
   packageArtifactsVisible,
