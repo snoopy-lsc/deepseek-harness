@@ -292,6 +292,28 @@ export {
 } from './limits.ts'
 
 export {
+  PLUGIN_POLICY_NAMES,
+  DEFAULT_PLUGIN_POLICY,
+  PluginPolicyError,
+  listPluginPolicyRows,
+  effectivePolicy,
+  getGlobalPluginPolicy,
+  setPluginPolicyRow,
+  setPluginPolicy,
+  handlePluginPolicyAdmin,
+  assertRegistryUnderMarketOnly,
+  instanceMarketOptionsFromPolicy,
+  type PluginPolicyName,
+  type PluginPolicyFlags,
+  type PluginPolicyRow,
+  type PluginPolicyErrorCode,
+  type SetPluginPolicyRowInput,
+  type SetPluginPolicyInput,
+  type PluginPolicyAdminActor,
+  type HandlePluginPolicyAdminInput,
+} from './policy.ts'
+
+export {
   PKG_TIMEOUT_MS,
   TOTAL_TIMEOUT_MS,
   RECONCILE_ENV_ALLOWLIST,
