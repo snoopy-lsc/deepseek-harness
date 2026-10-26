@@ -98,6 +98,9 @@ importers:
 
   packages/plugins:
     dependencies:
+      '@public-harness/kb':
+        specifier: workspace:*
+        version: link:../kb
       '@public-harness/plugin-sync':
         specifier: workspace:*
         version: link:../plugin-sync

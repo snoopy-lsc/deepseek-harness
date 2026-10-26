@@ -8,7 +8,7 @@ import {
   effectiveLimits,
   overLimit,
   type EffectiveLimit,
-} from '../../kb/src/limits.ts'
+} from '@public-harness/kb'
 import { writeAuditOutbox } from './audit.ts'
 import type { PluginsDbHandle } from './migrate.ts'
 import type { LimitName } from './schema.ts'

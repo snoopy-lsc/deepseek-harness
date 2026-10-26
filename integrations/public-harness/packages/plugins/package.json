@@ -23,6 +23,7 @@
     "test": "cd ../.. && vitest run --config vitest.config.ts packages/plugins/tests"
   },
   "dependencies": {
+    "@public-harness/kb": "workspace:*",
     "@public-harness/plugin-sync": "workspace:*"
   }
 }
