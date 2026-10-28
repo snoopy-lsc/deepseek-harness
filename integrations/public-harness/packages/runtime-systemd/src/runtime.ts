@@ -75,8 +75,9 @@ export interface MarketFirewallSettings {
   readonly probeMs?: number
   /** Reload commands tried in order when the table or a chain is missing (default: the loader, then a socket restart). */
   readonly reload?: readonly (readonly [string, ...string[]])[]
-  /** Security alert: the same stale element survived two consecutive probes. */
-  readonly onAlert?: (row: MarketEndpoint) => void
+  /** Security alert: the same stale element survived two consecutive probes (`repeated`), or an element not yet
+   * accounted for was seen while the owners were being rebuilt after a restart (`unverified`, not deleted). */
+  readonly onAlert?: (row: MarketEndpoint, reason: 'repeated' | 'unverified') => void
 }
 
 /** A native lifecycle failure with a stable, path-free reason. */
@@ -136,6 +137,8 @@ export function createSystemdRuntime(deps: SystemdRuntimeDeps) {
   // Market owner admission. One lock serializes every market_owner compare and mutate (start, stop and probe).
   const marketRange = deps.market === undefined ? undefined : config.ports.market
   const marketLock = new KeyedLock(), admitted = new Map<UserId, MarketEndpoint>()
+  // Users whose market admission changed (start or stop) while a rebuild was running; the rebuild leaves them alone.
+  const marketTouched = new Set<UserId>()
   const nft = (args: readonly string[]) => runner.run(config.tools.nft, [...args])
   const listOwners = async (): Promise<MarketEndpoint[] | undefined> => {
     const listed = await nft(['list', 'set', 'inet', MARKET_TABLE, 'market_owner'])
@@ -156,6 +159,7 @@ export function createSystemdRuntime(deps: SystemdRuntimeDeps) {
         if (stale.length > 0) await runChecked(runner, config.tools.nft, marketOwnerArgv('delete', stale))
         await runChecked(runner, config.tools.nft, marketOwnerArgv('add', [row]))
         admitted.set(instance.userId, row)
+        marketTouched.add(instance.userId)
       })
       return row
     } catch {
@@ -172,7 +176,10 @@ export function createSystemdRuntime(deps: SystemdRuntimeDeps) {
         await runChecked(runner, config.tools.nft, marketOwnerArgv('delete', own))
         if ((await listOwners() ?? []).some(row => row.uid === instance.uid)) throw new Error('market_owner element survived deletion')
       }
+    }).finally(() => {
+      // Even when deletion failed the pair is no longer wanted, so the probe treats a leftover as stale.
       admitted.delete(instance.userId)
+      marketTouched.add(instance.userId)
     })
     await deps.market.close(instance.userId).catch(() => {})
   }
@@ -187,7 +194,13 @@ export function createSystemdRuntime(deps: SystemdRuntimeDeps) {
     async inspect() {
       const listed = await nft(['list', 'table', 'inet', MARKET_TABLE])
       const text = listed.code === 0 ? listed.stdout : ''
-      return { table: /\bset market_owner \{/.test(text), input: /\bchain input \{/.test(text), market_listener: /\bchain market_listener \{/.test(text) }
+      // A chain that exists but lost its drop or listener rule counts as missing, so the probe reloads it.
+      const input = /\bchain input \{([^}]*)\}/.exec(text)?.[1], listener = /\bchain market_listener \{([^}]*)\}/.exec(text)?.[1]
+      return {
+        table: /\bset market_owner \{/.test(text),
+        input: input !== undefined && /\bjump market_listener\b/.test(input) && /ct mark \. tcp dport != @market_owner drop/.test(input),
+        market_listener: listener !== undefined && /\bsocket cgroupv2 level \d+ "[^"]+" return\b/.test(listener) && /^\s*drop\s*$/m.test(listener),
+      }
     },
     async loadTable() {
       for (const [command, ...args] of marketReload) if ((await runner.run(command, args).catch(() => undefined))?.code === 0) return
@@ -196,16 +209,53 @@ export function createSystemdRuntime(deps: SystemdRuntimeDeps) {
     listSet: async () => { const rows = await listOwners(); if (rows === undefined) throw new Error('market_owner unreadable'); return rows },
     addElements: async rows => { await runChecked(runner, config.tools.nft, marketOwnerArgv('add', rows)) },
     deleteElements: async rows => { await runChecked(runner, config.tools.nft, marketOwnerArgv('delete', rows)) },
-    alertExtra: deps.marketFirewall?.onAlert ?? (row => {
-      process.stderr.write(`dsh_market: stale market_owner element uid ${row.uid} port ${row.port} survived two probes\n`)
-    }),
+    alertExtra: (row, reason = 'repeated') => (deps.marketFirewall?.onAlert ?? ((row, reason) => {
+      process.stderr.write(reason === 'repeated'
+        ? `dsh_market: stale market_owner element uid ${row.uid} port ${row.port} survived two probes\n`
+        : `dsh_market: market_owner element uid ${row.uid} port ${row.port} not yet accounted for (owners still rebuilding; not deleted)\n`)
+    }))(row, reason),
+  }
+  // After a restart `admitted` is empty while instances still run. Rebuild it from `deps.active()` (re-open each
+  // endpoint, which also restores the bridge's own state, and re-admit uid . port) before the probe may delete
+  // anything; until then a probe only alerts.
+  let marketRebuilt = false, marketRebuilding: Promise<void> | undefined
+  async function rebuildOwners(): Promise<void> {
+    if (deps.market === undefined || marketRange === undefined) return
+    const bridge = deps.market, range = marketRange
+    marketTouched.clear()
+    const running = await deps.active()
+    for (const instance of running) {
+      if (admitted.has(instance.userId) || marketTouched.has(instance.userId)) continue
+      let row: MarketEndpoint
+      try {
+        const opened = await bridge.open(instance.userId, instance.instanceId, instance.uid)
+        row = { uid: instance.uid, port: opened.port }
+        if (!Number.isSafeInteger(row.port) || row.port < range.min || row.port > range.max) continue
+      } catch { continue }
+      // A failure leaves this owner out (fail closed); its endpoint stays open for the instance that holds it.
+      await marketLock.run('market', async () => {
+        if (admitted.has(instance.userId) || marketTouched.has(instance.userId)) return
+        const stale = (await listOwners() ?? []).filter(other => (other.uid === row.uid) !== (other.port === row.port))
+        if (stale.length > 0) await runChecked(runner, config.tools.nft, marketOwnerArgv('delete', stale))
+        await runChecked(runner, config.tools.nft, marketOwnerArgv('add', [row]))
+        admitted.set(instance.userId, row)
+      }).catch(() => {})
+    }
+    marketRebuilt = true
+  }
+  const rebuildMarket = () => {
+    marketRebuilding ??= rebuildOwners().finally(() => { marketRebuilding = undefined })
+    return marketRebuilding
   }
   let marketProbe: MarketProbeState = { previousExtras: new Set() }
   /** One self-heal pass; failures leave the table as it is (owners may be shut out, never let in). */
   async function probeMarket(): Promise<void> {
     if (marketRange === undefined) return
-    marketProbe = await reconcileMarketFirewall(marketProbeHost, marketProbe)
+    // Not rebuilt and idle: (re)try the rebuild first. Still rebuilding, or it failed: alert only.
+    if (!marketRebuilt && marketRebuilding === undefined) await rebuildMarket().catch(() => {})
+    marketProbe = await reconcileMarketFirewall(marketProbeHost, marketProbe, { deleteExtras: marketRebuilt })
   }
+  if (marketRange !== undefined) void rebuildMarket().catch(() => {})
   const marketProbeMs = deps.marketFirewall?.probeMs ?? 60_000
   const marketTimer = marketRange === undefined || marketProbeMs === 0 ? undefined
     : setInterval(() => { void probeMarket().catch(() => {}) }, marketProbeMs)

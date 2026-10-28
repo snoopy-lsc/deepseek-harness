@@ -158,10 +158,10 @@ describe('native lifecycle', () => {
 describe('native market owner admission (inet dsh_market market_owner)', () => {
   const marketConfig = () => parseSystemdConfig({ common: { ...common, ports: { ...common.ports, market: { min: 30_000, max: 30_099 } } }, native })
   /** Wrap the lifecycle harness with ports.market, a market bridge and an in-memory market_owner set. */
-  async function marketHarness(options: { port?: number; open?: 'fail'; table?: boolean; reload?: boolean } = {}) {
+  async function marketHarness(options: { port?: number; open?: 'fail'; table?: boolean; reload?: boolean; active?: () => Promise<readonly RuntimeInstance[]> } = {}) {
     const h = await harness()
-    let owners: { uid: number; port: number }[] = [], table = options.table ?? true
-    const market: string[] = [], alerts: string[] = []
+    let owners: { uid: number; port: number }[] = [], table = options.table ?? true, altered = false
+    const market: string[] = [], alerts: string[] = [], unverified: string[] = []
     const inner = h.deps.runner
     const runner: CommandRunner = {
       async run(command, args, opts) {
@@ -174,7 +174,11 @@ describe('native market owner admission (inet dsh_market market_owner)', () => {
         }
         if (line === 'nft list table inet dsh_market') {
           h.calls.push(line)
-          return table ? ok('table inet dsh_market {\n\tset market_owner {\n\t}\n\tchain input {\n\t}\n\tchain market_listener {\n\t}\n}') : { code: 1, stdout: '', stderr: '' }
+          if (!table) return { code: 1, stdout: '', stderr: '' }
+          return ok(['table inet dsh_market {', '\tset market_owner {', '\t\ttype mark . inet_service', '\t}', '', '\tchain input {',
+            '\t\ttype filter hook input priority filter - 2; policy accept;', '\t\tiif "lo" tcp dport 30000-30099 jump market_listener',
+            ...(altered ? [] : ['\t\tiif "lo" tcp dport 30000-30099 ct mark . tcp dport != @market_owner drop']), '\t}', '',
+            '\tchain market_listener {', '\t\tsocket cgroupv2 level 2 "system.slice/dsh-plugins.socket" return', '\t\tdrop', '\t}', '}'].join('\n'))
         }
         if (line.startsWith('nft add element inet dsh_market market_owner ')) {
           h.calls.push(line)
@@ -188,12 +192,12 @@ describe('native market owner admission (inet dsh_market market_owner)', () => {
           owners = owners.filter(o => !drop.some(d => d.uid === o.uid && d.port === o.port))
           return ok()
         }
-        if (line.startsWith('load-dsh-market.sh')) { h.calls.push(line); if (options.reload !== false) table = true; return options.reload === false ? { code: 1, stdout: '', stderr: '' } : ok() }
+        if (line.startsWith('load-dsh-market.sh')) { h.calls.push(line); if (options.reload !== false) { table = true; altered = false }; return options.reload === false ? { code: 1, stdout: '', stderr: '' } : ok() }
         return inner.run(command, args, opts)
       },
     }
     const deps: SystemdRuntimeDeps = {
-      ...h.deps, config: marketConfig(), runner, reconcileMarket: undefined,
+      ...h.deps, config: marketConfig(), runner, reconcileMarket: undefined, ...(options.active === undefined ? {} : { active: options.active }),
       market: {
         open: async (userId, _instanceId, accountUid) => {
           market.push(`open:${userId}:${accountUid}`)
@@ -202,10 +206,10 @@ describe('native market owner admission (inet dsh_market market_owner)', () => {
         },
         close: async userId => { market.push(`close:${userId}`) },
       },
-      marketFirewall: { probeMs: 0, onAlert: row => { alerts.push(`${row.uid}.${row.port}`) } },
+      marketFirewall: { probeMs: 0, onAlert: (row, reason) => { (reason === 'repeated' ? alerts : unverified).push(`${row.uid}.${row.port}`) } },
     }
-    return { ...h, deps, market, alerts, owners: () => owners, setOwners: (rows: { uid: number; port: number }[]) => { owners = rows },
-      dropTable: () => { table = false; owners = [] } }
+    return { ...h, deps, market, alerts, unverified, owners: () => owners, setOwners: (rows: { uid: number; port: number }[]) => { owners = rows },
+      dropTable: () => { table = false; owners = [] }, alterTable: () => { altered = true } }
   }
 
   it('admits only the owner pair before the reconcile one-shot and the instance, and removes it on stop', async () => {
@@ -272,6 +276,19 @@ describe('native market owner admission (inet dsh_market market_owner)', () => {
     await runtime.close()
   })
 
+  it('probe reloads a table whose chains exist but lost the owner drop rule (S4)', async () => {
+    const h = await marketHarness(), runtime = createSystemdRuntime(h.deps)
+    await runtime.start(h.i)
+    await runtime.probeMarket()
+    expect(h.calls).not.toContain('load-dsh-market.sh /etc/dsh-public/dsh-market.nft')
+    h.alterTable()
+    await runtime.probeMarket()
+    expect(h.calls).toContain('load-dsh-market.sh /etc/dsh-public/dsh-market.nft')
+    expect(h.owners()).toEqual([{ uid: h.i.uid, port: 30_005 }])
+    await runtime.stop(h.i)
+    await runtime.close()
+  })
+
   it('a failed reload leaves the market closed and reports the failure', async () => {
     const h = await marketHarness({ reload: false }), runtime = createSystemdRuntime(h.deps)
     await runtime.start(h.i)
@@ -280,6 +297,72 @@ describe('native market owner admission (inet dsh_market market_owner)', () => {
     await expect(runtime.probeMarket()).rejects.toThrow(/market_owner unreadable/)
     expect(h.calls).toContain('systemctl restart dsh-plugins.socket')
     expect(h.owners()).toEqual([])
+  })
+
+  // S1: a restarted provisioner has an empty admitted list while instances still run.
+  const settle = () => new Promise(resolve => setImmediate(resolve))
+
+  it('restart rebuilds admitted owners from running instances, keeping their pairs and still deleting strangers', async () => {
+    const h = await marketHarness({ active: async () => [h.i] })
+    h.setOwners([{ uid: h.i.uid, port: 30_005 }, { uid: 9999, port: 30_050 }])
+    const runtime = createSystemdRuntime(h.deps)
+    await settle()
+    expect(h.market).toEqual([`open:${h.i.userId}:${h.i.uid}`])
+    await runtime.probeMarket()
+    expect(h.owners()).toEqual([{ uid: h.i.uid, port: 30_005 }])
+    expect(h.calls.filter(line => line.startsWith('nft delete'))).toEqual(['nft delete element inet dsh_market market_owner { 9999 . 30050 }'])
+    expect(h.unverified).toEqual([])
+    await runtime.close()
+  })
+
+  it('restart re-adds the pair of a running instance whose element is missing', async () => {
+    const h = await marketHarness({ active: async () => [h.i] })
+    const runtime = createSystemdRuntime(h.deps)
+    await settle()
+    expect(h.owners()).toEqual([{ uid: h.i.uid, port: 30_005 }])
+    h.dropTable()
+    await runtime.probeMarket()
+    expect(h.owners()).toEqual([{ uid: h.i.uid, port: 30_005 }])
+    // A stop after the rebuild still removes it and closes the re-opened endpoint.
+    await runtime.stop(h.i)
+    expect(h.owners()).toEqual([])
+    expect(h.market).toEqual([`open:${h.i.userId}:${h.i.uid}`, `close:${h.i.userId}`])
+    await runtime.close()
+  })
+
+  it('a probe before the rebuild completes only alerts and deletes nothing', async () => {
+    let release!: (rows: readonly RuntimeInstance[]) => void
+    const pending = new Promise<readonly RuntimeInstance[]>(resolve => { release = resolve })
+    const h = await marketHarness({ active: () => pending })
+    h.setOwners([{ uid: h.i.uid, port: 30_005 }, { uid: 9999, port: 30_050 }])
+    const runtime = createSystemdRuntime(h.deps)
+    await runtime.probeMarket()
+    expect(h.owners()).toEqual([{ uid: h.i.uid, port: 30_005 }, { uid: 9999, port: 30_050 }])
+    expect(h.calls.some(line => line.startsWith('nft delete'))).toBe(false)
+    expect(h.unverified).toEqual([`${h.i.uid}.30005`, '9999.30050'])
+    release([h.i])
+    await settle()
+    await runtime.probeMarket()
+    expect(h.owners()).toEqual([{ uid: h.i.uid, port: 30_005 }])
+    // The stranger was seen by the alert-only probe and again now: deleted, and alerted as repeated.
+    expect(h.alerts).toEqual(['9999.30050'])
+    await runtime.close()
+  })
+
+  it('a failed rebuild is retried by the next probe and never deletes until it succeeds', async () => {
+    let calls = 0
+    const h = await marketHarness({ active: async () => { calls += 1; if (calls <= 2) throw new Error('database down'); return [h.i] } })
+    h.setOwners([{ uid: h.i.uid, port: 30_005 }, { uid: 9999, port: 30_050 }])
+    const runtime = createSystemdRuntime(h.deps)
+    await settle()
+    await runtime.probeMarket()
+    expect(calls).toBe(2)
+    expect(h.owners()).toHaveLength(2)
+    expect(h.unverified).toEqual([`${h.i.uid}.30005`, '9999.30050'])
+    await runtime.probeMarket()
+    expect(calls).toBe(3)
+    expect(h.owners()).toEqual([{ uid: h.i.uid, port: 30_005 }])
+    await runtime.close()
   })
 
   it('never touches inet dsh_market without ports.market or without a market bridge', async () => {

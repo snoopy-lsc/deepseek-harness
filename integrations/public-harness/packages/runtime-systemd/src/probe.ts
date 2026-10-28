@@ -102,8 +102,9 @@ export interface MarketProbeHost {
   listSet(): Promise<readonly MarketEndpoint[]>
   addElements(rows: readonly MarketEndpoint[]): Promise<void>
   deleteElements(rows: readonly MarketEndpoint[]): Promise<void>
-  /** Security alert when the same extra element is present in two consecutive probes. */
-  alertExtra(row: MarketEndpoint): void
+  /** Security alert: `repeated` when the same extra element is present in two consecutive probes, `unverified` for
+   * every extra seen while the owner list is still being rebuilt after a restart (nothing is deleted then). */
+  alertExtra(row: MarketEndpoint, reason?: 'repeated' | 'unverified'): void
 }
 
 /** Carry extra elements across probes so a repeated stale pair raises an alert. */
@@ -111,14 +112,23 @@ export interface MarketProbeState {
   readonly previousExtras: ReadonlySet<string>
 }
 
+/** Probe mode. */
+export interface MarketProbeOptions {
+  /** False while the admitted owners are not yet rebuilt (after a restart): extras are alerted, never deleted,
+   * because the in-memory list may still lack a running instance. Default true. */
+  readonly deleteExtras?: boolean
+}
+
 /**
  * Make `market_owner` exactly equal to `plugin_endpoint` under one lock.
  * Missing table/chain → reload loader then refill; extras deleted immediately (alert on two consecutive);
- * missing elements added (owner shut out only — never a global failure).
+ * missing elements added (owner shut out only — never a global failure). With `deleteExtras: false` extras are only
+ * alerted (`unverified`).
  */
 export async function reconcileMarketFirewall(
   host: MarketProbeHost,
   state: MarketProbeState,
+  options: MarketProbeOptions = {},
 ): Promise<MarketProbeState> {
   return host.withLock(async () => {
     const presence = await host.inspect()
@@ -133,11 +143,13 @@ export async function reconcileMarketFirewall(
     const extras = [...have.values()].filter(row => !want.has(marketEndpointKey(row)))
     const absent = [...want.values()].filter(row => !have.has(marketEndpointKey(row)))
 
-    if (extras.length > 0) {
+    if (extras.length > 0 && options.deleteExtras === false) {
+      for (const row of extras) host.alertExtra(row, 'unverified')
+    } else if (extras.length > 0) {
       await host.deleteElements(extras)
       for (const row of extras) {
         const key = marketEndpointKey(row)
-        if (state.previousExtras.has(key)) host.alertExtra(row)
+        if (state.previousExtras.has(key)) host.alertExtra(row, 'repeated')
       }
     }
     if (absent.length > 0) await host.addElements(absent)
