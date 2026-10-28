@@ -69,11 +69,16 @@ describe('native rehearsal tooling', () => {
     const f = await fixture()
     const source = join(f.base, 'source.json')
     await writeFile(source, JSON.stringify({ ...f.manifest, schema: 2, runtime: { kind: 'systemd', policyDigest: null, toolchainDigest: null } }))
-    const before = [await treeDigest([f.policy]), await treeDigest([f.toolchain])]
     const roots = [f.policy, f.toolchain]
     await symlink(f.policy, join(f.base, 'policy-link'))
     await mkdir(join(f.base, 'out-dir'))
+    await mkdir(join(f.policy, '..hidden')); await mkdir(join(f.toolchain, '..hidden'))
+    await mkdir(join(f.base, '..outside')); await mkdir(`${f.policy}-sibling`)
+    const before = [await treeDigest([f.policy]), await treeDigest([f.toolchain])]
     for (const [out, reason] of [
+      [join(f.policy, '..hidden', 'stamped.json'), /inside the digested tree/],
+      [join(f.toolchain, '..hidden', 'stamped.json'), /inside the digested tree/],
+      [join(f.policy, '..stamped.json'), /inside the digested tree/],
       [join(f.policy, 'stamped.json'), /inside the digested tree/],
       [join(f.toolchain, 'nested', '..', 'stamped.json'), /inside the digested tree/],
       [join(f.base, 'policy-link', 'stamped.json'), /inside the digested tree/],
@@ -86,6 +91,9 @@ describe('native rehearsal tooling', () => {
     ] as const) expect(await outputRefusal(source, out, roots), out).toMatch(reason)
     expect(await outputRefusal(source, join(f.base, 'stamped.json'), ['relative/policy'])).toMatch(/roots must be absolute/)
     expect(await outputRefusal(source, join(f.base, 'stamped.json'), roots)).toBeUndefined()
+    // Genuinely outside, even with a `..`-prefixed name or a root-prefixed sibling directory.
+    expect(await outputRefusal(source, join(f.base, '..outside', 'stamped.json'), roots)).toBeUndefined()
+    expect(await outputRefusal(source, join(`${f.policy}-sibling`, 'stamped.json'), roots)).toBeUndefined()
     const error = process.stderr.write
     process.stderr.write = (() => true) as typeof process.stderr.write
     try {

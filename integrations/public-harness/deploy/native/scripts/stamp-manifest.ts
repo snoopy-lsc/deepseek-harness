@@ -4,7 +4,7 @@
 // The output must lie outside every --policy and --toolchain root: a stamped manifest inside a digested tree would
 // change that tree's digest the moment it is written, so the stamp could never verify.
 import { lstat, readFile, realpath, rename, writeFile } from 'node:fs/promises'
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { parseAnyReleaseManifest, serializeReleaseManifest } from '../../native-release.ts'
 import { stampFromInstalledTrees } from './rehearse.ts'
 
@@ -34,9 +34,10 @@ export async function main(argv: readonly string[]): Promise<number> {
   return 0
 }
 
+// Only a leading `..` segment leaves the root; a child named `..hidden` is still inside it.
 const inside = (root: string, path: string) => {
   const rel = relative(root, path)
-  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+  return rel === '' || !(rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel))
 }
 const real = (path: string) => realpath(path).catch(() => resolve(path))
 
