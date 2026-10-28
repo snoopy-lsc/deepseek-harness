@@ -3,7 +3,7 @@ import { constants } from 'node:fs'
 import { open, readFile, rename } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'
 import { ensureGitWorkspace, isolatedGitEnvironment, type InstanceEndpoint, type InstanceId, type RuntimeInstance, type UserId } from '@public-harness/contracts'
-import type { QuotaBridge } from '@public-harness/provisioner/runtime'
+import type { MarketBridge, QuotaBridge } from '@public-harness/provisioner/runtime'
 import { startUnixForwarder, type Forwarder } from '@public-harness/provisioner/forwarder'
 import type { AcquiredResource } from '@public-harness/provisioner/state'
 import { CommandError, KeyedLock, runChecked, type CommandRunner } from '@public-harness/provisioner/system'
@@ -11,7 +11,9 @@ import { clearReady, readReady, waitForReady, ContainerExitedError } from '@publ
 import { NativeHostError, type SystemdConfig } from './config.ts'
 import { installNetwork, removeNetwork, unitCgroup, unitSlice } from './network.ts'
 import { buildReconcileSystemdRunArgv, instanceMarketNpmrcPath, reconcilePlanPath } from './reconcile-unit.ts'
-import { verifyEnforcement, type ProbeHost } from './probe.ts'
+import { reconcileMarketFirewall, verifyEnforcement, type MarketProbeHost, type MarketProbeState, type ProbeHost } from './probe.ts'
+import { DEFAULT_MARKET_RULES_PATH, MARKET_TABLE, marketOwnerArgv, parseMarketOwnerElements, type MarketEndpoint } from './market-firewall.ts'
+import { DEFAULT_MARKET_LOADER_PATH } from './plugins-units.ts'
 import { openDirectoryNoFollow, prepareHost } from './storage.ts'
 
 export type NativeState = 'running' | 'stopped' | 'unknown'
@@ -57,6 +59,24 @@ export interface SystemdRuntimeDeps {
       | { readonly port: number; readonly hostAddress?: string }
       | undefined
       | Promise<{ readonly port: number; readonly hostAddress?: string } | undefined>)
+  /**
+   * Plugin market control (`createPluginsMarketBridge`). With `ports.market` set, start opens the account's market
+   * endpoint and admits exactly its `uid . port` pair to `inet dsh_market market_owner`; stop deletes every pair of
+   * that uid. Without it (or without `ports.market`) the runtime never touches the market table.
+   */
+  readonly market?: MarketBridge
+  /** `market_owner` self-heal and reload settings; used only together with {@link market}. */
+  readonly marketFirewall?: MarketFirewallSettings
+}
+
+/** Market firewall self-heal: a periodic probe makes `market_owner` exactly equal to the admitted owners. */
+export interface MarketFirewallSettings {
+  /** Probe interval (default 60 s); 0 disables the timer (tests call `probeMarket()` on the runtime). */
+  readonly probeMs?: number
+  /** Reload commands tried in order when the table or a chain is missing (default: the loader, then a socket restart). */
+  readonly reload?: readonly (readonly [string, ...string[]])[]
+  /** Security alert: the same stale element survived two consecutive probes. */
+  readonly onAlert?: (row: MarketEndpoint) => void
 }
 
 /** A native lifecycle failure with a stable, path-free reason. */
@@ -113,6 +133,84 @@ export function createSystemdRuntime(deps: SystemdRuntimeDeps) {
   }
   const socketPath = (instance: Allocation) => `${config.paths.socketDir}/${instance.account}.sock`
 
+  // Market owner admission. One lock serializes every market_owner compare and mutate (start, stop and probe).
+  const marketRange = deps.market === undefined ? undefined : config.ports.market
+  const marketLock = new KeyedLock(), admitted = new Map<UserId, MarketEndpoint>()
+  const nft = (args: readonly string[]) => runner.run(config.tools.nft, [...args])
+  const listOwners = async (): Promise<MarketEndpoint[] | undefined> => {
+    const listed = await nft(['list', 'set', 'inet', MARKET_TABLE, 'market_owner'])
+    return listed.code === 0 ? parseMarketOwnerElements(listed.stdout) : undefined
+  }
+  /** Open the endpoint and admit `uid . port`; any failure leaves the account shut out of the market, never others in. */
+  async function admitMarket(instance: RuntimeInstance): Promise<MarketEndpoint | undefined> {
+    if (deps.market === undefined || marketRange === undefined) return undefined
+    const bridge = deps.market
+    let opened: { readonly port: number }
+    try { opened = await bridge.open(instance.userId, instance.instanceId, instance.uid) } catch { return undefined }
+    const row = { uid: instance.uid, port: opened.port }
+    try {
+      if (!Number.isSafeInteger(row.port) || row.port < marketRange.min || row.port > marketRange.max) throw new Error('market port outside ports.market')
+      await marketLock.run('market', async () => {
+        // Drop any stale pair that shares this uid or this port before admitting the new one.
+        const stale = (await listOwners() ?? []).filter(other => (other.uid === row.uid) !== (other.port === row.port))
+        if (stale.length > 0) await runChecked(runner, config.tools.nft, marketOwnerArgv('delete', stale))
+        await runChecked(runner, config.tools.nft, marketOwnerArgv('add', [row]))
+        admitted.set(instance.userId, row)
+      })
+      return row
+    } catch {
+      await bridge.close(instance.userId).catch(() => {})
+      return undefined
+    }
+  }
+  /** Delete every pair of this uid and verify none is left; the endpoint is closed best-effort afterwards. */
+  async function releaseMarket(instance: Allocation): Promise<void> {
+    if (deps.market === undefined || marketRange === undefined) return
+    await marketLock.run('market', async () => {
+      const own = (await listOwners() ?? []).filter(row => row.uid === instance.uid)
+      if (own.length > 0) {
+        await runChecked(runner, config.tools.nft, marketOwnerArgv('delete', own))
+        if ((await listOwners() ?? []).some(row => row.uid === instance.uid)) throw new Error('market_owner element survived deletion')
+      }
+      admitted.delete(instance.userId)
+    })
+    await deps.market.close(instance.userId).catch(() => {})
+  }
+  const marketReload = deps.marketFirewall?.reload ?? [
+    [DEFAULT_MARKET_LOADER_PATH, DEFAULT_MARKET_RULES_PATH],
+    // The socket unit's ExecStartPost runs the same loader while the unit's own cgroup exists.
+    [config.tools.systemctl, 'restart', 'dsh-plugins.socket'],
+  ]
+  const marketProbeHost: MarketProbeHost = {
+    withLock: task => marketLock.run('market', task),
+    listEndpoints: async () => [...admitted.values()],
+    async inspect() {
+      const listed = await nft(['list', 'table', 'inet', MARKET_TABLE])
+      const text = listed.code === 0 ? listed.stdout : ''
+      return { table: /\bset market_owner \{/.test(text), input: /\bchain input \{/.test(text), market_listener: /\bchain market_listener \{/.test(text) }
+    },
+    async loadTable() {
+      for (const [command, ...args] of marketReload) if ((await runner.run(command, args).catch(() => undefined))?.code === 0) return
+      throw new Error('inet dsh_market could not be reloaded')
+    },
+    listSet: async () => { const rows = await listOwners(); if (rows === undefined) throw new Error('market_owner unreadable'); return rows },
+    addElements: async rows => { await runChecked(runner, config.tools.nft, marketOwnerArgv('add', rows)) },
+    deleteElements: async rows => { await runChecked(runner, config.tools.nft, marketOwnerArgv('delete', rows)) },
+    alertExtra: deps.marketFirewall?.onAlert ?? (row => {
+      process.stderr.write(`dsh_market: stale market_owner element uid ${row.uid} port ${row.port} survived two probes\n`)
+    }),
+  }
+  let marketProbe: MarketProbeState = { previousExtras: new Set() }
+  /** One self-heal pass; failures leave the table as it is (owners may be shut out, never let in). */
+  async function probeMarket(): Promise<void> {
+    if (marketRange === undefined) return
+    marketProbe = await reconcileMarketFirewall(marketProbeHost, marketProbe)
+  }
+  const marketProbeMs = deps.marketFirewall?.probeMs ?? 60_000
+  const marketTimer = marketRange === undefined || marketProbeMs === 0 ? undefined
+    : setInterval(() => { void probeMarket().catch(() => {}) }, marketProbeMs)
+  marketTimer?.unref?.()
+
   async function credential(instance: RuntimeInstance): Promise<void> {
     const issued = await deps.quota.issue(instance.userId, instance.instanceId)
     await writeTenantFile(instance.home, 'quota-credential.json', `${JSON.stringify(issued)}\n`, instance.uid, instance.gid)
@@ -141,6 +239,7 @@ export function createSystemdRuntime(deps: SystemdRuntimeDeps) {
     await attempt(() => stopUnit(unitSlice({ ...instance, webPort: 0, quotaPort: 0 })))
     await attempt(async () => { if (await state(instance) !== 'stopped') throw new NativeRuntimeError('stop-unverified') })
     const others = (await deps.active().catch(error => { errors.push(error); return [] })).filter(other => other.userId !== instance.userId)
+    await attempt(() => releaseMarket(instance))
     await attempt(() => network.remove({ ...instance, webPort: 0, quotaPort: 0 }, config, runner, others))
     await attempt(() => clearReady(instance.home))
     if (errors.length === 1) throw errors[0]
@@ -197,13 +296,15 @@ export function createSystemdRuntime(deps: SystemdRuntimeDeps) {
         await systemctl('start', unitSlice(instance))
         // The slice cgroup now exists, so `socket cgroupv2` resolves; rules are in place before any tenant process runs.
         await network.install(instance, config, runner, (await deps.active()).filter(other => other.userId !== instance.userId))
-        // Native order: slice → network.install → reconcile unit → instance (design § Fallback).
+        // The owner pair goes in before any tenant process (the reconcile one-shot included) can dial the market.
+        const ownMarket = await admitMarket(instance)
+        // Native order: slice → network.install → market owner → reconcile unit → instance (design § Fallback).
         // Reconcile failures must not block the instance start.
         if (deps.preStartReconcile !== false) {
           const reconcile = deps.preStartReconcile ?? (async (target: RuntimeInstance) => {
             const market = typeof deps.reconcileMarket === 'function'
               ? await deps.reconcileMarket(target)
-              : deps.reconcileMarket
+              : deps.reconcileMarket ?? (ownMarket === undefined ? undefined : { port: ownMarket.port })
             if (market === undefined) return
             const npmGlobalConfig = instanceMarketNpmrcPath(config, target.account) ?? '/dev/null'
             const argv = buildReconcileSystemdRunArgv({
@@ -264,10 +365,11 @@ export function createSystemdRuntime(deps: SystemdRuntimeDeps) {
   }
 
   return {
-    kind: 'systemd' as const, allocate, prepare, initializeWorkspace, start, launchGrant, state, purge,
+    kind: 'systemd' as const, allocate, prepare, initializeWorkspace, start, launchGrant, state, purge, probeMarket,
     stop: (instance: Allocation) => lock.run(instance.userId, () => teardown(instance)),
     releaseAllocation: (instance: Allocation) => lock.run(instance.userId, () => teardown(instance)),
     async close() {
+      if (marketTimer !== undefined) clearInterval(marketTimer)
       const results = await Promise.allSettled([...live.values()].map(entry => lock.run(entry.instance.userId, () => teardown(entry.instance))))
       const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
       if (failures.length) throw new AggregateError(failures.map(result => result.reason), 'native provider shutdown failed')
