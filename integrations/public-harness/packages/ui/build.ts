@@ -13,5 +13,5 @@ const client = output.outputFiles?.[0]
 if (client === undefined) throw new Error('client bundle was not emitted')
 await mkdir(join(root, 'lib'), { recursive: true })
 await build({ entryPoints: [join(root, 'src/index.ts')], bundle: true, platform: 'node',
-  format: 'esm', target: 'node22', outfile: join(root, 'lib/index.js') })
+  format: 'esm', target: 'node24', outfile: join(root, 'lib/index.js') })
 await writeFile(join(root, 'lib/client.js'), `window.__ModuleLoader__.load({\n  id: '@public-harness/ui',\n  factory: (require) => {\n    const module = { exports: {} };\n    const exports = module.exports;\n${client.text}\n    return module.exports;\n  },\n});\n`)

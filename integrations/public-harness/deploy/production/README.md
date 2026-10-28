@@ -30,7 +30,7 @@ This container runtime (rootless Podman with gVisor) is frozen: it is maintained
 <a id="install-on-a-linux-host"></a>
 ## Install on a Linux host
 
-Use a dedicated host with systemd, cgroup v2 whose user managers delegate `cpu`, `cpuset`, `hugetlb`, `io`, `memory`, and `pids` (rootless Podman with `runsc` did not start in a lab run without all six, so the provisioner refuses to start an instance without them), rootless Podman, gVisor `runsc`, nftables, Caddy 2.7 or newer, and a filesystem mounted with user quotas for `quotaMount`. The Caddyfile uses `servers { trusted_proxies }`, which Debian's packaged Caddy 2.6.2 refuses to parse; it was verified with Caddy 2.11.7, so install a current official build. Install the built integration and Harness under `/opt/dsh-public`, then copy the files below.
+Use a dedicated host with systemd, cgroup v2 whose user managers delegate `cpu`, `cpuset`, `hugetlb`, `io`, `memory`, and `pids` (rootless Podman with `runsc` did not start in a lab run without all six, so the provisioner refuses to start an instance without them), rootless Podman, gVisor `runsc`, nftables, Node.js 24.9 or later for the host services, Caddy 2.7 or newer, and a filesystem mounted with user quotas for `quotaMount`. The Caddyfile uses `servers { trusted_proxies }`, which Debian's packaged Caddy 2.6.2 refuses to parse; it was verified with Caddy 2.11.7, so install a current official build. Install the built integration and Harness under `/opt/dsh-public`, then copy the files below.
 
 ```bash
 install -m 0644 deploy/production/systemd/sysusers.conf /etc/sysusers.d/dsh-public.conf

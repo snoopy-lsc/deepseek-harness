@@ -19,7 +19,7 @@ import { parseIdentityConfig } from '../packages/identity/src/config.ts'
 import { parseSystemdConfig } from '../packages/runtime-systemd/src/config.ts'
 import { parseKbProfileConfig } from '../packages/production/src/kb-service.ts'
 import { parseKbRootConfig } from '../packages/production/src/kb-root-helper.ts'
-import { preflight } from '../deploy/native/scripts/host-preflight.ts'
+import { MIN_NODE_VERSION, preflight } from '../deploy/native/scripts/host-preflight.ts'
 
 const root = new URL('../', import.meta.url).pathname
 const text = (path: string): Promise<string> => readFile(join(root, path), 'utf8')
@@ -744,5 +744,34 @@ describe('native deployment composition', () => {
     const byName = Object.fromEntries(results.map(result => [result.check, result.ok]))
     expect(byName).toMatchObject({ os: false, cgroup2: true, apparmor: false, 'xfs-quota': true, nftables: true })
     expect(runs.every(line => /xfs_quota -x -c state -u|nft --version|--version$/.test(line))).toBe(true)
+  })
+
+  it('host preflight requires Node 24.9 or later for the toolchain and the service units', async () => {
+    const { provisioner, nativeOptions } = await native()
+    const ok = (path: string) => path.endsWith('os-release') ? 'ID=ubuntu\nVERSION_ID="24.04"\n' : path.endsWith('enabled') ? 'Y\n' : path.endsWith('userns') ? '1\n' : 'cpu memory pids\n'
+    const nodeCheck = async (versions: Record<string, string>) => {
+      const runs: string[] = []
+      const results = await preflight(provisioner.provisioner, nativeOptions, { read: async path => ok(path),
+        run: (command, args) => { runs.push(`${command} ${args.join(' ')}`); return command in versions ? versions[command]! : 'Enforcement: ON' } })
+      expect(runs.every(line => /xfs_quota -x -c state -u|nft --version|--version$/.test(line))).toBe(true)
+      return results.find(result => result.check === 'node-version')!
+    }
+    const toolchain = '/opt/dsh-public/toolchain/node'
+    expect((await nodeCheck({ [toolchain]: 'v24.9.0\n', '/usr/bin/node': 'v24.11.1\n' })).ok).toBe(true)
+    expect((await nodeCheck({ [toolchain]: 'v25.0.0\n', '/usr/bin/node': 'v24.9.0\n' })).ok).toBe(true)
+    expect(await nodeCheck({ [toolchain]: 'v24.8.9\n', '/usr/bin/node': 'v24.9.0\n' })).toMatchObject({ ok: false, detail: expect.stringMatching(/24\.9\.0/) })
+    expect((await nodeCheck({ [toolchain]: 'v24.9.0\n', '/usr/bin/node': 'v22.23.3\n' })).ok).toBe(false)
+    expect((await nodeCheck({ [toolchain]: 'garbage', '/usr/bin/node': 'v24.9.0' })).ok).toBe(false)
+    expect(MIN_NODE_VERSION).toBe('24.9.0')
+  })
+
+  it('declares the Node 24.9 floor in the workspace manifests and the deployment guides', async () => {
+    const rootEngines = (JSON.parse(await readFile(join(root, '../../package.json'), 'utf8')) as { engines: { node: string } }).engines.node
+    expect(rootEngines).toBe('>=24.9.0')
+    expect((await json('package.json') as { engines?: { node?: string } }).engines?.node).toBe(rootEngines)
+    for (const path of ['README.md', 'README.zh.md', 'deploy/native/README.md', 'deploy/native/README.zh.md', 'deploy/production/README.md', 'deploy/production/README.zh.md']) {
+      expect(await text(path), path).toMatch(/Node(\.js)? (`)?24\.9/)
+    }
+    expect(await text('deploy/production/Containerfile')).toMatch(/^FROM docker\.io\/library\/node:24\.\d+\.\d+-bookworm-slim@/m)
   })
 })

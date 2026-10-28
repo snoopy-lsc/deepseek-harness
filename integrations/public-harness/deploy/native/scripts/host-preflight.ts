@@ -18,6 +18,22 @@ const defaultHost: PreflightHost = {
   run: (command, args) => execFileSync(command, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10_000 }),
 }
 
+/** Oldest Node.js the services and the instance toolchain may run; equals the workspace `engines.node` floor. */
+export const MIN_NODE_VERSION = '24.9.0'
+/** Node used by the service units' `ExecStart=`. */
+const SERVICE_NODE = '/usr/bin/node'
+
+function nodeVersion(output: string): readonly [number, number, number] {
+  const match = /^v(\d+)\.(\d+)\.(\d+)\s*$/.exec(output.trim())
+  if (match === null) throw new Error('unrecognized node --version output')
+  return [Number(match[1]), Number(match[2]), Number(match[3])]
+}
+
+function atLeast(version: readonly number[], floor: readonly number[]): boolean {
+  for (let i = 0; i < 3; i++) if (version[i] !== floor[i]) return (version[i] as number) > (floor[i] as number)
+  return true
+}
+
 /** Run every check; none mutates the host.
  * @param common Common provisioner settings (the `provisioner` record).
  * @param nativeOptions Native companion settings.
@@ -49,6 +65,15 @@ export async function preflight(common: unknown, nativeOptions: unknown, host: P
     const state = host.run(config.tools.xfsQuota, ['-x', '-c', 'state -u', config.paths.quotaMount])
     if (!/Enforcement:\s*ON/.test(state)) throw new Error('XFS user quota enforcement is off on the quota mount')
     return 'user quota enforced'
+  })
+  await check('node-version', async () => {
+    const floor = nodeVersion(`v${MIN_NODE_VERSION}`)
+    const found = [config.tools.node, SERVICE_NODE].map(binary => {
+      const version = nodeVersion(host.run(binary, ['--version']))
+      if (!atLeast(version, floor)) throw new Error(`${binary} is v${version.join('.')}; Node ${MIN_NODE_VERSION} or later is required`)
+      return `${binary} v${version.join('.')}`
+    })
+    return found.join(', ')
   })
   await check('nftables', async () => { host.run(config.tools.nft, ['--version']); return 'available' })
   await check('resolv-conf', async () => { await validateHostResolvConf(); return 'regular root-owned file' })

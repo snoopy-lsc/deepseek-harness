@@ -30,7 +30,7 @@ kind: "package-library"
 <a id="install-on-a-linux-host"></a>
 ## 在 Linux 主机上安装
 
-使用专用主机，需具备 systemd、用户管理器已委派 `cpu`、`cpuset`、`hugetlb`、`io`、`memory` 和 `pids` 的 cgroup v2（实验室中无根 Podman 配合 `runsc` 缺少其中任何一个都无法启动，因此缺少时配置服务拒绝启动实例）、无根 Podman、gVisor `runsc`、nftables、Caddy 2.7 或更新版本，以及为 `quotaMount` 启用用户配额的文件系统。Caddyfile 使用 `servers { trusted_proxies }`，Debian 打包的 Caddy 2.6.2 无法解析；已用 Caddy 2.11.7 验证，请安装当前的官方构建。把构建好的集成项目和 Harness 安装到 `/opt/dsh-public`，再复制下列文件。
+使用专用主机，需具备 systemd、用户管理器已委派 `cpu`、`cpuset`、`hugetlb`、`io`、`memory` 和 `pids` 的 cgroup v2（实验室中无根 Podman 配合 `runsc` 缺少其中任何一个都无法启动，因此缺少时配置服务拒绝启动实例）、无根 Podman、gVisor `runsc`、nftables、供主机服务使用的 Node.js 24.9 或更新版本、Caddy 2.7 或更新版本，以及为 `quotaMount` 启用用户配额的文件系统。Caddyfile 使用 `servers { trusted_proxies }`，Debian 打包的 Caddy 2.6.2 无法解析；已用 Caddy 2.11.7 验证，请安装当前的官方构建。把构建好的集成项目和 Harness 安装到 `/opt/dsh-public`，再复制下列文件。
 
 ```bash
 install -m 0644 deploy/production/systemd/sysusers.conf /etc/sysusers.d/dsh-public.conf

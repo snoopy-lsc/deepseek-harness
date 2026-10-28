@@ -142,7 +142,7 @@ See the [native deployment design](../../../../docs/superpowers/specs/2026-10-11
 - DingTalk has been exercised only against the local mock; a real app, its redirect URL and private or exclusive deployments still need a check.
 - WeCom has been exercised only against the local mock; a real corp, its trusted domain and private deployments still need a check. WeCom members without a readable email see the `@sso.invalid` placeholder on the account page.
 - OIDC has been exercised only against the local mock IdP. Keycloak, Authing or Azure AD still need a real-host check. Group membership is checked at sign-in, so removing a user from a group stops new sessions but not a live one. Accounts created by public registration before SSO was enabled cannot sign in with a password in SSO mode.
-- `node:sqlite` is still marked experimental in Node 22 and prints a warning at startup.
+- The service requires Node.js 24.9 or later. `node:sqlite` printed an experimental warning at startup on Node 22; Node 24.22.1 loads it without one.
 
 <a id="dev-note"></a>
 ## Dev Note

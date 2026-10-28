@@ -142,7 +142,7 @@ Harness Web 的个人中心使用 `/account/api/me/*`：`GET /security`（登录
 - 钉钉只在本地 mock 上运行过；真实应用、重定向 URL 和私有化或专属部署仍需检查。
 - 企业微信只在本地 mock 上运行过；真实企业、其可信域名和私有化部署仍需检查。读不到邮箱的企业微信成员会在账户页看到 `@sso.invalid` 占位地址。
 - OIDC 只在本地 mock IdP 上运行过，Keycloak、Authing 或 Azure AD 仍需在真实主机上检查。群组成员资格在登录时检查，因此把用户移出群组会阻止新会话，但不会结束已有会话。启用 SSO 之前通过公开注册创建的账户在 SSO 模式下不能用密码登录。
-- `node:sqlite` 在 Node 22 中仍标记为实验特性，启动时会打印警告。
+- 服务需要 Node.js 24.9 或更新版本。`node:sqlite` 在 Node 22 上启动时会打印实验特性警告；Node 24.22.1 加载时不再打印。
 
 <a id="dev-note"></a>
 ## 开发说明

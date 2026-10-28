@@ -27,13 +27,13 @@ kind: "package-library"
 <a id="install-on-a-dedicated-host"></a>
 ## 在专用主机上安装
 
-安装由运维人员完成，每一步都需要在不运行其他服务的专用 Ubuntu 24.04 主机上使用 root 权限。在 `/srv/dsh-public` 挂载启用用户配额的 XFS 文件系统。设置 `kernel.apparmor_restrict_unprivileged_userns=1`，并让 `/etc/resolv.conf` 成为 root 拥有的普通文件。把发布包、工具链和固定版本浏览器安装为 root 拥有的只读目录树，并用 `install-browser.sh verify` 校验浏览器。把 `systemd/sysusers.conf` 和 `systemd/tmpfiles.conf` 复制为 `/etc/sysusers.d/dsh-public.conf` 和 `/etc/tmpfiles.d/dsh-public.conf` 并应用。把四个 `config/*.json.example` 复制到 `/etc/dsh-public/`，填入主机名和组 ID。参照 [identity.env.example](config/identity.env.example) 创建 `/etc/dsh-public/identity-secrets/identity.env`（root，0600），写入邮件和 CAPTCHA 服务及其密钥。identity unit 通过 `EnvironmentFile=` 加载该文件，缺少变量时拒绝启动。用 `writeProductionProfile(home, name, { runtime: 'systemd' })` 为 `identity`、`team-router`、`provisioner` 和 `quota` 写入 profile。安装 unit 和 [Caddyfile](Caddyfile)，然后运行预检：
+安装由运维人员完成，每一步都需要在不运行其他服务的专用 Ubuntu 24.04 主机上使用 root 权限。在 `/srv/dsh-public` 挂载启用用户配额的 XFS 文件系统。设置 `kernel.apparmor_restrict_unprivileged_userns=1`，并让 `/etc/resolv.conf` 成为 root 拥有的普通文件。把 Node.js 24.9 或更新版本安装为 unit 使用的 `/usr/bin/node`，工具链中的 `/opt/dsh-public/toolchain/node` 也须满足同一下限。把发布包、工具链和固定版本浏览器安装为 root 拥有的只读目录树，并用 `install-browser.sh verify` 校验浏览器。把 `systemd/sysusers.conf` 和 `systemd/tmpfiles.conf` 复制为 `/etc/sysusers.d/dsh-public.conf` 和 `/etc/tmpfiles.d/dsh-public.conf` 并应用。把四个 `config/*.json.example` 复制到 `/etc/dsh-public/`，填入主机名和组 ID。参照 [identity.env.example](config/identity.env.example) 创建 `/etc/dsh-public/identity-secrets/identity.env`（root，0600），写入邮件和 CAPTCHA 服务及其密钥。identity unit 通过 `EnvironmentFile=` 加载该文件，缺少变量时拒绝启动。用 `writeProductionProfile(home, name, { runtime: 'systemd' })` 为 `identity`、`team-router`、`provisioner` 和 `quota` 写入 profile。安装 unit 和 [Caddyfile](Caddyfile)，然后运行预检：
 
 ```bash
 tsx deploy/native/scripts/host-preflight.ts /etc/dsh-public/provisioner.json /etc/dsh-public/native.json
 ```
 
-预检只读取主机状态。它报告操作系统版本、cgroup 控制器、AppArmor 与用户命名空间限制、XFS 配额强制、nftables、`resolv.conf`、资源所有权和浏览器版本，任何检查失败时以 1 退出。
+预检只读取主机状态。它报告操作系统版本、工具链与 `/usr/bin/node` 的 Node.js 版本、cgroup 控制器、AppArmor 与用户命名空间限制、XFS 配额强制、nftables、`resolv.conf`、资源所有权和浏览器版本，任何检查失败时以 1 退出。
 
 <a id="service-boundaries"></a>
 ## 服务边界
