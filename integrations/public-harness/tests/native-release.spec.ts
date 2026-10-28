@@ -24,6 +24,35 @@ async function evidence(overrides: Record<string, unknown> = {}) {
 }
 const ctx = { now: NOW, maxAgeMs: 7 * 86_400_000 }
 
+describe('schema 2 strictness (review S3)', () => {
+  const v2 = async () => (await shipped('deploy/production/release-manifest.json')) as Record<string, unknown> & { previous: Record<string, unknown> | null; runtime: Record<string, unknown> }
+
+  it('validates a container image with the same reference rule as schema 1', async () => {
+    const manifest = await v2()
+    for (const image of ['localhost/dsh-instance:2026.10.0-rc3', 'registry.example/dsh@sha256:' + 'a'.repeat(64)]) {
+      expect(parseAnyReleaseManifest({ ...manifest, runtime: { kind: 'podman-gvisor', image } }).runtime).toEqual({ kind: 'podman-gvisor', image })
+    }
+    for (const image of ['bad image:tag', ':tag', 'name', '-x:1', `a:${'b'.repeat(300)}`, 'a:b\n', 'a:b;rm']) {
+      expect(() => parseAnyReleaseManifest({ ...manifest, runtime: { kind: 'podman-gvisor', image } }), image).toThrow(/runtime is invalid/)
+      expect(() => parseAnyReleaseManifest({ ...legacyV1, image }), image).toThrow(/image/)
+    }
+  })
+
+  it('requires exactly the release-set keys in previous', async () => {
+    const manifest = await v2()
+    const previous = manifest.previous ?? { release: '2026.10.0-rc2', harness: legacyV1.harness, pluginApi: legacyV1.pluginApi, bundles: legacyV1.bundles,
+      runtime: { kind: 'podman-gvisor', image: legacyV1.image } }
+    expect(parseAnyReleaseManifest({ ...manifest, previous }).previous?.release).toBe(previous.release)
+    expect(() => parseAnyReleaseManifest({ ...manifest, previous: { ...previous, extra: true } })).toThrow(/previous has unexpected/)
+    expect(() => parseAnyReleaseManifest({ ...manifest, previous: { ...previous, previous: null } })).toThrow(/previous has unexpected/)
+    expect(() => parseAnyReleaseManifest({ ...manifest, previous: { ...previous, publicEnrollment: 'closed' } })).toThrow(/previous has unexpected/)
+    const { runtime: _runtime, ...withoutRuntime } = previous
+    expect(() => parseAnyReleaseManifest({ ...manifest, previous: withoutRuntime })).toThrow(/previous has unexpected/)
+    expect(() => parseAnyReleaseManifest({ ...manifest, previous: [] })).toThrow(/previous has unexpected/)
+    expect(() => parseAnyReleaseManifest({ ...manifest, previous: 'r1' })).toThrow(/previous has unexpected/)
+  })
+})
+
 describe('shipped schema 2 release manifests', () => {
   it('ship the native mainline manifest as schema 2, tagged systemd, unstamped and aligned to the workspace Harness', async () => {
     const raw = await shipped('deploy/release-manifest.json')

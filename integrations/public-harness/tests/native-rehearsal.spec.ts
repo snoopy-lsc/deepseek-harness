@@ -1,10 +1,10 @@
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { NATIVE_CHECKS, nativeHostId, parseAnyReleaseManifest, validateNativeEvidence } from '../deploy/native-release.ts'
 import { runNativeRehearsal, stampFromInstalledTrees, treeDigest } from '../deploy/native/scripts/rehearse.ts'
-import { main as stampManifest } from '../deploy/native/scripts/stamp-manifest.ts'
+import { main as stampManifest, outputRefusal } from '../deploy/native/scripts/stamp-manifest.ts'
 
 async function fixture() {
   const base = await mkdtemp(join(tmpdir(), 'dsh-rehearsal-'))
@@ -63,6 +63,36 @@ describe('native rehearsal tooling', () => {
     expect(await stampManifest([source, out, '--policy', f.policy, '--toolchain', f.toolchain])).toBe(0)
     expect(parseAnyReleaseManifest(JSON.parse(await readFile(out, 'utf8'))).runtime).toEqual(f.manifest.runtime)
     expect(JSON.parse(await readFile(source, 'utf8'))).toEqual(unstamped)
+  })
+
+  it('stamp-manifest refuses an output inside a digested tree or an unsafe output path (review S2)', async () => {
+    const f = await fixture()
+    const source = join(f.base, 'source.json')
+    await writeFile(source, JSON.stringify({ ...f.manifest, schema: 2, runtime: { kind: 'systemd', policyDigest: null, toolchainDigest: null } }))
+    const before = [await treeDigest([f.policy]), await treeDigest([f.toolchain])]
+    const roots = [f.policy, f.toolchain]
+    await symlink(f.policy, join(f.base, 'policy-link'))
+    await mkdir(join(f.base, 'out-dir'))
+    for (const [out, reason] of [
+      [join(f.policy, 'stamped.json'), /inside the digested tree/],
+      [join(f.toolchain, 'nested', '..', 'stamped.json'), /inside the digested tree/],
+      [join(f.base, 'policy-link', 'stamped.json'), /inside the digested tree/],
+      [f.policy, /inside the digested tree|not a regular file/],
+      ['stamped.json', /absolute/],
+      [`${f.base}/`, /absolute file path/],
+      [join(f.base, 'missing', 'stamped.json'), /does not exist/],
+      [join(f.base, 'out-dir'), /not a regular file/],
+      [join(f.base, 'policy-link', '..', 'source.json'), /source/],
+    ] as const) expect(await outputRefusal(source, out, roots), out).toMatch(reason)
+    expect(await outputRefusal(source, join(f.base, 'stamped.json'), ['relative/policy'])).toMatch(/roots must be absolute/)
+    expect(await outputRefusal(source, join(f.base, 'stamped.json'), roots)).toBeUndefined()
+    const error = process.stderr.write
+    process.stderr.write = (() => true) as typeof process.stderr.write
+    try {
+      expect(await stampManifest([source, join(f.policy, 'stamped.json'), '--policy', f.policy, '--toolchain', f.toolchain])).toBe(2)
+      expect(await stampManifest([source, join(f.toolchain, 'stamped.json'), '--policy', f.policy, '--toolchain', f.toolchain])).toBe(2)
+    } finally { process.stderr.write = error }
+    expect([await treeDigest([f.policy]), await treeDigest([f.toolchain])]).toEqual(before)
   })
 
   it('stale_or_wrong_policy_stays_closed: an installed policy change stops the rehearsal', async () => {

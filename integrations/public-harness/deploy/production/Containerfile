@@ -1,5 +1,9 @@
 # Instance image: one `dsh --profile web` per container, started by container-entry.js from the read-only assets mount.
-# Build with: scripts/build-image.sh   (pins the Harness and plugin dependencies from release-manifest.json)
+# Build with: scripts/build-image.sh <dsh.tgz> <image-ref>, which installs the packed Harness CLI you pass in
+# (DSH_TARBALL). Neither build-image.sh nor build-assets.sh reads production/release-manifest.json: pack the
+# version that manifest pins, and record the built reference in its runtime.image yourself.
+# The base digest is still a placeholder and the build fails until it is pinned: replace REPLACE_WITH_PINNED_DIGEST
+# with the digest of the exact node image before cutting a frozen-line release.
 FROM docker.io/library/node:24.22.1-bookworm-slim@sha256:REPLACE_WITH_PINNED_DIGEST
 
 ARG DSH_TARBALL
