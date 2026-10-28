@@ -9,7 +9,7 @@ kind: "package-library"
 
 ## Summary
 
-本项目包含面向公开 Harness 部署、独立版本管理的 Cordis 包。它使用单独的 pnpm 工作区，以便与兼容版本的 Harness 一起安装插件。`team-dev` 配置可在本机运行双用户 Web 服务。公开注册和 Linux 隔离由 [deploy/production](deploy/production/README.zh.md) 下的生产部署提供，在其发布检查允许之前不开放公开注册。
+本项目包含面向公开 Harness 部署、独立版本管理的 Cordis 包。它使用单独的 pnpm 工作区，以便与兼容版本的 Harness 一起安装插件。`team-dev` 配置可在本机运行双用户 Web 服务。公开注册和 Linux 隔离由生产部署提供，在其发布检查允许之前不开放公开注册。[deploy/native](deploy/native/README.zh.md) 下的原生 systemd 部署是运行时主线，`writeProductionProfile` 默认选择它。[deploy/production](deploy/production/README.zh.md) 下的容器部署（无根 Podman 加 gVisor）已冻结：仍可用 `runtime: 'podman-gvisor'` 选择，保留测试并继续修复问题，但不再增加新特性。
 
 ## Table of Contents
 

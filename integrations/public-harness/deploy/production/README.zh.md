@@ -11,6 +11,8 @@ kind: "package-library"
 
 此目录包含 Team Harness 的 Linux 部署：带 authentik 转发认证的 Caddy 入口、作为 systemd 单元的路由器、配置服务和额度服务、出站防火墙、实例镜像、备份脚本以及发布检查。在发布检查允许之前，公开注册保持关闭。
 
+此容器运行时（无根 Podman 加 gVisor）已冻结：继续维护、保持可用并保留测试，问题照常修复，但不再增加新特性。[原生部署](../native/README.zh.md)是运行时主线，也是 `writeProductionProfile` 的默认值，因此容器部署必须显式选择 `runtime: 'podman-gvisor'`。
+
 ## Table of Contents
 
 - [在 Linux 主机上安装](#install-on-a-linux-host)
@@ -43,7 +45,7 @@ systemd-sysusers && systemd-tmpfiles --create && nft -f /etc/nftables.d/dsh-publ
 
 把 `dsh-market.nft` 放到位，供插件市场 socket 单元使用，但**不要**用上面的 `nft -f`（或 `nftables.service` 对 `dsh-public.nft` 的 include）加载它。`dsh-plugins.socket` 通过 `ExecStartPost=-`（失败不致命）加载 `inet dsh_market`；配置服务的探测也会恢复它。若与 `dsh-public.nft` 同路径加载，会把两张表绑在一起，并在 `flush ruleset` 清空后缺少 socket 单元的重载路径。
 
-把每个 `deploy/production/config/*.example.json` 去掉 `.example` 后复制到 `/etc/dsh-public/`，属主为 root 且其他用户不可写，并替换所有占位符：两个组 ID、authentik audience 和密钥文件、模型上游、实例镜像以及主机名。把平台模型密钥、令牌密钥和健康密钥作为属主为 `dsh-quota` 的 `0600` 文件放入 `/etc/dsh-public/secrets/`。将 `deploy/authentik/brand.yml` 和 `deploy/authentik/public-harness.yaml` 作为 authentik 蓝图导入，CAPTCHA 密钥放在 authentik 的环境变量中。用 `scripts/build-image.sh` 和 `scripts/build-assets.sh` 构建镜像和运行时资源发布版，把 `/opt/dsh-public/assets/current` 指向该发布版，用 `deploy/production-profile.ts` 生成三个配置，再启动 `dsh-public.target`。在出站表、限制和 gVisor 验证通过之前，配置服务拒绝启动任何实例。
+把每个 `deploy/production/config/*.example.json` 去掉 `.example` 后复制到 `/etc/dsh-public/`，属主为 root 且其他用户不可写，并替换所有占位符：两个组 ID、authentik audience 和密钥文件、模型上游、实例镜像以及主机名。把平台模型密钥、令牌密钥和健康密钥作为属主为 `dsh-quota` 的 `0600` 文件放入 `/etc/dsh-public/secrets/`。将 `deploy/authentik/brand.yml` 和 `deploy/authentik/public-harness.yaml` 作为 authentik 蓝图导入，CAPTCHA 密钥放在 authentik 的环境变量中。用 `scripts/build-image.sh` 和 `scripts/build-assets.sh` 构建镜像和运行时资源发布版，把 `/opt/dsh-public/assets/current` 指向该发布版，用 `deploy/production-profile.ts` 中的 `writeProductionProfile` 并传入 `runtime: 'podman-gvisor'` 生成三个配置（默认是原生运行时），再启动 `dsh-public.target`。在出站表、限制和 gVisor 验证通过之前，配置服务拒绝启动任何实例。
 
 `scripts/build-image.sh` 还会导出 `runtime.imageArchive` 指定的镜像归档（默认 `/opt/dsh-public/image/dsh-instance.tar`，所有账号可读）。配置服务不共享镜像存储：每个账号有自己的无根存储，因此账号首次启动时会以该账号身份执行 `podman load` 加载归档（未配置归档时则 `podman pull` `runtime.image`），一次只处理一个账号；之后若配置的镜像引用仍不存在，则拒绝启动。容器以 `--userns keep-id:uid=10001,gid=10001` 启动，因此镜像用户（uid 10001）写入的内容归主机账号所有；请保持 Containerfile 中的用户与该映射一致。在主机上验证该映射时，以 root 读取该账号正在运行的 gVisor 沙箱的映射：用 `ps -eo pid,user,args | grep runsc-sandbox` 找到其进程，再运行 `cat /proc/<pid>/uid_map`；其中 `10001 <该账号的主机 uid> 1` 这一行（`gid_map` 中同样）就是证据，另一项证据是运行参数列表，`assertSafeRunArgv` 只接受恰好带这一个 `--userns` 值的参数。conmon 的命令行（Podman 不会把自己的参数传给 conmon）和 `podman inspect`（它把 `UsernsMode` 报告为 `private`）都不会显示 keep-id 值，因此二者都不能作为证据，无论正反。首次启动会较慢（实验中 5.1 GB 的归档加载耗时 31 秒；路由器配置的 `provisionerEnsureTimeoutMs` 决定路由器最多等待多久，示例中为 20 分钟，且不得小于 `routeWaitMs`），且每个账号保存一份镜像并计入该账号的磁盘配额，因此 `diskBytes` 要按镜像加用户数据来估算。
 

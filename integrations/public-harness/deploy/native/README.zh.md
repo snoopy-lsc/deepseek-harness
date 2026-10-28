@@ -11,6 +11,8 @@ kind: "package-library"
 
 本目录包含公共 Harness 的原生部署。每个用户以锁定的 Linux 账号运行在独立的 system unit 和 slice 中，并受 AppArmor、cgroup 限制、XFS 配额和自有 nftables 表约束。Better Auth 负责注册和会话。Caddy 终止 TLS，只转发到 Unix socket。在真实主机证据通过发布检查之前，公共注册保持关闭。
 
+此原生部署是运行时主线：未指定运行时时 `writeProductionProfile` 选择 `systemd`，新的运行时特性都落在这里。[容器部署](../production/README.zh.md)已冻结：继续维护并保留测试，但不再增加新特性。
+
 ## Table of Contents
 
 - [在专用主机上安装](#install-on-a-dedicated-host)

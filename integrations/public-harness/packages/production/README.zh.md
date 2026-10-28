@@ -23,7 +23,7 @@ kind: "package-library"
 <a id="use-this-package"></a>
 ## 使用此包
 
-用 `deploy/production-profile.ts` 中的 `writeProductionProfile` 为每个服务生成 dsh 配置，再由其 systemd 单元启动 `dsh --profile team-router`、`--profile provisioner` 或 `--profile quota`。原生部署还可以启动 `--profile kb`，即知识库服务（`kb-service.ts`，示例 `deploy/production/config/kb.example.json`）：它以非特权的 `dsh-kb` 账号运行（`deploy/native/systemd/dsh-kb.service`）；用户助手通过按套接字激活的 root 助手启动（`kb-root-helper.ts`、`dsh-kb-root.socket` 和 `dsh-kb-root@.service`，示例 `kb-root.example.json`），由它以各自的原生账号运行 `systemd-run`；组织知识库通过直接助手以服务账号运行；编译通过配额服务的任务 socket 计费（配额配置中的 `jobSocket` 和 `jobSocketGid`：只允许对 `kbjob-` 通道执行 open-job、issue 和 close-job）。`deploy/production/config/` 下的示例文件列出了每个字段。配置文件必须是普通文件，且组和其他用户不可写；密钥只以文件路径引用。
+用 `deploy/production-profile.ts` 中的 `writeProductionProfile` 为每个服务生成 dsh 配置（provisioner 配置默认挂载原生 `systemd` 运行时，传入 `runtime: 'podman-gvisor'` 才选择已冻结的容器运行时），再由其 systemd 单元启动 `dsh --profile team-router`、`--profile provisioner` 或 `--profile quota`。原生部署还可以启动 `--profile kb`，即知识库服务（`kb-service.ts`，示例 `deploy/production/config/kb.example.json`）：它以非特权的 `dsh-kb` 账号运行（`deploy/native/systemd/dsh-kb.service`）；用户助手通过按套接字激活的 root 助手启动（`kb-root-helper.ts`、`dsh-kb-root.socket` 和 `dsh-kb-root@.service`，示例 `kb-root.example.json`），由它以各自的原生账号运行 `systemd-run`；组织知识库通过直接助手以服务账号运行；编译通过配额服务的任务 socket 计费（配额配置中的 `jobSocket` 和 `jobSocketGid`：只允许对 `kbjob-` 通道执行 open-job、issue 和 close-job）。`deploy/production/config/` 下的示例文件列出了每个字段。配置文件必须是普通文件，且组和其他用户不可写；密钥只以文件路径引用。
 
 <a id="understand-the-implementation"></a>
 ## 了解实现

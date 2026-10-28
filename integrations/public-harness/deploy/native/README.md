@@ -11,6 +11,8 @@ English | [中文](README.zh.md)
 
 This directory holds the native deployment of public Harness. Each user runs as a locked Linux account in its own system unit and slice, confined by AppArmor, cgroup limits, XFS quotas and an owned nftables table. Better Auth handles registration and sessions. Caddy terminates TLS and forwards to Unix sockets only. Public enrollment stays closed until real-host evidence passes the release check.
 
+This native deployment is the mainline runtime: `writeProductionProfile` selects `systemd` when no runtime is named, and new runtime features land here. The [container deployment](../production/README.md) is frozen: it stays maintained and tested but gets no new features.
+
 ## Table of Contents
 
 - [Install on a dedicated host](#install-on-a-dedicated-host)

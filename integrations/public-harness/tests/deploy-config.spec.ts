@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { isMap, isScalar, isSeq, parse, parseDocument, type Document } from 'yaml'
 import { describe, expect, it } from 'vitest'
 import { collectConfigFacts } from '../deploy/release-check.ts'
-import { PRODUCTION_PROFILES, writeProductionProfile } from '../deploy/production-profile.ts'
+import { DEFAULT_RUNTIME, FROZEN_RUNTIMES, PRODUCTION_PROFILES, RUNTIME_PROVIDERS, writeProductionProfile } from '../deploy/production-profile.ts'
 import { portRangesOverlap } from '../packages/contracts/src/ports.ts'
 import { parseReleaseManifest } from '../deploy/upgrade.ts'
 import { resolveContainerConfig } from '../packages/provisioner/src/config.ts'
@@ -498,14 +498,42 @@ describe('production profile generation', () => {
       expect(await writeProductionProfile(home, name, { configFile: `/etc/dsh-public/${name}.json`, installRoot: '/opt/dsh-public/integration/' })).toBe(profile)
       const patch = JSON.parse(await readFile(join(profile, 'cordis.patch.yml'), 'utf8')) as Array<{ insert: Array<{ name: string; config: { configFile: string } }> }>
       if (name === 'provisioner') {
-        expect(patch[0]!.insert.map(row => row.name.split('/').at(-1))).toEqual(['container-runtime.js', 'provisioner-service.js'])
+        // Native (systemd) is the mainline: with no runtime the provisioner mounts the systemd provider.
+        expect(patch[0]!.insert.map(row => row.name.split('/').at(-1))).toEqual(['systemd-runtime.js', 'provisioner-service.js'])
       }
       expect(patch[0]!.insert[0]!.config.configFile).toBe(`/etc/dsh-public/${name}.json`)
       expect(patch[0]!.insert[0]!.name).toMatch(/^file:\/\/\/opt\/dsh-public\/integration\/packages\/production\/lib\/.+\.js$/)
     }
     await writeFile(join(home, 'profiles', 'quota', 'cordis.patch.yml'), '[]\n')
+    await expect(writeProductionProfile(home, 'provisioner', { configFile: '/etc/dsh-public/provisioner.json', installRoot: '/opt/dsh-public/integration/', runtime: 'nope' as never })).rejects.toThrow(/unknown runtime/)
     await expect(writeProductionProfile(home, 'quota', { configFile: '/etc/dsh-public/quota.json', installRoot: '/opt/dsh-public/integration/' })).rejects.toThrow(/differs/)
     await expect(writeProductionProfile(home, 'quota', { configFile: 'relative.json' })).rejects.toThrow(/absolute/)
+  })
+})
+
+describe('runtime mainline', () => {
+  it('defaults to the native systemd runtime and keeps the frozen container runtime selectable', async () => {
+    expect(DEFAULT_RUNTIME).toBe('systemd')
+    expect(Object.keys(RUNTIME_PROVIDERS).sort()).toEqual(['podman-gvisor', 'systemd'])
+    expect(FROZEN_RUNTIMES).toEqual(['podman-gvisor'])
+    const home = await mkdtemp(join(tmpdir(), 'dsh-container-profile-'))
+    const container = await writeProductionProfile(home, 'provisioner', { configFile: '/etc/dsh-public/provisioner.json', installRoot: '/opt/dsh-public/integration/', runtime: 'podman-gvisor' })
+    const patch = JSON.parse(await readFile(join(container, 'cordis.patch.yml'), 'utf8')) as Array<{ insert: Array<{ id: string; name: string }> }>
+    expect(patch[0]!.insert.map(row => row.name.split('/').at(-1))).toEqual(['container-runtime.js', 'provisioner-service.js'])
+    expect(patch[0]!.insert[0]!.id).toBe('public-harness-container-runtime')
+    // identity and kb stay native-only; the default runtime is accepted for them.
+    for (const name of ['identity', 'kb'] as const) {
+      await expect(writeProductionProfile(home, name, { configFile: `/etc/dsh-public/${name}.json`, installRoot: '/opt/dsh-public/integration/' })).resolves.toContain(name)
+    }
+  })
+
+  it('documents native as the mainline and the container runtime as frozen in both languages', async () => {
+    for (const path of ['README.md', 'deploy/production/README.md', 'deploy/native/README.md']) {
+      expect(await text(path), path).toMatch(/frozen/i)
+      expect(await text(path.replace(/\.md$/, '.zh.md')), path).toContain('冻结')
+    }
+    expect(await text('README.md')).toMatch(/native systemd deployment[^\n]*is the mainline runtime/i)
+    expect(await text('README.zh.md')).toContain('主线')
   })
 })
 

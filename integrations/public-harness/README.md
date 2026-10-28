@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This project contains independently versioned Cordis packages for the public Harness deployment. It is a separate pnpm workspace so its plugins can be installed alongside a compatible Harness release. The `team-dev` profile runs a local-only two-user Web service. Public registration and Linux isolation run from the production deployment under [deploy/production](deploy/production/README.md), which stays closed to public enrollment until its release check allows it.
+This project contains independently versioned Cordis packages for the public Harness deployment. It is a separate pnpm workspace so its plugins can be installed alongside a compatible Harness release. The `team-dev` profile runs a local-only two-user Web service. Public registration and Linux isolation run from a production deployment that stays closed to public enrollment until its release check allows it. The native systemd deployment under [deploy/native](deploy/native/README.md) is the mainline runtime, and `writeProductionProfile` selects it by default. The container deployment under [deploy/production](deploy/production/README.md) (rootless Podman with gVisor) is frozen: it stays selectable with `runtime: 'podman-gvisor'` and keeps its tests and fixes, but receives no new features.
 
 ## Table of Contents
 
