@@ -17,7 +17,7 @@ import {
 } from '../src/probe.ts'
 import { config, instance } from './fixture.ts'
 
-const marketPorts = { min: 31_000, max: 35_095 }
+const marketPorts = { min: 31_000, max: 32_767 }
 const listener = { path: 'system.slice/dsh-plugins.socket', level: 2 }
 const options = (): MarketFirewallOptions => ({ marketPorts, listenerCgroup: listener })
 
@@ -32,7 +32,7 @@ describe('dsh_market firewall render', () => {
     expect(script).toContain(`flush chain inet ${MARKET_TABLE} input`)
     expect(script).toContain(`flush chain inet ${MARKET_TABLE} market_listener`)
     expect(script).not.toMatch(/flush set inet dsh_market market_owner/)
-    expect(script).toContain('define MARKET_PORTS = 31000-35095')
+    expect(script).toContain('define MARKET_PORTS = 31000-32767')
     expect(script).toContain(
       `add rule inet ${MARKET_TABLE} input iif "lo" tcp dport $MARKET_PORTS jump market_listener`,
     )
@@ -67,11 +67,11 @@ describe('dsh_market firewall render', () => {
     expect(without).toContain(
       'in_1201 ct mark 1201 iif "lo" tcp dport 29100 accept\nadd rule inet dsh_native in_1201 ct mark 1201 iif "lo" counter drop\n',
     )
-    expect(without).not.toMatch(/tcp dport 31000-35095 accept/)
+    expect(without).not.toMatch(/tcp dport 31000-32767 accept/)
 
     const withMarket = renderUserNetwork(i, config(), { marketPorts })
     const quota = withMarket.indexOf('in_1201 ct mark 1201 iif "lo" tcp dport 29100 accept')
-    const market = withMarket.indexOf('in_1201 ct mark 1201 iif "lo" tcp dport 31000-35095 accept')
+    const market = withMarket.indexOf('in_1201 ct mark 1201 iif "lo" tcp dport 31000-32767 accept')
     const drop = withMarket.indexOf('in_1201 ct mark 1201 iif "lo" counter drop')
     expect(quota).toBeGreaterThanOrEqual(0)
     expect(market).toBeGreaterThan(quota)

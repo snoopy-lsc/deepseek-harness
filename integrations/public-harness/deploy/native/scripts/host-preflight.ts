@@ -5,6 +5,8 @@ import { execFileSync } from 'node:child_process'
 import { lstat, readFile } from 'node:fs/promises'
 import { parseSystemdConfig } from '../../../packages/runtime-systemd/src/config.ts'
 import { validateHostResolvConf, validateNativeAssets } from '../../../packages/runtime-systemd/src/storage.ts'
+import { DEFAULT_MARKET_RULES_PATH, checkMarketRulesFile, formatMarketPorts } from '../../../packages/runtime-systemd/src/market-firewall.ts'
+import { DEFAULT_MARKET_LOADER_PATH } from '../../../packages/runtime-systemd/src/plugins-units.ts'
 
 /** One named preflight result. */
 export interface PreflightResult { readonly check: string; readonly ok: boolean; readonly detail: string }
@@ -12,11 +14,18 @@ export interface PreflightResult { readonly check: string; readonly ok: boolean;
 export interface PreflightHost {
   read(path: string): Promise<string>
   run(command: string, args: readonly string[]): string
+  /** Owner, mode and type of a path without following a final symlink; defaults to `lstat`. */
+  stat?(path: string): Promise<{ readonly uid: number; readonly mode: number; readonly file: boolean }>
 }
+const lstatHost = async (path: string) => { const info = await lstat(path); return { uid: info.uid, mode: info.mode & 0o7777, file: info.isFile() } }
 const defaultHost: PreflightHost = {
+  stat: lstatHost,
   read: path => readFile(path, 'utf8'),
   run: (command, args) => execFileSync(command, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10_000 }),
 }
+
+/** Installed market firewall paths checked when `ports.market` is enabled. */
+export const MARKET_FIREWALL_PATHS = { loader: DEFAULT_MARKET_LOADER_PATH, rules: DEFAULT_MARKET_RULES_PATH, socket: '/etc/systemd/system/dsh-plugins.socket' } as const
 
 /** Oldest Node.js the services and the instance toolchain may run; equals the workspace `engines.node` floor. */
 export const MIN_NODE_VERSION = '24.9.0'
@@ -76,6 +85,28 @@ export async function preflight(common: unknown, nativeOptions: unknown, host: P
     return found.join(', ')
   })
   await check('nftables', async () => { host.run(config.tools.nft, ['--version']); return 'available' })
+  // With ports.market enabled the per-owner table is mandatory: without it dsh_native's per-uid accept lets every
+  // account reach every market port. Checks the installed loader, rules file and the fatal socket wiring.
+  if (config.ports.market !== undefined) {
+    const market = config.ports.market
+    await check('market-firewall', async () => {
+      const stat = host.stat ?? lstatHost
+      const loader = await stat(MARKET_FIREWALL_PATHS.loader)
+      if (!loader.file || loader.uid !== 0 || (loader.mode & 0o022) !== 0 || (loader.mode & 0o100) === 0) throw new Error(`${MARKET_FIREWALL_PATHS.loader} must be a root-owned executable not writable by group or others`)
+      const rules = await stat(MARKET_FIREWALL_PATHS.rules)
+      if (!rules.file || rules.uid !== 0 || (rules.mode & 0o022) !== 0) throw new Error(`${MARKET_FIREWALL_PATHS.rules} must be a root-owned regular file not writable by group or others`)
+      const problems = checkMarketRulesFile(await host.read(MARKET_FIREWALL_PATHS.rules), market)
+      if (problems.length > 0) throw new Error(`${MARKET_FIREWALL_PATHS.rules}: ${problems.join('; ')}`)
+      const unit = await host.read(MARKET_FIREWALL_PATHS.socket)
+      const posts = unit.split('\n').filter(line => line.startsWith('ExecStartPost='))
+      if (!posts.includes(`ExecStartPost=${MARKET_FIREWALL_PATHS.loader} ${MARKET_FIREWALL_PATHS.rules}`) || posts.some(line => line.startsWith('ExecStartPost=-'))) {
+        throw new Error(`${MARKET_FIREWALL_PATHS.socket} must run the loader as a fatal ExecStartPost (no "-" prefix)`)
+      }
+      let live: string
+      try { live = host.run(config.tools.nft, ['list', 'table', 'inet', 'dsh_market']) } catch { live = '' }
+      return `ports ${formatMarketPorts(market)}; loader and rules installed; ${live.includes('@market_owner drop') ? 'table loaded' : 'table not loaded yet (dsh-plugins.socket loads it)'}`
+    })
+  }
   await check('resolv-conf', async () => { await validateHostResolvConf(); return 'regular root-owned file' })
   await check('assets', async () => { await validateNativeAssets(config); return 'release, toolchain and browser trees are root-owned and immutable' })
   await check('browser-pin', async () => {

@@ -743,7 +743,7 @@ describe('native deployment composition', () => {
     })
     const byName = Object.fromEntries(results.map(result => [result.check, result.ok]))
     expect(byName).toMatchObject({ os: false, cgroup2: true, apparmor: false, 'xfs-quota': true, nftables: true })
-    expect(runs.every(line => /xfs_quota -x -c state -u|nft --version|--version$/.test(line))).toBe(true)
+    expect(runs.every(line => /xfs_quota -x -c state -u|nft --version|nft list table inet dsh_market$|--version$/.test(line))).toBe(true)
   })
 
   it('host preflight requires Node 24.9 or later for the toolchain and the service units', async () => {
@@ -753,7 +753,7 @@ describe('native deployment composition', () => {
       const runs: string[] = []
       const results = await preflight(provisioner.provisioner, nativeOptions, { read: async path => ok(path),
         run: (command, args) => { runs.push(`${command} ${args.join(' ')}`); return command in versions ? versions[command]! : 'Enforcement: ON' } })
-      expect(runs.every(line => /xfs_quota -x -c state -u|nft --version|--version$/.test(line))).toBe(true)
+      expect(runs.every(line => /xfs_quota -x -c state -u|nft --version|nft list table inet dsh_market$|--version$/.test(line))).toBe(true)
       return results.find(result => result.check === 'node-version')!
     }
     const toolchain = '/opt/dsh-public/toolchain/node'
