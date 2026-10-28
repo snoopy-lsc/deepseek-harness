@@ -25,7 +25,7 @@ This project contains independently versioned Cordis packages for the public Har
 
 Build the repository's Harness CLI and Web frontend, then run `pnpm install` and `pnpm dev` from this directory. Open the printed loopback URL, choose Alice or Bob, and use each user's separate Harness Web instance. Select `Platform` → `Local mock model` in the model picker to use the durable quota service. The [UI plugin](packages/ui/README.md) installs the same brand for every user. Edit `deploy/team-dev.config.json` before first launch to change the fixed test users and limits; set `PUBLIC_HARNESS_DEV_HOME` to choose the private data directory. The generated profile defaults to `.local/`. Run `pnpm test` and `pnpm typecheck` to check the integration. This development profile has no public registration.
 
-The plugin development dependencies and the [production release manifest](deploy/release-manifest.json) target Harness `0.2.1-alpha.2`. The manifest identifies a separate candidate release, so public enrollment requires Linux evidence recorded for that candidate.
+The [native release manifest](deploy/release-manifest.json) and the frozen [container release manifest](deploy/production/release-manifest.json) use schema 2 and pin Harness `0.2.1-rc.3` with the matching plugin interfaces. The plugin development dependencies still target the published `0.2.1-alpha.2` packages. The manifest identifies a separate candidate release, so public enrollment requires Linux evidence recorded for that candidate.
 
 <a id="understand-the-implementation"></a>
 ## Understand the implementation

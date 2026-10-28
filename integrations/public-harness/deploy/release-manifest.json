@@ -1,14 +1,18 @@
 {
-  "schema": 1,
-  "release": "2026.10.0-rc2",
+  "schema": 2,
+  "release": "2026.10.0-rc3",
   "harness": {
     "package": "@deepseek-ai/dsh",
-    "version": "0.2.1-alpha.2"
+    "version": "0.2.1-rc.3"
   },
-  "image": "localhost/dsh-instance:2026.10.0-rc2",
+  "runtime": {
+    "kind": "systemd",
+    "policyDigest": null,
+    "toolchainDigest": null
+  },
   "pluginApi": {
-    "@deepseek-ai/cordis": "4.0.5-alpha.1",
-    "@deepseek-ai/schemastery": "3.18.5-alpha.1"
+    "@deepseek-ai/cordis": "4.0.5",
+    "@deepseek-ai/schemastery": "3.18.5"
   },
   "bundles": {
     "@public-harness/contracts": "0.1.0",

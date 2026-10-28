@@ -55,7 +55,23 @@ Caddy 会移除调用方提供的身份和转发标头。它无法访问会话 s
 
 在接纳任何公共账户之前，专用主机必须通过[部署计划 Task 3](../../../../docs/superpowers/plans/2026-10-11-public-harness-native-deployment.zh.md) 的全部检查，涵盖工具、文件、进程、网络、资源、恢复、故障和升级恢复。[release-check](../release-check.ts) 中的 `validateNativeEvidence` 只接受在本主机上、针对本发布版本、策略和工具链、且在配置时效内记录的证据。模拟、跳过或过期的证据都会让注册保持关闭。
 
-原生发布使用 schema 2 清单，其 `runtime` 标记为 `systemd` 并带有策略和工具链摘要；schema 1 清单按仅容器读取，永远不能为原生主机放行。[rehearse.ts](scripts/rehearse.ts) 中的 `runNativeRehearsal` 只在设置 `DSH_NATIVE_REHEARSAL=dedicated-host` 时运行，已安装的策略或工具链摘要与清单不符时拒绝运行，任何检查缺少执行器或被跳过时把证据标记为 `realHost: false`。真实主机检查本身尚未实现。
+原生发布使用 schema 2 清单 [release-manifest.json](../release-manifest.json)，字段如下：
+
+- `schema`：固定为 `2`。
+- `release`：验证结果所绑定的发布编号。
+- `harness`：Harness 包名与版本，与工作区 CLI 版本一致。
+- `runtime`：主线为 `{ "kind": "systemd", "policyDigest", "toolchainDigest" }`；冻结的容器运行时在 [production/release-manifest.json](../production/release-manifest.json) 中为 `{ "kind": "podman-gvisor", "image" }`。
+- `pluginApi` 与 `bundles`：固定的插件接口和 bundle 版本，两份清单相同。
+- `previous`：可回滚到的发布集合（带自己的 `runtime`），或 `null`。
+- `publicEnrollment`：固定为 `closed`；只有记录的验证结果才能开放注册。
+
+每个摘要是 `sha256:` 加 64 位十六进制，覆盖已安装目录树的路径、权限、属主和内容，因此仓库中两者都为 `null`。安装发布后，在主机上把加盖摘要的副本写到被摘要的目录树之外：
+
+```bash
+tsx deploy/native/scripts/stamp-manifest.ts deploy/release-manifest.json /etc/dsh-public/release-manifest.stamped.json --policy <policy-dir> --toolchain /opt/dsh-public/toolchain
+```
+
+准入检查和演练都拒绝未加盖摘要的清单。schema 1 清单按仅容器读取，永远不能为原生主机放行。[rehearse.ts](scripts/rehearse.ts) 中的 `runNativeRehearsal` 只在设置 `DSH_NATIVE_REHEARSAL=dedicated-host` 时运行，已安装的策略或工具链摘要与清单不符时拒绝运行，任何检查缺少执行器或被跳过时把证据标记为 `realHost: false`。真实主机检查本身尚未实现。
 
 <a id="operate-the-host"></a>
 ## 运维主机

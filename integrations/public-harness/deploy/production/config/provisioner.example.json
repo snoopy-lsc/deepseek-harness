@@ -55,7 +55,7 @@
         "git": "/usr/bin/git",
         "env": "/usr/bin/env"
       },
-      "image": "localhost/dsh-instance:2026.10.0-rc2",
+      "image": "localhost/dsh-instance:2026.10.0-rc3",
       "imageArchive": "/opt/dsh-public/image/dsh-instance.tar",
       "hostAddress": "10.0.2.2",
       "network": "pasta",

@@ -1,0 +1,68 @@
+{
+  "schema": 2,
+  "release": "2026.10.0-rc3",
+  "harness": {
+    "package": "@deepseek-ai/dsh",
+    "version": "0.2.1-rc.3"
+  },
+  "runtime": {
+    "kind": "podman-gvisor",
+    "image": "localhost/dsh-instance:2026.10.0-rc3"
+  },
+  "pluginApi": {
+    "@deepseek-ai/cordis": "4.0.5",
+    "@deepseek-ai/schemastery": "3.18.5"
+  },
+  "bundles": {
+    "@public-harness/contracts": "0.1.0",
+    "@public-harness/dev-runtime": "0.1.0",
+    "@public-harness/identity": "0.1.0",
+    "@public-harness/kb": "0.1.0",
+    "@public-harness/plugin-sync": "0.1.0",
+    "@public-harness/plugins": "0.1.0",
+    "@public-harness/production": "0.1.0",
+    "@public-harness/provisioner": "0.1.0",
+    "@public-harness/provisioner-client": "0.1.0",
+    "@public-harness/quota": "0.1.0",
+    "@public-harness/quota-provider": "0.1.0",
+    "@public-harness/router": "0.1.0",
+    "@public-harness/runtime-systemd": "0.1.0",
+    "@public-harness/team-dev": "0.1.0",
+    "@public-harness/ui": "0.1.0",
+    "@public-harness/web-token": "0.1.0"
+  },
+  "previous": {
+    "release": "2026.10.0-rc2",
+    "harness": {
+      "package": "@deepseek-ai/dsh",
+      "version": "0.2.1-alpha.2"
+    },
+    "runtime": {
+      "kind": "podman-gvisor",
+      "image": "localhost/dsh-instance:2026.10.0-rc2"
+    },
+    "pluginApi": {
+      "@deepseek-ai/cordis": "4.0.5-alpha.1",
+      "@deepseek-ai/schemastery": "3.18.5-alpha.1"
+    },
+    "bundles": {
+      "@public-harness/contracts": "0.1.0",
+      "@public-harness/dev-runtime": "0.1.0",
+      "@public-harness/identity": "0.1.0",
+      "@public-harness/kb": "0.1.0",
+      "@public-harness/plugin-sync": "0.1.0",
+      "@public-harness/plugins": "0.1.0",
+      "@public-harness/production": "0.1.0",
+      "@public-harness/provisioner": "0.1.0",
+      "@public-harness/provisioner-client": "0.1.0",
+      "@public-harness/quota": "0.1.0",
+      "@public-harness/quota-provider": "0.1.0",
+      "@public-harness/router": "0.1.0",
+      "@public-harness/runtime-systemd": "0.1.0",
+      "@public-harness/team-dev": "0.1.0",
+      "@public-harness/ui": "0.1.0",
+      "@public-harness/web-token": "0.1.0"
+    }
+  },
+  "publicEnrollment": "closed"
+}

@@ -3,9 +3,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { parseUserId } from '../packages/contracts/src/index.ts'
+import { parseAnyReleaseManifest } from '../deploy/native-release.ts'
 import { currentRelease, parseReleaseManifest, preflightUpgrade, rolloutUpgrade, switchRelease, type CanaryProbe, type ReleaseManifest, type RolloutDeps } from '../deploy/upgrade.ts'
 
-const base = JSON.parse(await readFile(new URL('../deploy/release-manifest.json', import.meta.url), 'utf8')) as Record<string, unknown>
+/** Legacy schema 1 container manifest; the shipped manifests are schema 2 (see native-release.spec.ts). */
+const base: Record<string, unknown> = { schema: 1, release: '2026.10.0-rc3', harness: { package: '@deepseek-ai/dsh', version: '0.2.1-rc.3' }, image: 'localhost/dsh-instance:2026.10.0-rc3',
+  pluginApi: { '@deepseek-ai/cordis': '4.0.5', '@deepseek-ai/schemastery': '3.18.5' }, bundles: { '@public-harness/ui': '0.1.0' }, previous: null, publicEnrollment: 'closed' }
+const shipped = async (path: string) => parseAnyReleaseManifest(JSON.parse(await readFile(new URL(`../${path}`, import.meta.url), 'utf8')))
 const previous = { release: '2026.09.0', harness: { package: '@deepseek-ai/dsh', version: '0.2.0' }, image: 'localhost/dsh-instance:2026.09.0',
   pluginApi: { '@deepseek-ai/cordis': '4.0.4' }, bundles: { '@public-harness/ui': '0.0.9' } }
 const manifest = (overrides: Record<string, unknown> = {}): ReleaseManifest => parseReleaseManifest({ ...base, previous, ...overrides })
@@ -31,6 +35,16 @@ describe('release manifest', () => {
     [{ schema: 2 }, 'schema'],
   ])('rejects an unpinned or malformed manifest', (override, message) => {
     expect(() => parseReleaseManifest({ ...base, ...override })).toThrow(new RegExp(message, 'i'))
+  })
+})
+
+describe('schema 2 manifests drive the same upgrade path', () => {
+  it('preflights the shipped native and container manifests', async () => {
+    for (const path of ['deploy/release-manifest.json', 'deploy/production/release-manifest.json']) {
+      const current = await shipped(path)
+      expect(await preflightUpgrade(current, { ...probe(), installedPluginApi: async () => current.pluginApi, installedBundles: async () => current.bundles }), path)
+        .toEqual({ ok: true, failures: [] })
+    }
   })
 })
 

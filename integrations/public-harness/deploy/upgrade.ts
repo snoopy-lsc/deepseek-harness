@@ -62,6 +62,14 @@ export function parseReleaseManifest(value: unknown): ReleaseManifest {
   return { schema: 1, ...releaseSet(record, 'manifest'), previous, publicEnrollment: 'closed' }
 }
 
+/** What preflight and rollout read from a manifest; both the legacy schema 1 and the schema 2 manifests satisfy it. */
+export interface UpgradeManifest {
+  readonly release: string
+  readonly pluginApi: Readonly<Record<string, string>>
+  readonly bundles: Readonly<Record<string, string>>
+  readonly previous: { readonly release: string } | null
+}
+
 /** Canary checks run against a nonproduction profile that has the candidate Harness and every pinned bundle. */
 export interface CanaryProbe {
   /** Versions of the plugin-facing interfaces the candidate Harness actually provides. */
@@ -80,7 +88,7 @@ export interface CompatibilityReport {
 }
 
 /** Prove a candidate release in a canary profile before any user instance is touched. */
-export async function preflightUpgrade(manifest: ReleaseManifest, probe: CanaryProbe): Promise<CompatibilityReport> {
+export async function preflightUpgrade(manifest: UpgradeManifest, probe: CanaryProbe): Promise<CompatibilityReport> {
   const failures: string[] = []
   const attempt = async (name: string, action: () => Promise<void>): Promise<void> => {
     try { await action() } catch { failures.push(name) }
@@ -142,7 +150,7 @@ export interface RolloutDeps {
 }
 
 export interface RolloutOptions {
-  readonly manifest: ReleaseManifest
+  readonly manifest: UpgradeManifest
   /** Path of the symlink the provisioner mounts as the runtime assets. */
   readonly assetsLink: string
   /** Directory holding `<release>` subdirectories. */

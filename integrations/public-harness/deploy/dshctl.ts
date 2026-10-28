@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { parseUserId } from '../packages/contracts/src/index.ts'
 import { AdminClient } from '../packages/provisioner/src/admin.ts'
 import { checkPublicEnrollment, collectConfigFacts } from './release-check.ts'
-import { parseReleaseManifest } from './upgrade.ts'
+import { parseAnyReleaseManifest, requireRuntime } from './native-release.ts'
 
 const ADMIN_SOCKET = process.env.DSH_ADMIN_SOCKET ?? '/run/dsh-public/admin/admin.sock'
 const USER_COMMANDS = ['suspend', 'reactivate', 'request-deletion', 'confirm-deletion', 'delete'] as const
@@ -24,7 +24,8 @@ export async function main(argv: readonly string[]): Promise<number> {
   if (command === 'release-check' && rest.length === 2) {
     // dshctl release-check <evidence.json> <config-dir>; reads configuration files only, never secrets.
     const [evidencePath, configDir] = rest as [string, string]
-    const manifest = parseReleaseManifest(await json(new URL('./release-manifest.json', import.meta.url).pathname))
+    // This check covers the frozen container runtime, so it reads the container manifest; the native one is admitted by validateNativeEvidence.
+    const manifest = requireRuntime(parseAnyReleaseManifest(await json(new URL('./production/release-manifest.json', import.meta.url).pathname)), 'podman-gvisor')
     const config = collectConfigFacts({ caddyfile: await readFile(`${configDir}/Caddyfile`, 'utf8'), router: await json(`${configDir}/router.json`),
       provisioner: await json(`${configDir}/provisioner.json`), quota: await json(`${configDir}/quota.json`),
       blueprint: await readFile(`${configDir}/public-harness.yaml`, 'utf8'), manifestEnrollment: manifest.publicEnrollment })

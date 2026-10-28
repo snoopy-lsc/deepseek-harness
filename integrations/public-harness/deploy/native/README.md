@@ -55,7 +55,23 @@ Caddy removes caller identity and forwarding headers. It cannot reach the sessio
 
 Before any public account is admitted, a dedicated host must pass every check in [deployment plan Task 3](../../../../docs/superpowers/plans/2026-10-11-public-harness-native-deployment.md). The checks cover tools, files, processes, network, resources, recovery, failures and upgrade-restore. `validateNativeEvidence` in [release-check](../release-check.ts) accepts only evidence recorded on this host for this release, policy and toolchain, within the configured age. Simulated, skipped or stale evidence keeps enrollment closed.
 
-Native releases use a schema 2 manifest whose `runtime` is tagged `systemd` with policy and toolchain digests; a schema 1 manifest is read as container-only and can never admit a native host. `runNativeRehearsal` in [rehearse.ts](scripts/rehearse.ts) runs only with `DSH_NATIVE_REHEARSAL=dedicated-host`, refuses when the installed policy or toolchain digest differs from the manifest, and marks evidence `realHost: false` when any check has no runner or is skipped. The real-host check implementations themselves are not written yet.
+Native releases use the schema 2 manifest [release-manifest.json](../release-manifest.json). It has these fields:
+
+- `schema`: always `2`.
+- `release`: the release identifier that evidence binds to.
+- `harness`: the Harness package and version, equal to the workspace CLI version.
+- `runtime`: `{ "kind": "systemd", "policyDigest", "toolchainDigest" }` on the mainline, or `{ "kind": "podman-gvisor", "image" }` for the frozen container runtime in [production/release-manifest.json](../production/release-manifest.json).
+- `pluginApi` and `bundles`: the pinned plugin interface and bundle versions, shared by both manifests.
+- `previous`: the release set to roll back to, with its own `runtime`, or `null`.
+- `publicEnrollment`: always `closed`; only recorded evidence opens enrollment.
+
+Each digest is `sha256:` and 64 hexadecimal digits over the installed tree's paths, modes, owners and contents, so the repository ships both as `null`. After installing the release, stamp a copy on the host, outside the digested trees:
+
+```bash
+tsx deploy/native/scripts/stamp-manifest.ts deploy/release-manifest.json /etc/dsh-public/release-manifest.stamped.json --policy <policy-dir> --toolchain /opt/dsh-public/toolchain
+```
+
+Admission and the rehearsal refuse an unstamped manifest. A schema 1 manifest is read as container-only and can never admit a native host. `runNativeRehearsal` in [rehearse.ts](scripts/rehearse.ts) runs only with `DSH_NATIVE_REHEARSAL=dedicated-host`, refuses when the installed policy or toolchain digest differs from the manifest, and marks evidence `realHost: false` when any check has no runner or is skipped. The real-host check implementations themselves are not written yet.
 
 <a id="operate-the-host"></a>
 ## Operate the host

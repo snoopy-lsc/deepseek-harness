@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest'
 import { collectConfigFacts } from '../deploy/release-check.ts'
 import { DEFAULT_RUNTIME, FROZEN_RUNTIMES, PRODUCTION_PROFILES, RUNTIME_PROVIDERS, writeProductionProfile } from '../deploy/production-profile.ts'
 import { portRangesOverlap } from '../packages/contracts/src/ports.ts'
-import { parseReleaseManifest } from '../deploy/upgrade.ts'
+import { parseAnyReleaseManifest, requireRuntime } from '../deploy/native-release.ts'
 import { resolveContainerConfig } from '../packages/provisioner/src/config.ts'
 import { INSTANCE_USER } from '../packages/provisioner/src/runtime.ts'
 import { networkArgument } from '../packages/provisioner/src/limits.ts'
@@ -64,15 +64,17 @@ describe('production configuration examples', () => {
   })
 
   it('pins bundle versions that match the workspace packages and keeps enrollment closed', async () => {
-    const manifest = parseReleaseManifest(await json('deploy/release-manifest.json'))
+    const manifest = parseAnyReleaseManifest(await json('deploy/release-manifest.json'))
+    const container = requireRuntime(parseAnyReleaseManifest(await json('deploy/production/release-manifest.json')), 'podman-gvisor')
     expect(manifest.publicEnrollment).toBe('closed')
+    expect(container.publicEnrollment).toBe('closed')
     for (const [name, version] of Object.entries(manifest.bundles)) {
       const directory = name.replace('@public-harness/', '')
       expect((await json(`packages/${directory}/package.json`)).version, name).toBe(version)
     }
     const packages = (await readdir(join(root, 'packages'))).filter(name => name !== 'node_modules')
     expect(Object.keys(manifest.bundles).map(name => name.replace('@public-harness/', '')).sort()).toEqual(packages.sort())
-    expect(manifest.image).toBe((await json('deploy/production/config/provisioner.example.json') as { provisioner: { runtime: { image: string } } }).provisioner.runtime.image)
+    expect(container.runtime.image).toBe((await json('deploy/production/config/provisioner.example.json') as { provisioner: { runtime: { image: string } } }).provisioner.runtime.image)
   })
 })
 

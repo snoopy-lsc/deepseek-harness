@@ -1,9 +1,10 @@
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { NATIVE_CHECKS, nativeHostId, parseAnyReleaseManifest, validateNativeEvidence } from '../deploy/native-release.ts'
-import { runNativeRehearsal, treeDigest } from '../deploy/native/scripts/rehearse.ts'
+import { runNativeRehearsal, stampFromInstalledTrees, treeDigest } from '../deploy/native/scripts/rehearse.ts'
+import { main as stampManifest } from '../deploy/native/scripts/stamp-manifest.ts'
 
 async function fixture() {
   const base = await mkdtemp(join(tmpdir(), 'dsh-rehearsal-'))
@@ -39,6 +40,29 @@ describe('native rehearsal tooling', () => {
     const failing = await runNativeRehearsal({ ...options, checks: { ...passing, files: async () => { throw new Error('foreign home readable') } } })
     expect(failing.observations.files).toContain('foreign home readable')
     expect(() => validateNativeEvidence(f.manifest, failing.evidence, host, { now, maxAgeMs: 86_400_000 })).toThrow(/files failed/)
+  })
+
+  it('refuses an unstamped manifest and accepts it once stamped from the installed trees', async () => {
+    const f = await fixture(), now = 1_800_000_000_000
+    const unstamped = parseAnyReleaseManifest({ ...f.manifest, runtime: { kind: 'systemd', policyDigest: null, toolchainDigest: null } })
+    const options = { policyRoots: [f.policy], toolchainRoots: [f.toolchain], machineIdFile: f.machineIdFile, env, checks: passing, clock: () => now }
+    await expect(runNativeRehearsal({ ...options, manifest: unstamped })).rejects.toThrow(/not stamped/)
+    const stamped = await stampFromInstalledTrees(unstamped, { policyRoots: [f.policy], toolchainRoots: [f.toolchain] })
+    expect(stamped.runtime).toEqual(f.manifest.runtime)
+    const run = await runNativeRehearsal({ ...options, manifest: stamped })
+    expect(validateNativeEvidence(stamped, run.evidence, nativeHostId('0123456789abcdef0123456789abcdef'), { now, maxAgeMs: 86_400_000 }).realHost).toBe(true)
+  })
+
+  it('stamp-manifest writes a stamped copy and leaves the source alone', async () => {
+    const f = await fixture()
+    const source = join(f.base, 'source.json'), out = join(f.base, 'stamped.json')
+    const unstamped = { ...f.manifest, schema: 2, runtime: { kind: 'systemd', policyDigest: null, toolchainDigest: null } }
+    await writeFile(source, JSON.stringify(unstamped))
+    expect(await stampManifest([source, out, '--policy', f.policy])).toBe(2)
+    expect(await stampManifest([source, source, '--policy', f.policy, '--toolchain', f.toolchain])).toBe(2)
+    expect(await stampManifest([source, out, '--policy', f.policy, '--toolchain', f.toolchain])).toBe(0)
+    expect(parseAnyReleaseManifest(JSON.parse(await readFile(out, 'utf8'))).runtime).toEqual(f.manifest.runtime)
+    expect(JSON.parse(await readFile(source, 'utf8'))).toEqual(unstamped)
   })
 
   it('stale_or_wrong_policy_stays_closed: an installed policy change stops the rehearsal', async () => {

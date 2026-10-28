@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto'
 import { lstat, readdir, readFile, readlink, writeFile } from 'node:fs/promises'
 import { arch, release as kernelRelease } from 'node:os'
 import { join } from 'node:path'
-import { NATIVE_CHECKS, nativeHostId, type NativeCheck, type NativeEvidence, type NativeReleaseManifest } from '../../native-release.ts'
+import { isStamped, NATIVE_CHECKS, nativeHostId, stampNativeManifest, type NativeCheck, type NativeEvidence, type NativeReleaseManifest } from '../../native-release.ts'
 
 /** Result of one check: `skipped` when its preconditions are not met on this host. */
 export type CheckOutcome = { readonly result: 'passed' | 'failed' | 'skipped'; readonly observed: string }
@@ -42,6 +42,15 @@ export async function treeDigest(roots: readonly string[]): Promise<string> {
   return `sha256:${hash.digest('hex')}`
 }
 
+/** Stamp a native manifest with the digests of the trees installed on this host.
+ * @param manifest Native manifest (normally the unstamped one shipped in the release).
+ * @param roots Installed policy and toolchain trees, the same ones the rehearsal digests.
+ * @returns Stamped copy; the caller writes it root-owned next to the release.
+ */
+export async function stampFromInstalledTrees(manifest: NativeReleaseManifest, roots: { readonly policyRoots: readonly string[]; readonly toolchainRoots: readonly string[] }): Promise<NativeReleaseManifest> {
+  return stampNativeManifest(manifest, { policyDigest: await treeDigest(roots.policyRoots), toolchainDigest: await treeDigest(roots.toolchainRoots) })
+}
+
 /** Run the rehearsal and return evidence; the caller writes it with `writeEvidence`.
  * @param options Manifest, digest roots and check registry.
  * @returns Evidence plus each check's observation (never secrets).
@@ -51,6 +60,7 @@ export async function runNativeRehearsal(options: RehearsalOptions): Promise<{ e
   // Destructive real-host checks create accounts, firewall rules and resource pressure: never on a developer or shared machine.
   if (env.DSH_NATIVE_REHEARSAL !== 'dedicated-host') throw new Error('set DSH_NATIVE_REHEARSAL=dedicated-host on a dedicated Ubuntu 24.04 host')
   if (options.manifest.runtime.kind !== 'systemd') throw new Error('rehearsal requires a systemd release manifest')
+  if (!isStamped(options.manifest.runtime)) throw new Error('the release manifest is not stamped; run stamp-manifest.ts on the installed trees first')
   const [policyDigest, toolchainDigest] = [await treeDigest(options.policyRoots), await treeDigest(options.toolchainRoots)]
   if (policyDigest !== options.manifest.runtime.policyDigest) throw new Error('installed policy does not match the manifest')
   if (toolchainDigest !== options.manifest.runtime.toolchainDigest) throw new Error('installed toolchain does not match the manifest')
