@@ -12,17 +12,20 @@
   en: 33ddac4a593ca10e
   zh: f41eaa7ef2037c75
 /native-deployment/table-of-contents:
-  en: 6d02787d2197f99c
-  zh: a289c2592e0adf06
+  en: 06e99710c6baf82d
+  zh: 83cd01af9a9d61e4
 /native-deployment/install-on-a-dedicated-host:
-  en: 32773ef9c9c3da94
-  zh: 05127d9e7260efd7
+  en: 8287953d72468be6
+  zh: 6b1ed6d8bea2a638
 /native-deployment/service-boundaries:
-  en: 3598d343bfa5149b
-  zh: 686b64ed84fa6542
+  en: 7adaa24261e70272
+  zh: da4501f163cd772e
+/native-deployment/market-firewall:
+  en: 494c2f6543c6c063
+  zh: 82a8798103bc5e3d
 /native-deployment/validate-before-admission:
-  en: 1b402c513fff1b97
-  zh: 3582d66c9ea5f607
+  en: df8b839f133783bb
+  zh: 8b50b23ddd53407a
 /native-deployment/operate-the-host:
   en: f71abc36621a8ae8
   zh: ef21003321de881e

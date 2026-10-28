@@ -35,7 +35,7 @@ kind: "package-library"
 <a id="before-the-rehearsal"></a>
 ## 演练前准备
 
-使用不运行其他服务、允许重启服务的主机。脚本需要 root、正在运行的 systemd（`/run/systemd/system`）以及 `DSH_NATIVE_REHEARSAL=dedicated-host`。它还需要 `systemd-run`、`nft`、`ss`、Node.js 24.9 工具链和 pnpm 可执行文件。它使用一个已有的非特权账号（默认 `nobody`）和一个空闲的回环端口（默认 28672）。P0.8 需要先安装并启动带 `ExecStartPost=-/usr/lib/dsh-public/load-dsh-market.sh` 加载器的 `dsh-plugins.socket`。仓库目前尚未提供该加载器，因此在安装器提供它之前，P0.8 会报告缺少 `dsh_market` 表。P0.5 的容器部分另外需要无根 Podman、gVisor `runsc`、`pasta` 和一个包含 `node` 的实例镜像。
+使用不运行其他服务、允许重启服务的主机。脚本需要 root、正在运行的 systemd（`/run/systemd/system`）以及 `DSH_NATIVE_REHEARSAL=dedicated-host`。它还需要 `systemd-run`、`nft`、`ss`、Node.js 24.9 工具链和 pnpm 可执行文件。它使用一个已有的非特权账号（默认 `nobody`）和一个空闲的回环端口（默认 28672）。该端口已被其他进程占用时，P0.4 和 P0.5 报告 `BLOCKED`。P0.8 需要先按[市场防火墙](../README.zh.md#market-firewall)安装市场防火墙，再启动 `dsh-plugins.socket`。它的 `ExecStartPost=/usr/lib/dsh-public/load-dsh-market.sh /etc/dsh-public/dsh-market.nft` 是致命的（没有 `-` 前缀），没有 `dsh_market` 表时 socket 不会启动。属主检查要求 `--account` 账号还没有 `market_owner` 元素；跨端口检查需要两个 `ListenStream` 端口。P0.5 的容器部分另外需要无根 Podman、gVisor `runsc`、`pasta` 和一个包含 `node` 的实例镜像。
 
 先阅读计划：
 
@@ -50,16 +50,16 @@ deploy/native/rehearsal/p0-rehearsal.sh --dry-run
 sudo DSH_NATIVE_REHEARSAL=dedicated-host deploy/native/rehearsal/p0-rehearsal.sh --account dsh-p0 --node /opt/dsh-public/toolchain/node --pnpm /opt/dsh-public/toolchain/pnpm
 ```
 
-`--only P0.4,P0.8` 选择探针。`--evidence-dir` 指定证据目录，该目录必须尚不存在。`--probe-port` 和 `--socket-unit` 修改端口和市场 socket。`--container --container-image <image>` 加入 P0.5 的 pasta 部分。所有探针资源都命名为 `dsh-p0-*` 或 `dsh_p0_probe`，退出时删除。脚本只读取 `dsh_market` 表，从不修改它。P0.8 会重启市场 socket，因此主机必须是专用的。
+`--only P0.4,P0.8` 选择探针。`--evidence-dir` 指定证据目录，该目录必须尚不存在。`--probe-port` 和 `--socket-unit` 修改端口和市场 socket。`--market-loader` 指定已安装的加载器（默认 `/usr/lib/dsh-public/load-dsh-market.sh`）。`--container --container-image <image>` 加入 P0.5 的 pasta 部分。所有探针资源都命名为 `dsh-p0-*`、`dsh_p0_probe` 或 `dsh_p0_mark`，退出时删除。脚本从不清空或删除 `dsh_market` 表。P0.8 会为 `--account` 的 uid 加入一个临时 `market_owner` 元素，并在结束时（包括提前退出）删除这个元素。运行任何探针之前，脚本会 unset 模型凭据变量（`DSH_MODEL_*`、`*_API_KEY` 以及各服务商前缀）。P0.8 会重启市场 socket，因此主机必须是专用的。
 
 <a id="what-each-probe-checks"></a>
 ## 各探针检查什么
 
 | 探针 | 通过条件 |
 | --- | --- |
-| P0.4 | 在 `dsh-p0-probe.slice` 中以该账号和 reconcile 属性运行的 `systemd-run --wait --collect` unit，能在 `/proc/self/cgroup` 中看到该 slice。在 `IPAddressDeny=any` 和 `IPAddressAllow=localhost` 下，它能连到 127.0.0.1，连 192.0.2.1 时被拒绝（`EPERM`）。会抛错的 `.pnpmfile.cjs` 会让普通的 `pnpm install --offline` 失败，而 `--ignore-pnpmfile --config.userconfig=/dev/null` 会跳过它和恶意的 `.npmrc`。 |
+| P0.4 | 在 `dsh-p0-probe.slice` 中以该账号和 reconcile 属性运行的 `systemd-run --wait --collect` unit，能在 `/proc/self/cgroup` 中看到该 slice。在 `IPAddressDeny=any` 和 `IPAddressAllow=localhost` 下，它能连到 127.0.0.1，连 192.0.2.1 时被拒绝（`EPERM`）。会抛错的 `.pnpmfile.cjs` 会让普通的 `pnpm install --offline` 失败，且输出中出现 `hostile pnpmfile executed`；`--ignore-pnpmfile --config.userconfig=/dev/null` 会跳过它和恶意的 `.npmrc`。 |
 | P0.5 | 带 `meta skuid <账号 uid>` 的出站规则只计入该账号的回环连接而不计入 root 的连接，`meta skuid 0` 规则只计入 root 的连接。加上 `--container` 时，`runsc` 容器经 `pasta:--map-host-loopback` 发起的连接也计入该账号的 uid；不加时 P0.5 报告 `SKIP`。 |
-| P0.8 | 连接市场 socket 的端口即可确定监听者的 cgroup：第 1 级 `init.scope` 或第 2 级 `system.slice/dsh-plugins.socket`。`dsh_market` 表存在，且其 `market_listener` 规则指向该 cgroup。执行 `systemctl restart dsh-plugins.socket` 后两者仍然成立。 |
+| P0.8 | 连接市场 socket 的端口即可确定监听者的 cgroup：第 1 级 `init.scope` 或第 2 级 `system.slice/dsh-plugins.socket`。`dsh_market` 表存在，且其 `market_listener` 规则指向该 cgroup。执行 `systemctl restart dsh-plugins.socket` 后两者仍然成立。socket 以致命的 `ExecStartPost` 运行加载器。借助一张临时的 `ct mark set meta skuid` 表，没有元素的账号和未打标记的 root 都被拒绝。随后加入一个临时元素：重跑加载器后元素仍在，属主能连上自己的端口、连不上第二个市场端口；删除元素后属主再次被拒绝。属主检查无法运行时，P0.8 报告 `SKIP`。 |
 
 一次性 reconcile 容器的参数（`assertSafeReconcileArgv`）由单元测试覆盖，不在本脚本范围内。
 

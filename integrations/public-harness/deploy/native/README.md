@@ -17,6 +17,7 @@ This native deployment is the mainline runtime: `writeProductionProfile` selects
 
 - [Install on a dedicated host](#install-on-a-dedicated-host)
 - [Service boundaries](#service-boundaries)
+- [Market firewall](#market-firewall)
 - [Validate before admission](#validate-before-admission)
 - [Operate the host](#operate-the-host)
 - [Further Exploration](#further-exploration)
@@ -33,7 +34,7 @@ Installation is operator work, and every step needs root on a dedicated Ubuntu 2
 tsx deploy/native/scripts/host-preflight.ts /etc/dsh-public/provisioner.json /etc/dsh-public/native.json
 ```
 
-The preflight only reads the host. It reports the OS version, the Node.js versions of the toolchain and `/usr/bin/node`, cgroup controllers, AppArmor and the user-namespace restriction, XFS quota enforcement, nftables, `resolv.conf`, asset ownership and the browser version, and exits 1 when any check fails.
+The preflight only reads the host. It reports the OS version, the Node.js versions of the toolchain and `/usr/bin/node`, cgroup controllers, AppArmor and the user-namespace restriction, XFS quota enforcement, nftables, `resolv.conf`, asset ownership and the browser version, and exits 1 when any check fails. When `ports.market` is set, it also checks the [market firewall](#market-firewall) files.
 
 <a id="service-boundaries"></a>
 ## Service boundaries
@@ -50,6 +51,25 @@ The preflight only reads the host. It reports the OS version, the Node.js versio
 
 Caddy removes caller identity and forwarding headers. It cannot reach the session socket, so only the router can turn a cookie into a user. The provisioner runs as root but never runs tenant code: each instance runs as its own account in `dsh-user-<id>.service` under `dsh-user-<id>.slice`. The knowledge base service is optional: copy `deploy/production/config/kb.example.json` and `kb-root.example.json` to `/etc/dsh-public/kb.json` and `kb-root.json`, add `jobSocket` and `jobSocketGid` (group `dsh-kb-quota`) to the quota configuration, set `paths.kbRoot` to `/var/lib/dsh-public/kb` for the provisioner, write the `kb` profile into `/var/lib/dsh-public/kb-home`, and enable `dsh-kb-root.socket` and `dsh-kb.service`. Only `dsh-kb` is in the `dsh-kb` group, so only it can open the root helper socket.
 
+<a id="market-firewall"></a>
+## Market firewall
+
+Skip this section when `ports.market` is not set in `provisioner.json`: the market stays disabled and none of these files is needed. Otherwise every instance account can reach the whole market range on loopback, and only the `inet dsh_market` table stops one account from reaching another account's market port. That table admits a connection only when the pair of its connection mark (the account uid, set by `dsh_native`) and the destination port is in the `market_owner` set, and only when the listener is the `dsh-plugins.socket` cgroup.
+
+1. Install [load-dsh-market.sh](scripts/load-dsh-market.sh) as `/usr/lib/dsh-public/load-dsh-market.sh`, owned by root, mode 0755.
+2. Set the same `ports.market` in `provisioner.json` and `plugins.json`, then render the ruleset and the socket unit:
+
+   ```bash
+   tsx deploy/native/scripts/render-market-firewall.ts /etc/dsh-public/provisioner.json /etc/dsh-public/plugins.json --rules /etc/dsh-public/dsh-market.nft --socket /etc/systemd/system/dsh-plugins.socket
+   ```
+
+   The renderer refuses when the market is disabled or the two ranges differ. It writes the ruleset as 0600 and the unit as 0644, one `ListenStream` per market port. `--listener-cgroup` overrides the listener cgroup; the default `system.slice/dsh-plugins.socket` stays unconfirmed until P0.8 of the [rehearsal](rehearsal/README.md) measures it.
+3. Run `systemctl daemon-reload`, start `dsh-plugins.socket`, and run the preflight again.
+
+The socket runs the loader as `ExecStartPost=/usr/lib/dsh-public/load-dsh-market.sh /etc/dsh-public/dsh-market.nft` without the `-` prefix. If the table cannot be loaded, the socket fails and every market listener closes, so a missing table never leaves the ports open to every account. The loader refuses (exit 2) a rules file that is not a regular root-owned file without group or world write, or that holds any line outside the `dsh_market` allowlist. It checks the file with `nft -c`, loads it atomically with `nft -f`, and verifies the chains and set (exit 1 on failure). A reload keeps the `market_owner` elements, so running it again is safe. `PartOf=nftables.service` restarts the socket, and with it the loader, after a host ruleset reload.
+
+The provisioner adds an account's `uid . port` pair when its instance starts, removes stale pairs for that uid or port, and removes the pair when the instance stops. A periodic probe reloads a missing or altered table, restarting the socket if the direct reload fails, and alerts when the table cannot be restored. The preflight `market-firewall` check reports the loader's and ruleset's owners and modes, any ruleset line the loader would refuse, a non-fatal `ExecStartPost`, and whether the table is loaded yet.
+
 <a id="validate-before-admission"></a>
 ## Validate before admission
 
@@ -65,7 +85,7 @@ Native releases use the schema 2 manifest [release-manifest.json](../release-man
 - `previous`: the release set to roll back to, with its own `runtime`, or `null`.
 - `publicEnrollment`: always `closed`; only recorded evidence opens enrollment.
 
-Each digest is `sha256:` and 64 hexadecimal digits over the installed tree's paths, modes, owners and contents, so the repository ships both as `null`. After installing the release, stamp a copy on the host, outside the digested trees:
+Each digest is `sha256:` and 64 hexadecimal digits over the installed tree's paths, modes, owners and contents, so the repository ships both as `null`. After installing the release, stamp a copy on the host. The output must be an absolute file path in an existing directory, outside every `--policy` and `--toolchain` root, because a manifest written inside a digested tree would change that tree's digest. `stamp-manifest.ts` refuses any other output, including one reached through a symbolic link:
 
 ```bash
 tsx deploy/native/scripts/stamp-manifest.ts deploy/release-manifest.json /etc/dsh-public/release-manifest.stamped.json --policy <policy-dir> --toolchain /opt/dsh-public/toolchain
