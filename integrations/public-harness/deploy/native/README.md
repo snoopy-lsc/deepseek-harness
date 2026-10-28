@@ -83,7 +83,7 @@ Keep at least one instance's memory and CPU in reserve beyond `maxActiveInstance
 <a id="further-exploration"></a>
 ## Further Exploration
 
-See the [native deployment design](../../../../docs/superpowers/specs/2026-10-11-public-harness-native-design.md), the [runtime provider](../../packages/runtime-systemd/README.md), the [identity service](../../packages/identity/README.md) and the [container deployment](../production/README.md).
+See the [deployment and P0 rehearsal runbook](rehearsal/README.md), the [native deployment design](../../../../docs/superpowers/specs/2026-10-11-public-harness-native-design.md), the [runtime provider](../../packages/runtime-systemd/README.md), the [identity service](../../packages/identity/README.md) and the [container deployment](../production/README.md).
 
 <a id="dev-note"></a>
 ## Dev Note

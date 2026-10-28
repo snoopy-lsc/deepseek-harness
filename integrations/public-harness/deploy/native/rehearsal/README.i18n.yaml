@@ -1,0 +1,37 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write integrations/public-harness/deploy/native/rehearsal/README.md
+/:
+  en: e1341513908267df
+  zh: 91622ef211d7a5c6
+/native-deployment-and-p0-rehearsal-runbook:
+  en: 6b319a1474dc16c9
+  zh: 358c5d090fde4200
+/native-deployment-and-p0-rehearsal-runbook/summary:
+  en: 3ac868dbd0ebbbc0
+  zh: bfa7ea9a646d57ac
+/native-deployment-and-p0-rehearsal-runbook/table-of-contents:
+  en: a99324061483957a
+  zh: fbf2fed96a68ebdd
+/native-deployment-and-p0-rehearsal-runbook/deployment-order:
+  en: db9827b5a0da3c9b
+  zh: 86df330437a17b73
+/native-deployment-and-p0-rehearsal-runbook/before-the-rehearsal:
+  en: 47bed624d881b93f
+  zh: 250b1c28ae9de9ad
+/native-deployment-and-p0-rehearsal-runbook/run-the-p0-rehearsal:
+  en: 7853ffbd0b697752
+  zh: 3125f47ee96b7e58
+/native-deployment-and-p0-rehearsal-runbook/what-each-probe-checks:
+  en: 38d387c15e2cba79
+  zh: a395f58e29e04e59
+/native-deployment-and-p0-rehearsal-runbook/results-and-evidence:
+  en: 36125de84b46d66c
+  zh: 162c3741dc3f8f37
+/native-deployment-and-p0-rehearsal-runbook/further-exploration:
+  en: 1b88f9176c424c97
+  zh: b20b825a3dec10a7
+/native-deployment-and-p0-rehearsal-runbook/dev-note:
+  en: 99b8e0710ba69534
+  zh: ae4a84f6f887f3b9

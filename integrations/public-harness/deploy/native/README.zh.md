@@ -83,7 +83,7 @@ tsx deploy/native/scripts/stamp-manifest.ts deploy/release-manifest.json /etc/ds
 <a id="further-exploration"></a>
 ## 延伸阅读
 
-参阅[原生部署设计](../../../../docs/superpowers/specs/2026-10-11-public-harness-native-design.zh.md)、[运行时 provider](../../packages/runtime-systemd/README.zh.md)、[身份服务](../../packages/identity/README.zh.md)与[容器部署](../production/README.zh.md)。
+参阅[部署与 P0 演练手册](rehearsal/README.zh.md)、[原生部署设计](../../../../docs/superpowers/specs/2026-10-11-public-harness-native-design.zh.md)、[运行时 provider](../../packages/runtime-systemd/README.zh.md)、[身份服务](../../packages/identity/README.zh.md)与[容器部署](../production/README.zh.md)。
 
 <a id="dev-note"></a>
 ## 开发说明
