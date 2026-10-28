@@ -102,6 +102,18 @@ export async function preflight(common: unknown, nativeOptions: unknown, host: P
       if (!posts.includes(`ExecStartPost=${MARKET_FIREWALL_PATHS.loader} ${MARKET_FIREWALL_PATHS.rules}`) || posts.some(line => line.startsWith('ExecStartPost=-'))) {
         throw new Error(`${MARKET_FIREWALL_PATHS.socket} must run the loader as a fatal ExecStartPost (no "-" prefix)`)
       }
+      // The rules match only `iif "lo"`, so every listener must be loopback-only and the ports exactly ports.market.
+      const listens = unit.split('\n').filter(line => /^\s*Listen[A-Za-z]*\s*=/.test(line))
+      const ports = new Set<number>()
+      for (const line of listens) {
+        const match = /^ListenStream=127\.0\.0\.1:(\d{1,5})$/.exec(line)
+        const port = match === null ? NaN : Number(match[1])
+        if (!(port >= market.min && port <= market.max) || ports.has(port)) {
+          throw new Error(`${MARKET_FIREWALL_PATHS.socket}: "${line.trim()}" is not one ListenStream=127.0.0.1:<port> within ports.market`)
+        }
+        ports.add(port)
+      }
+      if (ports.size !== market.max - market.min + 1) throw new Error(`${MARKET_FIREWALL_PATHS.socket} must listen on every port of ports.market (${ports.size} of ${market.max - market.min + 1})`)
       let live: string
       try { live = host.run(config.tools.nft, ['list', 'table', 'inet', 'dsh_market']) } catch { live = '' }
       return `ports ${formatMarketPorts(market)}; loader and rules installed; ${live.includes('@market_owner drop') ? 'table loaded' : 'table not loaded yet (dsh-plugins.socket loads it)'}`

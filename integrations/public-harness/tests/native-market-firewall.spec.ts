@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
-  DEFAULT_MARKET_LISTENER_CGROUP, MARKET_RULE_LINE, checkMarketRulesFile, marketOwnerArgv, parseMarketListenerCgroup,
+  DEFAULT_MARKET_LISTENER_CGROUP, checkMarketRulesFile, marketOwnerArgv, parseMarketListenerCgroup,
   parseMarketOwnerElements, renderMarketRulesFile, renderMarketTable, type MarketEndpoint,
 } from '../packages/runtime-systemd/src/market-firewall.ts'
 import { renderMarketFirewallFiles, main as renderMain } from '../deploy/native/scripts/render-market-firewall.ts'
@@ -88,27 +88,70 @@ describe('rendered inet dsh_market: per-owner isolation', () => {
   })
 })
 
+const scratch = async (text: string) => {
+  const path = join(await mkdtemp(join(tmpdir(), 'dsh-market-check-')), 'dsh-market.nft')
+  await writeFile(path, text)
+  return path
+}
+const loaderCheck = (path: string) => spawnSync('bash', [loader, '--check', path], { encoding: 'utf8', env: { PATH: '/usr/bin:/bin' } })
+
+/** Rendered-file mutations both the TS check and the loader must refuse (S3: the old per-line allowlist let `;`
+ * chains, comments and extra rules through). */
+function injectedRules(text: string): [string, string][] {
+  const table = 'add table inet dsh_market\n'
+  return [
+    ['semicolon chain on an allowed line', text.replace(table, 'add table inet dsh_market ; flush ruleset\n')],
+    ['appended semicolon chain', `${text}add table inet dsh_market ; flush ruleset\n`],
+    ['semicolon chain to another table', text.replace(table, `${table}add rule inet dsh_market input accept; add rule inet filter input accept\n`)],
+    ['semicolon inside the define', text.replace(/^define MARKET_PORTS = (.*)$/m, 'define MARKET_PORTS = $1 ; flush ruleset')],
+    ['semicolon in the listener cgroup', text.replace('"system.slice/dsh-plugins.socket" return', '"system.slice/dsh-plugins.socket" return ; flush ruleset')],
+    ['quote break in the listener cgroup', text.replace('"system.slice/dsh-plugins.socket"', '"x" accept ; flush ruleset ; add rule inet dsh_market market_listener socket cgroupv2 level 1 "y"')],
+    ['trailing comment', text.replace(table, 'add table inet dsh_market # ; flush ruleset\n')],
+    ['extra comment line', text.replace(table, `# hand edited\n${table}`)],
+    ['comment line hiding nothing', `${text}# trailing note\n`],
+    ['extra allowed-looking rule', `${text}add rule inet dsh_market input iif "lo" accept\n`],
+    ['flush ruleset', `${text}flush ruleset\n`],
+    ['include', `${text}include "/tmp/x"\n`],
+    ['delete table', `${text}delete table inet dsh_market\n`],
+    ['foreign table rule', `${text}add rule inet dsh_native input accept\n`],
+    ['CRLF line endings', text.replaceAll('\n', '\r\n')],
+    ['missing trailing newline', text.slice(0, -1)],
+    ['extra blank line', `${text}\n`],
+    ['newline split statement', text.replace('add table inet dsh_market\n', 'add table inet\ndsh_market\n')],
+    ['leading-zero define', text.replace('= 28672-', '= 028672-')],
+    ['level mismatch', text.replace('level 2 "system.slice', 'level 1 "system.slice')],
+    ['dot-dot cgroup', text.replace('"system.slice/dsh-plugins.socket"', '"system.slice/.."')],
+    ['out-of-range define', text.replace('28672-32767', '28672-40000')],
+    ['missing listener drop', text.replace(/^add rule inet dsh_market market_listener drop\n/m, '')],
+    ['missing define', text.replace(/^define .*\n/m, '')],
+  ]
+}
+
 describe('market ruleset file, listener cgroup and owner argv', () => {
   const marketPorts = { min: 28_672, max: 32_767 }
 
-  it('rules file passes its own check and every line fits the loader allowlist', () => {
+  it('rules file passes its own check and the loader renders the same bytes for every range and cgroup', async () => {
     const text = renderMarketRulesFile({ marketPorts, listenerCgroup: DEFAULT_MARKET_LISTENER_CGROUP })
     expect(checkMarketRulesFile(text, marketPorts)).toEqual([])
-    for (const line of text.split('\n').filter(Boolean)) expect(line).toMatch(MARKET_RULE_LINE)
-    // The shell allowlist in the loader is the same expression.
-    const shell = /^allowed='(.*)'$/m.exec(readFileSync(loader, 'utf8'))![1]!
-    expect(MARKET_RULE_LINE.source.replaceAll('(?:', '(').replaceAll('\\d', '[0-9]')).toBe(shell)
+    for (const [ports, cgroup] of [[{ min: 1024, max: 1024 }, 'init.scope'], [marketPorts, 'system.slice/dsh-plugins.socket'],
+      [{ min: 31_000, max: 31_001 }, 'a/b.c/d:e@f_g-h']] as const) {
+      const sample = renderMarketRulesFile({ marketPorts: ports, listenerCgroup: parseMarketListenerCgroup(cgroup) })
+      expect(checkMarketRulesFile(sample, ports)).toEqual([])
+      const result = loaderCheck(await scratch(sample))
+      expect(result.status, result.stderr).toBe(0)
+    }
   })
 
-  it('rules check rejects foreign statements, a wrong range and missing drops', () => {
+  it('rules check (TS and loader) refuses anything but the exact rendered text', async () => {
     const text = renderMarketRulesFile({ marketPorts, listenerCgroup: DEFAULT_MARKET_LISTENER_CGROUP })
-    expect(checkMarketRulesFile(`${text}\nflush ruleset`, marketPorts).join()).toMatch(/outside inet dsh_market/)
-    expect(checkMarketRulesFile(`${text}\nadd rule inet dsh_native input accept`).join()).toMatch(/outside/)
-    expect(checkMarketRulesFile(`${text}\ndelete table inet dsh_market`).join()).toMatch(/outside/)
-    expect(checkMarketRulesFile(`${text}\ninclude "/tmp/x"`).join()).toMatch(/outside/)
-    expect(checkMarketRulesFile(text, { min: 28_672, max: 30_000 }).join()).toMatch(/differs/)
-    expect(checkMarketRulesFile(text.replace(/^.*@market_owner drop\n/m, '')).join()).toMatch(/missing/)
-    expect(checkMarketRulesFile(text.replace(/^add rule inet dsh_market market_listener drop$/m, '')).join()).toMatch(/missing/)
+    for (const [name, bad] of injectedRules(text)) {
+      expect(checkMarketRulesFile(bad), name).not.toEqual([])
+      const result = loaderCheck(await scratch(bad))
+      expect(result.status, `${name}: ${result.stderr}`).toBe(2)
+      expect(result.stderr, name).toMatch(/refusing/)
+    }
+    expect(checkMarketRulesFile(text, { min: 28_672, max: 30_000 }).join()).toMatch(/differs from ports.market/)
+    expect(checkMarketRulesFile(text.replace(/^.*@market_owner drop\n/m, '')).join()).toMatch(/not the rendered/)
   })
 
   it('listener cgroup paths are validated and their level derived', () => {
@@ -203,8 +246,24 @@ describe('host preflight market-firewall check', () => {
     expect((await marketCheck({ socket: rendered.socket.replace('ExecStartPost=/', 'ExecStartPost=-/') }))?.ok).toBe(false)
     expect((await marketCheck({ socket: rendered.socket.replace(/^ExecStartPost=.*$/m, '') }))?.ok).toBe(false)
     expect((await marketCheck({ rules: `${rendered.rules}\nflush ruleset\n` }))?.ok).toBe(false)
+    for (const [name, bad] of injectedRules(rendered.rules))
+      expect((await marketCheck({ rules: bad }))?.ok, name).toBe(false)
     expect((await marketCheck({ rules: rendered.rules.replace('28672-32767', '28672-30000') }))?.ok).toBe(false)
     expect((await marketCheck({ loaderMode: 0o775 }))?.ok).toBe(false)
+    // S7: every listener loopback-only, exactly the ports of ports.market.
+    for (const [name, socket] of [
+      ['wildcard address', rendered.socket.replace('ListenStream=127.0.0.1:28672\n', 'ListenStream=0.0.0.0:28672\n')],
+      ['port only', rendered.socket.replace('ListenStream=127.0.0.1:28672\n', 'ListenStream=28672\n')],
+      ['spaced directive', rendered.socket.replace('ListenStream=127.0.0.1:28672\n', 'ListenStream = 0.0.0.0:28672\n')],
+      ['missing port', rendered.socket.replace('ListenStream=127.0.0.1:28672\n', '')],
+      ['duplicate port', rendered.socket.replace('ListenStream=127.0.0.1:28673\n', 'ListenStream=127.0.0.1:28672\n')],
+      ['out-of-range port', rendered.socket.replace('ListenStream=127.0.0.1:28672\n', 'ListenStream=127.0.0.1:28671\n')],
+      ['reset line', rendered.socket.replace('ListenStream=127.0.0.1:28672\n', 'ListenStream=127.0.0.1:28672\nListenStream=\n')],
+      ['datagram listener', rendered.socket.replace('ListenStream=127.0.0.1:28672\n', 'ListenStream=127.0.0.1:28672\nListenDatagram=0.0.0.0:28672\n')],
+    ] as const) {
+      expect(socket, name).not.toBe(rendered.socket)
+      expect((await marketCheck({ socket }))?.ok, name).toBe(false)
+    }
     expect((await marketCheck({ loaderMode: 0o644 }))?.ok).toBe(false)
     expect((await marketCheck({ loaderUid: 1000 }))?.ok).toBe(false)
   })
@@ -236,6 +295,8 @@ describe('load-dsh-market.sh', () => {
   it('refuses bad usage', () => {
     expect(spawnSync('bash', [loader, 'a', 'b'], { encoding: 'utf8' }).status).toBe(2)
     expect(spawnSync('bash', [loader, 'relative.nft'], { encoding: 'utf8' }).status).toBe(2)
+    expect(spawnSync('bash', [loader, '--check', 'relative.nft'], { encoding: 'utf8' }).status).toBe(2)
+    expect(spawnSync('bash', [loader, '--check', '/nonexistent/dsh-market.nft'], { encoding: 'utf8' }).status).toBe(2)
   })
 })
 
@@ -259,8 +320,9 @@ describe.skipIf(!userns)('load-dsh-market.sh against a real nftables (NFT_BIN, u
 
   it('loads atomically, is idempotent, keeps market_owner across reloads and leaves state unchanged on failure', async () => {
     const good = await rulesFile(renderMarketRulesFile({ marketPorts, listenerCgroup: listener }))
-    const broken = await rulesFile(`${renderMarketRulesFile({ marketPorts: { min: 31_000, max: 31_005 }, listenerCgroup: listener })}\nadd rule inet dsh_market input tcp dport 1 bogus\n`)
-    const foreign = await rulesFile(`${renderMarketRulesFile({ marketPorts, listenerCgroup: listener })}\nflush ruleset\n`)
+    // Structurally exact but naming a cgroup that does not exist, so nft itself rejects it (exit 1, nothing changed).
+    const broken = await rulesFile(renderMarketRulesFile({ marketPorts: { min: 31_000, max: 31_005 }, listenerCgroup: parseMarketListenerCgroup('no-such-dsh.slice/none.scope') }))
+    const foreign = await rulesFile(renderMarketRulesFile({ marketPorts, listenerCgroup: listener }).replace('add table inet dsh_market\n', 'add table inet dsh_market ; flush ruleset\n'))
     const result = inNamespace([
       `"${loader}" "${good}" || exit 10`,
       '"$NFT" add element inet dsh_market market_owner "{ 1201 . 31000 }"',

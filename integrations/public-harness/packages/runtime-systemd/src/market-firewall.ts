@@ -74,8 +74,8 @@ export function renderMarketTable(options: MarketFirewallOptions): string {
   ].join('\n')
 }
 
-/** Installed ruleset file text: a do-not-edit header plus {@link renderMarketTable}. The loader accepts only lines of
- * this shape (comments, the one `define`, and `add`/`flush` statements on `inet dsh_market`).
+/** Installed ruleset file text: a do-not-edit header plus {@link renderMarketTable}. The loader accepts only this exact
+ * text (its `render_expected` mirrors it byte for byte), varying only the range and the listener cgroup.
  * @param options Market range and measured listener cgroup.
  * @returns nft script text for `nft -f`.
  */
@@ -89,30 +89,34 @@ export function renderMarketRulesFile(options: MarketFirewallOptions): string {
   ].join('\n')
 }
 
-/** Statement shapes `load-dsh-market.sh` accepts; anything else (another table, `flush ruleset`, `delete`, `include`)
- * is refused so the loader can never change rules outside `inet dsh_market`. Kept in step with the shell allowlist. */
-export const MARKET_RULE_LINE = /^(?:#.*|define MARKET_PORTS = \d{1,5}-\d{1,5}|(?:add|flush) (?:table|set|chain|rule) inet dsh_market(?: .*)?)$/
+const RULES_DEFINE = /^define MARKET_PORTS = (\d{1,5})-(\d{1,5})$/m
+const RULES_LISTENER = /^add rule inet dsh_market market_listener socket cgroupv2 level \d{1,3} "([A-Za-z0-9@_.:/-]{1,1024})" return$/m
 
-/** Check an installed ruleset file the way the loader and the preflight do.
+/** Check an installed ruleset file the way `load-dsh-market.sh` does: it must be byte-for-byte the
+ * {@link renderMarketRulesFile} output for its own range and listener cgroup. Only those two values vary and both are
+ * validated, so an extra statement, a `;`-chained statement, an extra comment, CRLF or a missing newline is refused.
  * @param text File contents.
  * @param marketPorts Expected `ports.market`, when known.
  * @returns Problems found; empty when the file is acceptable.
  */
 export function checkMarketRulesFile(text: string, marketPorts?: PortRange): string[] {
+  const define = RULES_DEFINE.exec(text), listener = RULES_LISTENER.exec(text)
+  if (define === null) return ['no MARKET_PORTS define']
+  if (listener === null) return ['no listener cgroup rule']
+  const ports = { min: Number(define[1]), max: Number(define[2]) }
+  let expected: string
+  try {
+    expected = renderMarketRulesFile({ marketPorts: ports, listenerCgroup: parseMarketListenerCgroup(listener[1]!) })
+  } catch (error) {
+    return [`invalid range or listener cgroup: ${error instanceof Error ? error.message : 'unreadable'}`]
+  }
   const problems: string[] = []
-  const lines = text.split('\n').filter(line => line.trim().length > 0)
-  const bad = lines.filter(line => !MARKET_RULE_LINE.test(line))
-  if (bad.length > 0) problems.push(`${bad.length} line(s) outside inet ${MARKET_TABLE}`)
-  const defines = lines.filter(line => line.startsWith('define MARKET_PORTS = '))
-  if (defines.length !== 1) problems.push('exactly one MARKET_PORTS define is required')
-  else if (marketPorts !== undefined && defines[0] !== `define MARKET_PORTS = ${formatMarketPorts(marketPorts)}`) problems.push('MARKET_PORTS differs from ports.market')
-  for (const required of [
-    `add set inet ${MARKET_TABLE} market_owner { type mark . inet_service ; }`,
-    `add rule inet ${MARKET_TABLE} input iif "lo" tcp dport $MARKET_PORTS jump market_listener`,
-    `add rule inet ${MARKET_TABLE} input iif "lo" tcp dport $MARKET_PORTS ct mark . tcp dport != @market_owner drop`,
-    `add rule inet ${MARKET_TABLE} market_listener drop`,
-  ]) if (!lines.includes(required)) problems.push(`missing: ${required}`)
-  if (!lines.some(line => /^add rule inet dsh_market market_listener socket cgroupv2 level \d+ "[^"]+" return$/.test(line))) problems.push('missing the listener cgroup return rule')
+  if (text !== expected) {
+    const got = text.split('\n'), want = expected.split('\n')
+    const line = want.findIndex((row, index) => got[index] !== row)
+    problems.push(`not the rendered inet ${MARKET_TABLE} ruleset (first difference at line ${(line === -1 ? want.length : line) + 1})`)
+  }
+  if (marketPorts !== undefined && (ports.min !== marketPorts.min || ports.max !== marketPorts.max)) problems.push('MARKET_PORTS differs from ports.market')
   return problems
 }
 
