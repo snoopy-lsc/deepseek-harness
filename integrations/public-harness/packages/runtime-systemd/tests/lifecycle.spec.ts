@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { RuntimeInstance } from '@public-harness/contracts'
 import type { CommandResult, CommandRunner } from '@public-harness/provisioner/system'
-import { createSystemdRuntime, NativeRuntimeError, type SystemdRuntimeDeps } from '../src/runtime.ts'
+import { createSystemdRuntime, formatMarketLog, NativeRuntimeError, type SystemdRuntimeDeps } from '../src/runtime.ts'
 import { parseSystemdConfig } from '../src/config.ts'
 import { marketRebuildCandidates } from '../src/index.ts'
 import { common, config, instance, native } from './fixture.ts'
@@ -433,6 +433,49 @@ describe('native market owner admission (inet dsh_market market_owner)', () => {
     expect(h.unverified).toEqual(['9999.30050', '9999.30050'])
     expect(h.stalled).toEqual(['9999.30050', '9999.30050'])
     expect(h.owners()).toEqual([{ uid: 9999, port: 30_050 }])
+    await runtime.close()
+  })
+
+  // M3: a first rebuild that is merely slow (many candidates) is not a failure and never reads as `stalled`; only a
+  // pending attempt that outlasts stalledPendingAfter probes does.
+  it('does not report stalled while the first rebuild is still running', async () => {
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const h = await marketHarness({ candidates: async () => { await gate; return { instances: [], skipped: 0 } } })
+    h.setOwners([{ uid: 9999, port: 30_050 }])
+    const runtime = createSystemdRuntime(h.deps)
+    for (let probe = 0; probe < 6; probe += 1) await runtime.probeMarket()
+    expect(h.stalled).toEqual([])
+    expect(h.unverified).toHaveLength(6)
+    release()
+    await settle()
+    await runtime.probeMarket()
+    expect(h.owners()).toEqual([])
+    await runtime.close()
+  })
+
+  it('reports a rebuild that stays pending past stalledPendingAfter probes as stalled', async () => {
+    const h = await marketHarness({ candidates: () => new Promise(() => {}) })
+    h.setOwners([{ uid: 9999, port: 30_050 }])
+    const runtime = createSystemdRuntime({ ...h.deps, marketFirewall: { ...h.deps.marketFirewall, stalledPendingAfter: 2 } })
+    for (let probe = 0; probe < 3; probe += 1) await runtime.probeMarket()
+    expect(h.unverified).toEqual(['9999.30050'])
+    expect(h.stalled).toEqual(['9999.30050', '9999.30050'])
+    await runtime.close()
+  })
+
+  it('default alerts are structured dsh_market lines with a SECURITY tag', async () => {
+    const lines: string[] = []
+    const h = await marketHarness({ candidates: async () => ({ instances: [], skipped: 1 }) })
+    h.setOwners([{ uid: 9999, port: 30_050 }])
+    const runtime = createSystemdRuntime({ ...h.deps, marketFirewall: { probeMs: 0, log: line => { lines.push(line) } } })
+    await settle()
+    await runtime.probeMarket()
+    h.setOwners([{ uid: 9999, port: 30_050 }])
+    await runtime.probeMarket()
+    expect(lines).toContain('dsh_market SECURITY event=owner_rebuild_skipped records=1 msg="owner rebuild skipped unreadable state records; those owners stay shut out"')
+    expect(lines).toContain('dsh_market SECURITY event=stale_owner_survived uid=9999 port=30050 msg="stale market_owner element survived two deleting probes"')
+    expect(formatMarketLog('crit', true, 'owner_rebuild_stalled', { uid: 1 }, 'x', true)).toBe('<2>dsh_market SECURITY event=owner_rebuild_stalled uid=1 msg="x"')
     await runtime.close()
   })
 
