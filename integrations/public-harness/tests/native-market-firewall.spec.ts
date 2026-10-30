@@ -222,13 +222,19 @@ describe('host preflight market-firewall check', () => {
     nativeOptions: await json('deploy/native/config/native.json.example'),
   })
   const files = async () => renderMarketFirewallFiles(await json('deploy/native/config/provisioner.json.example'), await json('deploy/native/config/plugins.json.example'))
-  const marketCheck = async (overrides: { rules?: string; socket?: string; loaderMode?: number; loaderUid?: number; table?: string } = {}) => {
+  const marketCheck = async (overrides: { rules?: string; socket?: string; loaderMode?: number; loaderUid?: number; table?: string;
+    dropIn?: string; fragment?: string; cat?: 'fail' } = {}) => {
     const { provisioner, nativeOptions } = await native(), rendered = await files()
     const results = await preflight(provisioner.provisioner, nativeOptions, {
       read: async path => path === MARKET_FIREWALL_PATHS.rules ? overrides.rules ?? rendered.rules
         : path === MARKET_FIREWALL_PATHS.socket ? overrides.socket ?? rendered.socket : 'cpu memory pids\n',
       run: (command, args) => {
         if (args.join(' ') === 'list table inet dsh_market') { if (overrides.table === undefined) throw new Error('no table'); return overrides.table }
+        if (args.join(' ') === 'cat --no-pager dsh-plugins.socket') {
+          if (overrides.cat === 'fail') throw new Error('Unit dsh-plugins.socket not found.')
+          const merged = `# ${overrides.fragment ?? MARKET_FIREWALL_PATHS.socket}\n${overrides.socket ?? rendered.socket}`
+          return overrides.dropIn === undefined ? merged : `${merged}\n# /etc/systemd/system/dsh-plugins.socket.d/override.conf\n${overrides.dropIn}`
+        }
         return 'Enforcement: ON'
       },
       stat: async path => path === MARKET_FIREWALL_PATHS.loader ? { uid: overrides.loaderUid ?? 0, mode: overrides.loaderMode ?? 0o755, file: true } : { uid: 0, mode: 0o600, file: true },
@@ -268,6 +274,27 @@ describe('host preflight market-firewall check', () => {
     expect((await marketCheck({ loaderUid: 1000 }))?.ok).toBe(false)
   })
 
+  // N3: drop-ins and overriding fragments are part of the unit systemd runs.
+  it('checks the merged unit, so a drop-in cannot add a listener, reset them or drop the loader hook', async () => {
+    const rendered = await files()
+    expect((await marketCheck({ dropIn: '[Socket]\nBacklog=64\n' }))?.ok).toBe(true)
+    for (const [name, dropIn] of [
+      ['wildcard listener', '[Socket]\nListenStream=0.0.0.0:28672\n'],
+      ['extra port', '[Socket]\nListenStream=127.0.0.1:40000\n'],
+      ['listener reset', '[Socket]\nListenStream=\nListenStream=0.0.0.0:28672\n'],
+      ['loader reset', '[Socket]\nExecStartPost=\n'],
+      ['non-fatal loader', `[Socket]\nExecStartPost=-${MARKET_FIREWALL_PATHS.loader} ${MARKET_FIREWALL_PATHS.rules}\n`],
+    ] as const) {
+      const result = await marketCheck({ dropIn })
+      expect(result?.ok, name).toBe(false)
+      expect(result?.detail, name).toMatch(/merged with drop-ins/)
+    }
+    const shadowed = await marketCheck({ fragment: '/run/systemd/system/dsh-plugins.socket' })
+    expect(shadowed).toMatchObject({ ok: false, detail: expect.stringMatching(/\/run\/systemd\/system/) })
+    expect((await marketCheck({ cat: 'fail' }))?.ok).toBe(false)
+    expect(rendered.socket).toContain('ListenStream=127.0.0.1:28672\n')
+  })
+
   it('is skipped when ports.market is not configured', async () => {
     const { provisioner, nativeOptions } = await native()
     const { market: _market, ...ports } = provisioner.provisioner.ports as Record<string, unknown>
@@ -297,6 +324,68 @@ describe('load-dsh-market.sh', () => {
     expect(spawnSync('bash', [loader, 'relative.nft'], { encoding: 'utf8' }).status).toBe(2)
     expect(spawnSync('bash', [loader, '--check', 'relative.nft'], { encoding: 'utf8' }).status).toBe(2)
     expect(spawnSync('bash', [loader, '--check', '/nonexistent/dsh-market.nft'], { encoding: 'utf8' }).status).toBe(2)
+  })
+})
+
+// N2: the loader reads the rules file once into a private copy and only loads that copy; the source and its parent
+// directory must be root-owned and writable by root only. A user namespace maps this uid to root; a fake nft records
+// what it was given and, on the check pass, overwrites the source as a racing writer would.
+const unsharable = spawnSync('unshare', ['-Urn', 'true']).status === 0
+describe.skipIf(!unsharable)('load-dsh-market.sh private copy and source permissions (unshare -Urn, fake nft)', () => {
+  const sample = renderMarketRulesFile({ marketPorts: { min: 31_000, max: 31_001 }, listenerCgroup: parseMarketListenerCgroup('system.slice/dsh-plugins.socket') })
+  const setup = async (dirMode = 0o700, fileMode = 0o600) => {
+    const dir = await mkdtemp(join(tmpdir(), 'dsh-market-copy-'))
+    const rules = join(dir, 'dsh-market.nft'), log = join(dir, 'nft.log'), fake = join(dir, 'fake-nft')
+    await writeFile(rules, sample)
+    await chmod(rules, fileMode)
+    await writeFile(fake, [
+      '#!/usr/bin/env bash',
+      `log=${JSON.stringify(log)}; src=${JSON.stringify(rules)}`,
+      'printf "%s\\n" "$*" >>"$log"',
+      'case "$1 $2" in',
+      '  "-c -f") printf "add table inet dsh_market ; flush ruleset\\n" >"$src" ;;',
+      '  "-f "*) printf "loaded-dir=%s\\n" "$(dirname "$2")" >>"$log"; cmp -s "$2" <(printf "%s" "$EXPECTED") && echo copy-intact >>"$log" ;;',
+      'esac',
+      'case "$*" in',
+      '  "list chain inet dsh_market input") echo "ct mark . tcp dport != @market_owner drop" ;;',
+      '  "list chain inet dsh_market market_listener") printf "socket cgroupv2 level 2 \\"x/y\\" return\\n\\tdrop\\n" ;;',
+      'esac',
+    ].join('\n'), { mode: 0o755 })
+    await chmod(dir, dirMode)
+    return { dir, rules, log, fake }
+  }
+  const run = (rules: string, fake: string) => spawnSync('unshare', ['-Urn', 'bash', loader, rules], {
+    encoding: 'utf8', timeout: 30_000, env: { PATH: '/usr/bin:/bin', DSH_NFT: fake, EXPECTED: sample, TMPDIR: tmpdir() } })
+
+  it('checks and loads one private copy, so swapping the source after the read changes nothing', async () => {
+    const { dir, rules, log, fake } = await setup()
+    const result = run(rules, fake)
+    expect(result.status, result.stderr).toBe(0)
+    const lines = (await readFile(log, 'utf8')).trim().split('\n')
+    const checked = lines.find(line => line.startsWith('-c -f '))!.slice('-c -f '.length)
+    const loaded = lines.find(line => /^-f /.test(line))!.slice('-f '.length)
+    expect(checked).toBe(loaded)
+    expect(loaded).not.toBe(rules)
+    expect(loaded.startsWith(`${dir}/`)).toBe(false)
+    expect(lines).toContain('copy-intact')
+    // The work directory is removed on exit.
+    expect(spawnSync('test', ['-e', loaded]).status).not.toBe(0)
+  })
+
+  it('refuses a source whose parent directory or file is group- or world-writable', async () => {
+    for (const [dirMode, fileMode] of [[0o770, 0o600], [0o707, 0o600], [0o700, 0o620], [0o700, 0o602]] as const) {
+      const { rules, log, fake } = await setup(dirMode, fileMode)
+      const result = run(rules, fake)
+      expect(result.status, `${dirMode.toString(8)} ${fileMode.toString(8)}`).toBe(2)
+      expect(result.stderr).toMatch(/group- or world-writable/)
+      expect(spawnSync('test', ['-e', log]).status).not.toBe(0)
+    }
+  })
+
+  it('refuses a source in a directory not owned by root', () => {
+    // /tmp belongs to the host root, which is unmapped (nobody) inside the namespace.
+    const result = spawnSync('unshare', ['-Urn', 'bash', loader, join(tmpdir(), 'dsh-market-none.nft')], { encoding: 'utf8' })
+    expect(result.status).toBe(2)
   })
 })
 

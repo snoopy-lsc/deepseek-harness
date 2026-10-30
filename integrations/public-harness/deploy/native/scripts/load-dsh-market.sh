@@ -9,6 +9,10 @@
 # single `nft -f` transaction, so a reload never empties market_owner and a bad file changes nothing.
 # Exit codes: 0 loaded and verified, 1 load or verification failed, 2 refused (usage, not root, unsafe file).
 # `--check FILE` runs only the structural check (no root, no nft) and exits 0 or 2; the preflight and tests use it.
+# The file is read exactly once: it is copied into a fresh private directory (mktemp -d, 0700, owned by the caller)
+# and the structural check, `nft -c` and `nft -f` all use that copy, so a writer cannot swap the file between the
+# check and the load. Before loading, the source and its parent directory must be root-owned and not group- or
+# world-writable.
 # Never prints environment variables; the ruleset holds no secrets.
 set -euo pipefail
 umask 077
@@ -26,6 +30,29 @@ fail() { printf 'load-dsh-market: FAILED: %s\n' "$1" >&2; exit 1; }
 [[ $rules == /* ]] || refuse "rules file must be an absolute path"
 ((check_only)) || [[ $(id -u) -eq 0 ]] || refuse "root is required"
 [[ -f $rules && ! -L $rules ]] || refuse "$rules is missing or not a regular file"
+
+# owner_mode PATH: "<uid> <octal mode>" of PATH itself (never a symlink target).
+owner_mode() { stat -c '%u %a' -- "$1"; }
+if ((!check_only)); then
+  # The source and the directory holding it must be root-owned and writable by root only, so nobody else can
+  # replace or edit the file between these checks and the copy below.
+  parent=${rules%/*}; parent=${parent:-/}
+  [[ ! -L $parent ]] || refuse "$parent is a symlink"
+  read -r owner mode < <(owner_mode "$parent")
+  [[ $owner == 0 ]] || refuse "$parent is not owned by root"
+  (((8#$mode & 8#022) == 0)) || refuse "$parent is group- or world-writable"
+  read -r owner mode < <(owner_mode "$rules")
+  [[ $owner == 0 ]] || refuse "$rules is not owned by root"
+  (((8#$mode & 8#022) == 0)) || refuse "$rules is group- or world-writable"
+fi
+
+# Read the source once into a private copy; everything below works on the copy only.
+work=$(mktemp -d) || fail "cannot create a private work directory"
+trap 'rm -rf -- "$work"' EXIT
+read -r owner mode < <(owner_mode "$work")
+[[ $owner == "$(id -u)" && $mode == 700 ]] || fail "work directory $work is not private"
+copy=$work/dsh-market.nft
+cat -- "$rules" >"$copy" || fail "cannot read $rules"
 
 # render_expected <min> <max> <cgroup> <level>: the exact text of renderMarketRulesFile in
 # packages/runtime-systemd/src/market-firewall.ts (a test keeps the two byte-for-byte equal).
@@ -57,7 +84,7 @@ min="" max="" cgroup=""
 while IFS= read -r line || [[ -n $line ]]; do
   if [[ -z $min && $line =~ $define_re ]]; then min=$((10#${BASH_REMATCH[1]})); max=$((10#${BASH_REMATCH[2]}))
   elif [[ -z $cgroup && $line =~ $listener_re ]]; then cgroup=${BASH_REMATCH[1]}; fi
-done <"$rules"
+done <"$copy"
 [[ -n $min ]] || refuse "$rules has no MARKET_PORTS define"
 ((min >= 1024 && max <= 32767 && min <= max && max - min + 1 <= 4096)) || refuse "$rules has an invalid MARKET_PORTS range"
 [[ -n $cgroup ]] || refuse "$rules has no listener cgroup rule"
@@ -68,19 +95,15 @@ done
 [[ $cgroup != */ && $cgroup != *//* ]] || refuse "$rules has an invalid listener cgroup"
 level=${#segments[@]}
 ports="$min-$max"
-cmp -s -- "$rules" <(render_expected "$min" "$max" "$cgroup" "$level") \
+cmp -s -- "$copy" <(render_expected "$min" "$max" "$cgroup" "$level") \
   || refuse "$rules is not the rendered inet $TABLE ruleset (re-render it with render-market-firewall.ts)"
 if ((check_only)); then printf 'load-dsh-market: %s matches the rendered ruleset (ports %s, listener %s level %s)\n' "$rules" "$ports" "$cgroup" "$level" >&2; exit 0; fi
 
 [[ -x $nft ]] || fail "nft not found at $nft"
-# The file must be a regular, root-owned file that nobody else can write, reached without a symlink.
-read -r owner mode < <(stat -c '%u %a' -- "$rules")
-[[ $owner == 0 ]] || refuse "$rules is not owned by root"
-(((8#$mode & 8#022) == 0)) || refuse "$rules is group- or world-writable"
 
-# Check, then load in one transaction.
-"$nft" -c -f "$rules" || fail "nft rejected $rules (check); nothing was changed"
-"$nft" -f "$rules" || fail "nft could not load $rules; nothing was changed"
+# Check, then load in one transaction, both from the verified copy.
+"$nft" -c -f "$copy" || fail "nft rejected $rules (check); nothing was changed"
+"$nft" -f "$copy" || fail "nft could not load $rules; nothing was changed"
 
 # Verify the loaded state, not the file: both chains with their drops and the owner set.
 input=$("$nft" list chain inet "$TABLE" input 2>/dev/null) || fail "chain input missing after load"

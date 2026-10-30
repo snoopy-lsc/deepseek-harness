@@ -43,6 +43,29 @@ function atLeast(version: readonly number[], floor: readonly number[]): boolean 
   return true
 }
 
+/** Throws unless `unit` runs the loader as a fatal ExecStartPost and listens on exactly ports.market, loopback only.
+ * Applied to the unit file and to systemd's merged view (unit plus drop-ins), whose lines this reads the same way. */
+function checkMarketSocketUnit(unit: string, market: { readonly min: number; readonly max: number }, where: string): void {
+  const lines = unit.split('\n')
+  const posts = lines.filter(line => /^\s*ExecStartPost\s*=/.test(line))
+  // An empty `ExecStartPost=` in a drop-in resets the list and removes the loader, so any reset is refused.
+  if (!posts.includes(`ExecStartPost=${MARKET_FIREWALL_PATHS.loader} ${MARKET_FIREWALL_PATHS.rules}`)
+    || posts.some(line => !/^ExecStartPost=[^-\s]/.test(line))) {
+    throw new Error(`${where} must run the loader as a fatal ExecStartPost (no "-" prefix, no reset)`)
+  }
+  // The rules match only `iif "lo"`, so every listener must be loopback-only and the ports exactly ports.market.
+  const ports = new Set<number>()
+  for (const line of lines.filter(line => /^\s*Listen[A-Za-z]*\s*=/.test(line))) {
+    const match = /^ListenStream=127\.0\.0\.1:(\d{1,5})$/.exec(line)
+    const port = match === null ? NaN : Number(match[1])
+    if (!(port >= market.min && port <= market.max) || ports.has(port)) {
+      throw new Error(`${where}: "${line.trim()}" is not one ListenStream=127.0.0.1:<port> within ports.market`)
+    }
+    ports.add(port)
+  }
+  if (ports.size !== market.max - market.min + 1) throw new Error(`${where} must listen on every port of ports.market (${ports.size} of ${market.max - market.min + 1})`)
+}
+
 /** Run every check; none mutates the host.
  * @param common Common provisioner settings (the `provisioner` record).
  * @param nativeOptions Native companion settings.
@@ -97,23 +120,18 @@ export async function preflight(common: unknown, nativeOptions: unknown, host: P
       if (!rules.file || rules.uid !== 0 || (rules.mode & 0o022) !== 0) throw new Error(`${MARKET_FIREWALL_PATHS.rules} must be a root-owned regular file not writable by group or others`)
       const problems = checkMarketRulesFile(await host.read(MARKET_FIREWALL_PATHS.rules), market)
       if (problems.length > 0) throw new Error(`${MARKET_FIREWALL_PATHS.rules}: ${problems.join('; ')}`)
-      const unit = await host.read(MARKET_FIREWALL_PATHS.socket)
-      const posts = unit.split('\n').filter(line => line.startsWith('ExecStartPost='))
-      if (!posts.includes(`ExecStartPost=${MARKET_FIREWALL_PATHS.loader} ${MARKET_FIREWALL_PATHS.rules}`) || posts.some(line => line.startsWith('ExecStartPost=-'))) {
-        throw new Error(`${MARKET_FIREWALL_PATHS.socket} must run the loader as a fatal ExecStartPost (no "-" prefix)`)
+      // The installed unit file, then systemd's merged view: `systemctl cat` prints the fragment systemd actually uses
+      // followed by every drop-in, so an override (`*.socket.d/*.conf`, or a fragment in /run) cannot add a
+      // non-loopback listener, reset the listeners or drop the fatal loader hook unseen.
+      checkMarketSocketUnit(await host.read(MARKET_FIREWALL_PATHS.socket), market, MARKET_FIREWALL_PATHS.socket)
+      const unitName = MARKET_FIREWALL_PATHS.socket.slice(MARKET_FIREWALL_PATHS.socket.lastIndexOf('/') + 1)
+      let merged: string
+      try { merged = host.run(config.tools.systemctl, ['cat', '--no-pager', unitName]) } catch (error) {
+        throw new Error(`systemctl cat ${unitName} failed (${error instanceof Error ? error.message.split('\n')[0] : 'error'}); the merged unit cannot be verified`)
       }
-      // The rules match only `iif "lo"`, so every listener must be loopback-only and the ports exactly ports.market.
-      const listens = unit.split('\n').filter(line => /^\s*Listen[A-Za-z]*\s*=/.test(line))
-      const ports = new Set<number>()
-      for (const line of listens) {
-        const match = /^ListenStream=127\.0\.0\.1:(\d{1,5})$/.exec(line)
-        const port = match === null ? NaN : Number(match[1])
-        if (!(port >= market.min && port <= market.max) || ports.has(port)) {
-          throw new Error(`${MARKET_FIREWALL_PATHS.socket}: "${line.trim()}" is not one ListenStream=127.0.0.1:<port> within ports.market`)
-        }
-        ports.add(port)
-      }
-      if (ports.size !== market.max - market.min + 1) throw new Error(`${MARKET_FIREWALL_PATHS.socket} must listen on every port of ports.market (${ports.size} of ${market.max - market.min + 1})`)
+      const fragment = merged.split('\n').find(line => line.startsWith('# /'))
+      if (fragment !== `# ${MARKET_FIREWALL_PATHS.socket}`) throw new Error(`systemd loads ${unitName} from ${fragment?.slice(2) ?? 'nowhere'}, not ${MARKET_FIREWALL_PATHS.socket}`)
+      checkMarketSocketUnit(merged, market, `${unitName} (merged with drop-ins)`)
       let live: string
       try { live = host.run(config.tools.nft, ['list', 'table', 'inet', 'dsh_market']) } catch { live = '' }
       return `ports ${formatMarketPorts(market)}; loader and rules installed; ${live.includes('@market_owner drop') ? 'table loaded' : 'table not loaded yet (dsh-plugins.socket loads it)'}`
