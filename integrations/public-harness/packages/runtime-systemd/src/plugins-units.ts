@@ -43,6 +43,9 @@ export function renderPluginsSocketUnit(options: {
     'RemoveOnStop=yes',
     // Fatal: with ports.market enabled the per-owner table must load, or no market port stays open.
     `ExecStartPost=${loader} ${rules}`,
+    // The loader's private copy lives in this unit's own /tmp, which systemd removes with the unit (even if the
+    // loader is killed before its own cleanup runs).
+    'PrivateTmp=yes',
     '',
     '[Install]',
     'WantedBy=sockets.target',

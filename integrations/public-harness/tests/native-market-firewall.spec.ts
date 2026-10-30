@@ -1,6 +1,6 @@
 /** Native market firewall: rendered `inet dsh_market` semantics, the loader script, the installer renderer and the
  * fatal socket wiring. The real-kernel cases run only with NFT_BIN set and an unprivileged user+net namespace. */
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { chmod, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -130,7 +130,7 @@ function injectedRules(text: string): [string, string][] {
 describe('market ruleset file, listener cgroup and owner argv', () => {
   const marketPorts = { min: 28_672, max: 32_767 }
 
-  it('rules file passes its own check and the loader renders the same bytes for every range and cgroup', async () => {
+  it('rules file passes its own check and the loader renders the same bytes for every range and cgroup', { timeout: 60_000 }, async () => {
     const text = renderMarketRulesFile({ marketPorts, listenerCgroup: DEFAULT_MARKET_LISTENER_CGROUP })
     expect(checkMarketRulesFile(text, marketPorts)).toEqual([])
     for (const [ports, cgroup] of [[{ min: 1024, max: 1024 }, 'init.scope'], [marketPorts, 'system.slice/dsh-plugins.socket'],
@@ -142,7 +142,8 @@ describe('market ruleset file, listener cgroup and owner argv', () => {
     }
   })
 
-  it('rules check (TS and loader) refuses anything but the exact rendered text', async () => {
+  // Spawns bash once per mutation; give it room on a loaded machine (M2).
+  it('rules check (TS and loader) refuses anything but the exact rendered text', { timeout: 60_000 }, async () => {
     const text = renderMarketRulesFile({ marketPorts, listenerCgroup: DEFAULT_MARKET_LISTENER_CGROUP })
     for (const [name, bad] of injectedRules(text)) {
       expect(checkMarketRulesFile(bad), name).not.toEqual([])
@@ -222,14 +223,28 @@ describe('host preflight market-firewall check', () => {
     nativeOptions: await json('deploy/native/config/native.json.example'),
   })
   const files = async () => renderMarketFirewallFiles(await json('deploy/native/config/provisioner.json.example'), await json('deploy/native/config/plugins.json.example'))
+  /** What `systemctl show` (systemd 255) prints for the rendered unit: one ExecStartPost and one Listen line each. */
+  const systemdShow = (socket: string) => [
+    'LoadState=loaded',
+    'NeedDaemonReload=no',
+    `ExecStartPost={ path=${MARKET_FIREWALL_PATHS.loader} ; argv[]=${MARKET_FIREWALL_PATHS.loader} ${MARKET_FIREWALL_PATHS.rules} ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }`,
+    ...[...socket.matchAll(/^ListenStream=(.+)$/gm)].map(match => `Listen=${match[1]} (Stream)`),
+    '',
+  ].join('\n')
   const marketCheck = async (overrides: { rules?: string; socket?: string; loaderMode?: number; loaderUid?: number; table?: string;
-    dropIn?: string; fragment?: string; cat?: 'fail' } = {}) => {
+    dropIn?: string; fragment?: string; cat?: 'fail'; show?: (show: string) => string; showFails?: boolean } = {}) => {
     const { provisioner, nativeOptions } = await native(), rendered = await files()
     const results = await preflight(provisioner.provisioner, nativeOptions, {
       read: async path => path === MARKET_FIREWALL_PATHS.rules ? overrides.rules ?? rendered.rules
         : path === MARKET_FIREWALL_PATHS.socket ? overrides.socket ?? rendered.socket : 'cpu memory pids\n',
       run: (command, args) => {
         if (args.join(' ') === 'list table inet dsh_market') { if (overrides.table === undefined) throw new Error('no table'); return overrides.table }
+        if (args[0] === 'show') {
+          expect(args).toEqual(['show', '--no-pager', '-p', 'LoadState', '-p', 'NeedDaemonReload', '-p', 'ExecStartPost', '-p', 'Listen', 'dsh-plugins.socket'])
+          if (overrides.showFails === true) throw new Error('Failed to connect to bus')
+          const show = systemdShow(rendered.socket)
+          return overrides.show === undefined ? show : overrides.show(show)
+        }
         if (args.join(' ') === 'cat --no-pager dsh-plugins.socket') {
           if (overrides.cat === 'fail') throw new Error('Unit dsh-plugins.socket not found.')
           const merged = `# ${overrides.fragment ?? MARKET_FIREWALL_PATHS.socket}\n${overrides.socket ?? rendered.socket}`
@@ -293,6 +308,47 @@ describe('host preflight market-firewall check', () => {
     expect(shadowed).toMatchObject({ ok: false, detail: expect.stringMatching(/\/run\/systemd\/system/) })
     expect((await marketCheck({ cat: 'fail' }))?.ok).toBe(false)
     expect(rendered.socket).toContain('ListenStream=127.0.0.1:28672\n')
+  })
+
+  // M1: `ExecStartPost=\\` continued into a blank line, a comment or EOF is an empty value (a reset) in systemd 255.
+  it('refuses line continuations, so a continued empty ExecStartPost cannot reset the loader', async () => {
+    const rendered = await files()
+    for (const [name, dropIn] of [
+      ['continuation then blank line', '[Socket]\nExecStartPost=\\\n\n'],
+      ['continuation then comment', '[Socket]\nExecStartPost=\\\n# just a note\n'],
+      ['continuation at EOF', '[Socket]\nExecStartPost=\\'],
+      ['continuation with trailing space', '[Socket]\nExecStartPost=\\  \n\n'],
+      ['continued listener', '[Socket]\nListenStream=\\\n0.0.0.0:28672\n'],
+    ] as const) {
+      const result = await marketCheck({ dropIn })
+      expect(result?.ok, name).toBe(false)
+      expect(result?.detail, name).toMatch(/line continuation/)
+    }
+    // An even number of trailing backslashes is a literal, not a continuation; it fails only on its own merits.
+    expect((await marketCheck({ dropIn: '[Socket]\nBacklog=64\n# a\\\\\n' }))?.ok).toBe(true)
+    expect((await marketCheck({ socket: rendered.socket.replace('Service=dsh-plugins.service\n', 'Service=dsh-plugins.service\\\n\n') }))?.ok).toBe(false)
+  })
+
+  it('checks systemd\'s own parsed view of the loaded unit (systemctl show)', async () => {
+    const loader = `${MARKET_FIREWALL_PATHS.loader} ${MARKET_FIREWALL_PATHS.rules}`
+    for (const [name, show, detail] of [
+      ['loader ignore_errors', (text: string) => text.replace('ignore_errors=no', 'ignore_errors=yes'), /fatal ExecStartPost/],
+      ['loader reset', (text: string) => text.replace(/^ExecStartPost=.*$/m, ''), /fatal ExecStartPost/],
+      ['other loader argv', (text: string) => text.replace(`argv[]=${loader}`, `argv[]=${MARKET_FIREWALL_PATHS.loader} /tmp/x.nft`), /fatal ExecStartPost/],
+      ['unparsed entry', (text: string) => text.replace(/^ExecStartPost=.*$/m, 'ExecStartPost=something else'), /unrecognised/],
+      ['wildcard listener', (text: string) => text.replace('Listen=127.0.0.1:28672 (Stream)', 'Listen=0.0.0.0:28672 (Stream)'), /0\.0\.0\.0/],
+      ['ipv6 listener', (text: string) => `${text}Listen=[::]:28672 (Stream)\n`, /\[::\]/],
+      ['datagram listener', (text: string) => `${text}Listen=127.0.0.1:28672 (Datagram)\n`, /Datagram/],
+      ['missing listener', (text: string) => text.replace('Listen=127.0.0.1:28672 (Stream)\n', ''), /listens on/],
+      ['needs daemon-reload', (text: string) => text.replace('NeedDaemonReload=no', 'NeedDaemonReload=yes'), /daemon-reload/],
+      ['not loaded', (text: string) => text.replace('LoadState=loaded', 'LoadState=not-found'), /daemon-reload/],
+    ] as const) {
+      const result = await marketCheck({ show })
+      expect(result?.ok, name).toBe(false)
+      expect(result?.detail, name).toMatch(detail)
+    }
+    expect(await marketCheck({ show: text => `${text}ExecStartPost={ path=/usr/bin/true ; argv[]=/usr/bin/true ; ignore_errors=yes ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\n` })).toMatchObject({ ok: true })
+    expect(await marketCheck({ showFails: true })).toMatchObject({ ok: false, detail: expect.stringMatching(/systemctl show/) })
   })
 
   it('is skipped when ports.market is not configured', async () => {
@@ -381,6 +437,25 @@ describe.skipIf(!unsharable)('load-dsh-market.sh private copy and source permiss
       expect(spawnSync('test', ['-e', log]).status).not.toBe(0)
     }
   })
+
+  // M4: SIGTERM (or INT/HUP) during the load still removes the private copy.
+  it('removes the private copy when the loader is terminated mid-load', async () => {
+    const { dir, rules } = await setup()
+    const slow = join(dir, 'slow-nft'), seen = join(dir, 'seen')
+    await writeFile(slow, `#!/usr/bin/env bash\nprintf "%s" "$3" >${JSON.stringify(seen)}\nsleep 1\n`, { mode: 0o755 })
+    const child = spawn('unshare', ['-Urn', 'bash', loader, rules], { env: { PATH: '/usr/bin:/bin', DSH_NFT: slow, TMPDIR: tmpdir() }, stdio: 'ignore' })
+    const exited = new Promise<number | null>(resolve => child.on('exit', code => resolve(code)))
+    let copy = ''
+    for (let wait = 0; wait < 100 && copy === ''; wait += 1) {
+      await new Promise(resolve => setTimeout(resolve, 50))
+      copy = await readFile(seen, 'utf8').catch(() => '')
+    }
+    expect(copy).toMatch(/dsh-market\.nft$/)
+    expect(spawnSync('test', ['-e', copy]).status).toBe(0)
+    child.kill('SIGTERM')
+    expect(await exited).toBe(143)
+    expect(spawnSync('test', ['-e', copy.slice(0, copy.lastIndexOf('/'))]).status).not.toBe(0)
+  }, 30_000)
 
   it('refuses a source in a directory not owned by root', () => {
     // /tmp belongs to the host root, which is unmapped (nobody) inside the namespace.

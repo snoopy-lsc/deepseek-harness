@@ -18,6 +18,8 @@ RemoveOnStop=yes
 # No "-" prefix: if the table cannot be loaded this socket unit fails and every market
 # listener closes, instead of leaving the ports reachable by every instance account.
 ExecStartPost=/usr/lib/dsh-public/load-dsh-market.sh /etc/dsh-public/dsh-market.nft
+# The loader's private copy lives in this unit's own /tmp, removed by systemd even if the loader is killed.
+PrivateTmp=yes
 
 [Install]
 WantedBy=sockets.target

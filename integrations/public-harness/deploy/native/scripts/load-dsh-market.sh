@@ -49,6 +49,11 @@ fi
 # Read the source once into a private copy; everything below works on the copy only.
 work=$(mktemp -d) || fail "cannot create a private work directory"
 trap 'rm -rf -- "$work"' EXIT
+# A signal ends the script through `exit`, so the EXIT trap above removes the copy (bash skips EXIT on a fatal
+# signal otherwise). Under dsh-plugins.socket the copy is also in the unit's PrivateTmp.
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 read -r owner mode < <(owner_mode "$work")
 [[ $owner == "$(id -u)" && $mode == 700 ]] || fail "work directory $work is not private"
 copy=$work/dsh-market.nft
