@@ -25,6 +25,11 @@
 - `scripts/gen-dependency-catalog.spec.ts`：npm 配置隔离用例失败，因为机器注入了测试未预期的 npm 配置。
 - `pnpm run test:docs` 的 "repository references" 检查：一处发现，即 `python/sdk/uv.lock` 第 113 行的提交哈希。该锁文件按提交固定一个依赖，本分支不修改它。
 
+2026-10-28 在 `codex/native-market-firewall` 分支上又发现两个环境失败，它们在合并基线上同样失败。
+
+- `packages/boot/plugin-market/tests/repository-cache.spec.ts`：不可达主机用例对 `ssh://127.0.0.1:1/…` 期望 `network`，实际得到 `denied`，因为机器上没有 `ssh` 可执行文件，Git 无法运行它。
+- `packages/ptc-runtime/ptc-runtime-node/tests/persistent-process.spec.ts`：其中一个用例把 `maxOutputBytes` 设为 1024。它捕获的错误文本约为 819 字节加上检出路径长度的四倍，因此在 `.worktrees/<name>` 这样较深的工作树中会超出限制。检出路径较短时可以通过。
+
 ### 负载下偶发、需单独重跑确认
 
 这些测试在机器上完整运行根目录单元测试时失败过一次，单独重跑时通过。遇到失败时只重跑该文件；只有仍然失败才算回归。

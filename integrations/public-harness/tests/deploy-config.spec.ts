@@ -529,6 +529,22 @@ describe('runtime mainline', () => {
     }
   })
 
+  it('re-running setup without a runtime never switches an existing container profile to native (review S4)', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'dsh-container-rerun-'))
+    const options = { configFile: '/etc/dsh-public/provisioner.json', installRoot: '/opt/dsh-public/integration/' }
+    const container = await writeProductionProfile(home, 'provisioner', { ...options, runtime: 'podman-gvisor' })
+    const files = ['package.json', 'cordis.yml', 'cordis.patch.yml']
+    const before = await Promise.all(files.map(file => readFile(join(container, file), 'utf8')))
+    // The default runtime is systemd: the rerun must refuse, not rewrite the provider row.
+    await expect(writeProductionProfile(home, 'provisioner', options)).rejects.toThrow(/profile file differs: .*cordis\.patch\.yml/)
+    await expect(writeProductionProfile(home, 'provisioner', { ...options, runtime: 'systemd' })).rejects.toThrow(/profile file differs/)
+    expect(await Promise.all(files.map(file => readFile(join(container, file), 'utf8')))).toEqual(before)
+    expect(await readdir(container)).toEqual(expect.arrayContaining(files))
+    expect((await readdir(container)).sort()).toEqual([...files].sort())
+    // Naming the container runtime again is the idempotent path.
+    await expect(writeProductionProfile(home, 'provisioner', { ...options, runtime: 'podman-gvisor' })).resolves.toBe(container)
+  })
+
   it('documents native as the mainline and the container runtime as frozen in both languages', async () => {
     for (const path of ['README.md', 'deploy/production/README.md', 'deploy/native/README.md']) {
       expect(await text(path), path).toMatch(/frozen/i)
@@ -743,7 +759,7 @@ describe('native deployment composition', () => {
     })
     const byName = Object.fromEntries(results.map(result => [result.check, result.ok]))
     expect(byName).toMatchObject({ os: false, cgroup2: true, apparmor: false, 'xfs-quota': true, nftables: true })
-    expect(runs.every(line => /xfs_quota -x -c state -u|nft --version|--version$/.test(line))).toBe(true)
+    expect(runs.every(line => /xfs_quota -x -c state -u|nft --version|nft list table inet dsh_market$|--version$/.test(line))).toBe(true)
   })
 
   it('host preflight requires Node 24.9 or later for the toolchain and the service units', async () => {
@@ -753,7 +769,7 @@ describe('native deployment composition', () => {
       const runs: string[] = []
       const results = await preflight(provisioner.provisioner, nativeOptions, { read: async path => ok(path),
         run: (command, args) => { runs.push(`${command} ${args.join(' ')}`); return command in versions ? versions[command]! : 'Enforcement: ON' } })
-      expect(runs.every(line => /xfs_quota -x -c state -u|nft --version|--version$/.test(line))).toBe(true)
+      expect(runs.every(line => /xfs_quota -x -c state -u|nft --version|nft list table inet dsh_market$|--version$/.test(line))).toBe(true)
       return results.find(result => result.check === 'node-version')!
     }
     const toolchain = '/opt/dsh-public/toolchain/node'
@@ -773,5 +789,13 @@ describe('native deployment composition', () => {
       expect(await text(path), path).toMatch(/Node(\.js)? (`)?24\.9/)
     }
     expect(await text('deploy/production/Containerfile')).toMatch(/^FROM docker\.io\/library\/node:24\.\d+\.\d+-bookworm-slim@/m)
+  })
+
+  it('keeps the Containerfile comments true to the build scripts (review S9)', async () => {
+    const containerfile = await text('deploy/production/Containerfile')
+    // build-image.sh takes a packed tarball and never reads a manifest; the comment must not claim otherwise.
+    expect(await text('deploy/production/scripts/build-image.sh')).not.toMatch(/release-manifest/)
+    expect(containerfile).not.toMatch(/pins the Harness and plugin dependencies from release-manifest/)
+    if (containerfile.includes('REPLACE_WITH_PINNED_DIGEST')) expect(containerfile).toMatch(/placeholder[\s\S]*before cutting a frozen-line release/)
   })
 })

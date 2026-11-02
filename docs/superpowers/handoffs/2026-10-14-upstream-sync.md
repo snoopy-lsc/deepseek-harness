@@ -25,6 +25,11 @@ On 2026-10-14 the following tests failed on the agent box both on upstream relea
 - `scripts/gen-dependency-catalog.spec.ts`: the npm configuration isolation case fails because the box injects npm configuration that the test does not expect.
 - `pnpm run test:docs`, gate "repository references": one finding, a commit hash at `python/sdk/uv.lock` line 113. The lock file pins a dependency by commit, and the fork does not edit it.
 
+Two more environment failures were found on 2026-10-28 on the `codex/native-market-firewall` branch. They also fail at the merge baseline.
+
+- `packages/boot/plugin-market/tests/repository-cache.spec.ts`: the unreachable-host case expects `network` for `ssh://127.0.0.1:1/…` but gets `denied`, because the box has no `ssh` binary and Git cannot run it.
+- `packages/ptc-runtime/ptc-runtime-node/tests/persistent-process.spec.ts`: one case sets `maxOutputBytes` to 1024. The error text it captures is about 819 bytes plus four times the length of the checkout path, so in a deep worktree such as `.worktrees/<name>` it exceeds the limit. It passes in a short checkout path.
+
 ### Flaky under load; rerun alone to confirm
 
 These tests failed once during a full root unit run on the box and passed when rerun on their own. If one fails, rerun only that file; count it as a regression only if it still fails.

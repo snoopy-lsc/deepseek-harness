@@ -3,6 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { request } from 'node:http'
 import { apply as registerSystemdRuntime } from '@public-harness/runtime-systemd/index'
+import { createPluginsMarketBridge } from '@public-harness/plugins'
 import { createQuotaControlClient } from '@public-harness/quota/control'
 import { readConfigFile } from './config-file.ts'
 import { parseProvisionerProfileConfig } from './provisioner-service.ts'
@@ -45,5 +46,8 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
   const selection = profile.provisioner.runtime
   if (selection.kind !== 'systemd') throw new Error('runtime selection is not systemd')
   await registerSystemdRuntime(ctx, { common: raw.provisioner, native: await readConfigFile(selection.configFile),
-    quota: createQuotaControlClient(profile.quotaSocket), webProbe: (port, grant) => authenticatedWebProbe(port, grant) })
+    quota: createQuotaControlClient(profile.quotaSocket), webProbe: (port, grant) => authenticatedWebProbe(port, grant),
+    // With ports.market set the runtime admits each account's own market pair to inet dsh_market; without the
+    // plugins socket no account is admitted and the fatal per-owner table keeps every market port closed.
+    ...(profile.pluginsSocket === undefined ? {} : { market: createPluginsMarketBridge(profile.pluginsSocket) }) })
 }

@@ -1,6 +1,6 @@
 /** Native release manifests and real-host evidence: enrollment opens only on evidence bound to this host, release, policy and toolchain. */
 import { createHash } from 'node:crypto'
-import { parseReleaseManifest, type ReleaseManifest, type ReleaseSet } from './upgrade.ts'
+import { isImageReference, parseReleaseManifest, type ReleaseManifest, type ReleaseSet } from './upgrade.ts'
 
 /** Native runtime of a release. Both digests are `null` in an unstamped source manifest (the one in the repository) and are
  * stamped from the installed policy and toolchain trees; an unstamped manifest can never admit a host or run a rehearsal. */
@@ -73,7 +73,7 @@ function runtime(value: unknown, context: string): RuntimeRelease {
     // Unstamped source manifest: both digests absent together, never one of them.
     if (r.policyDigest === null && r.toolchainDigest === null) return { kind: 'systemd', policyDigest: null, toolchainDigest: null }
   }
-  if (r?.kind === 'podman-gvisor' && Object.keys(r).sort().join(',') === 'image,kind' && typeof r.image === 'string' && /[:@]/.test(r.image)) {
+  if (r?.kind === 'podman-gvisor' && Object.keys(r).sort().join(',') === 'image,kind' && isImageReference(r.image)) {
     return { kind: 'podman-gvisor', image: r.image }
   }
   throw new Error(`${context}.runtime is invalid`)
@@ -100,6 +100,10 @@ export function parseAnyReleaseManifest(value: unknown): NativeReleaseManifest {
       bundles: set.bundles, previous: null, publicEnrollment: 'closed' })
     return { release: parsed.release, harness: parsed.harness, pluginApi: parsed.pluginApi, bundles: parsed.bundles, runtime: runtime(set.runtime, context) }
   }
+  // `previous` is a full release set without its own `previous`/`publicEnrollment`: exactly these keys, nothing else.
+  const previousKeys = ['bundles', 'harness', 'pluginApi', 'release', 'runtime']
+  if (record.previous !== null && (typeof record.previous !== 'object' || Array.isArray(record.previous)
+    || Object.keys(record.previous as object).sort().join(',') !== previousKeys.join(','))) throw new Error('previous has unexpected or missing fields')
   const previous = record.previous === null ? null : pins(record.previous as Record<string, unknown>, 'previous')
   return { schema: 2, ...pins(record, 'manifest'), previous, publicEnrollment: 'closed' }
 }

@@ -41,13 +41,22 @@ function versions(value: unknown, context: string): Record<string, string> {
   return result
 }
 
+/** Container image reference shape shared by both manifest schemas: a plain registry/name with a tag or digest. */
+export const IMAGE_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9._\/:@-]{0,255}$/
+/** Whether a value is a tagged or digest-pinned image reference.
+ * @param value Candidate reference.
+ */
+export function isImageReference(value: unknown): value is string {
+  return typeof value === 'string' && IMAGE_REFERENCE.test(value) && /[:@]/.test(value)
+}
+
 function releaseSet(value: Record<string, unknown>, context: string): ReleaseSet {
   const harness = exact(value.harness, ['package', 'version'], `${context}.harness`)
   if (typeof value.release !== 'string' || !RELEASE_ID.test(value.release)) throw new Error(`${context}.release is invalid`)
   if (typeof harness.package !== 'string' || !PACKAGE.test(harness.package) || typeof harness.version !== 'string' || !VERSION.test(harness.version)) {
     throw new Error(`${context}.harness must pin an exact version`)
   }
-  if (typeof value.image !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._\/:@-]{0,255}$/.test(value.image) || !/[:@]/.test(value.image)) throw new Error(`${context}.image must be a tagged or digest-pinned reference`)
+  if (!isImageReference(value.image)) throw new Error(`${context}.image must be a tagged or digest-pinned reference`)
   return { release: value.release, harness: { package: harness.package, version: harness.version }, image: value.image,
     pluginApi: versions(value.pluginApi, `${context}.pluginApi`), bundles: versions(value.bundles, `${context}.bundles`) }
 }

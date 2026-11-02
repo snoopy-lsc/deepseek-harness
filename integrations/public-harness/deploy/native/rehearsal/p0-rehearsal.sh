@@ -3,12 +3,17 @@
 # Runs only as root on a dedicated systemd host with DSH_NATIVE_REHEARSAL=dedicated-host; --dry-run prints the plan
 # and touches nothing. Every probe resource is named dsh-p0-* / dsh_p0_probe and removed on exit. Never prints
 # environment variables or secrets; captured output is redacted before it is written. See README.md next to it.
+# No `set -e`, deliberately: most probe steps are expected to fail (a refused connect, a pnpm install stopped by the
+# hostile pnpmfile, a missing table) and their exit status is the evidence. Each step's status is checked explicitly
+# and recorded as PASS/FAIL/SKIP/BLOCKED; with errexit the first expected failure would abort the run and leave the
+# summary unwritten. Cleanup is guaranteed by the EXIT trap instead.
 set -uo pipefail
 umask 077
 
 readonly PROBE_TABLE=dsh_p0_probe
 readonly MARKET_TABLE=dsh_market
 readonly PROBE_SLICE=dsh-p0-probe.slice
+readonly MARK_TABLE=dsh_p0_mark
 
 dry_run=0
 only="P0.4,P0.5,P0.8"
@@ -18,6 +23,7 @@ node_bin=""
 pnpm_bin=""
 probe_port=28672
 socket_unit="dsh-plugins.socket"
+market_loader="/usr/lib/dsh-public/load-dsh-market.sh"
 container=0
 container_image=""
 pasta_address="169.254.1.2"
@@ -25,7 +31,7 @@ pasta_address="169.254.1.2"
 usage() {
   cat <<'USAGE'
 usage: p0-rehearsal.sh [--dry-run] [--only P0.4,P0.5,P0.8] [--evidence-dir DIR] [--account USER]
-                       [--node PATH] [--pnpm PATH] [--probe-port PORT] [--socket-unit UNIT]
+                       [--node PATH] [--pnpm PATH] [--probe-port PORT] [--socket-unit UNIT] [--market-loader PATH]
                        [--container --container-image IMAGE [--pasta-address ADDR]]
 Exit codes: 0 every selected probe PASS, 1 a probe FAILED, 2 refused or bad usage, 3 incomplete (SKIP or BLOCKED).
 USAGE
@@ -43,6 +49,7 @@ while (($#)); do
     --pnpm) pnpm_bin=${2:-}; shift ;;
     --probe-port) probe_port=${2:-}; shift ;;
     --socket-unit) socket_unit=${2:-}; shift ;;
+    --market-loader) market_loader=${2:-}; shift ;;
     --container) container=1 ;;
     --container-image) container_image=${2:-}; shift ;;
     --pasta-address) pasta_address=${2:-}; shift ;;
@@ -57,10 +64,20 @@ if [[ ! $probe_port =~ ^[0-9]+$ ]] || ((probe_port < 1024 || probe_port > 65535)
 [[ $account =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || die_usage "--account must be a plain Linux user name"
 [[ $socket_unit =~ ^[A-Za-z0-9@_.-]+\.socket$ ]] || die_usage "--socket-unit must name a .socket unit"
 [[ $pasta_address =~ ^[0-9.]+$ ]] || die_usage "--pasta-address must be an IPv4 address"
+[[ $market_loader =~ ^/[A-Za-z0-9/_.-]+$ ]] || die_usage "--market-loader must be an absolute path"
 if ((container)) && [[ -z $container_image ]]; then die_usage "--container needs --container-image"; fi
 [[ -z $evidence_dir || $evidence_dir == /* ]] || die_usage "--evidence-dir must be absolute"
 
 selected() { [[ ,$only, == *",$1,"* ]]; }
+
+# Model credentials have no business in a root rehearsal: drop them before any probe runs so no child process
+# (systemd-run, pnpm, podman, node) can inherit or echo them. Names only are matched; values are never read.
+for name in $(compgen -e); do
+  case $name in
+    DSH_MODEL_*|*_API_KEY|*_MODEL_KEY|API_KEY|OPENAI_*|ANTHROPIC_*|DEEPSEEK_*) unset "$name" ;;
+  esac
+done
+unset name
 
 # ---- refusal guards: the real run needs root, a running systemd and the dedicated-host opt-in ----
 if ((!dry_run)); then
@@ -111,6 +128,9 @@ capture() {
 cleanup() {
   ((dry_run)) && return 0
   nft delete table inet "$PROBE_TABLE" >/dev/null 2>&1 || true
+  nft delete table inet "$MARK_TABLE" >/dev/null 2>&1 || true
+  # P0.8 adds one temporary market_owner element; remove exactly that element, never the table.
+  if [[ -n ${market_element:-} ]]; then nft delete element inet "$MARKET_TABLE" market_owner "{ $market_element }" >/dev/null 2>&1 || true; fi
   systemctl stop dsh-p0-listener.service >/dev/null 2>&1 || true
   [[ -n ${work:-} && -d ${work:-} ]] && rm -rf -- "$work"
   return 0
@@ -130,7 +150,14 @@ resolve_tools() {
 # Node one-liner: connect to host:port; prints "connected" or the error code, exits 0 only when connected.
 connect_js='const [h,p]=process.argv.slice(1);const s=require("net").connect({host:h,port:+p});const t=setTimeout(()=>{console.log("timeout");process.exit(3)},2500);s.on("connect",()=>{console.log("connected");clearTimeout(t);s.destroy();process.exit(0)});s.on("error",e=>{console.log(e.code||"error");clearTimeout(t);process.exit(2)})'
 
+listener_ours() { systemctl is-active --quiet dsh-p0-listener.service; }
+port_busy() { ss -ltnH "sport = :$1" | grep -q .; }
+
 start_listener() { # transient root-owned loopback listener on probe_port for the duration of the run
+  # Reuse only our own listener: a port held by anything else would make every connect probe meaningless.
+  if listener_ours; then return 0; fi
+  if port_busy "$probe_port"; then LISTENER_ERROR="loopback port $probe_port is already in use by another process (pass a free --probe-port)"; return 1; fi
+  LISTENER_ERROR="could not start the loopback listener on $probe_port"
   systemd-run --unit=dsh-p0-listener --collect --quiet --property=RuntimeMaxSec=600 -- "$node_bin" -e \
     'require("net").createServer(c=>c.end()).listen(+process.argv[1],"127.0.0.1")' "$probe_port" >/dev/null 2>&1
   local _; for _ in 1 2 3 4 5 6 7 8 9 10; do ss -ltnH "sport = :$probe_port" | grep -q . && return 0; sleep 0.3; done
@@ -140,11 +167,12 @@ start_listener() { # transient root-owned loopback listener on probe_port for th
 # ---------------------------------------------------------------- P0.4
 p04_dry() {
   say "P0.4 reconcile transient unit: slice, loopback-only network, hostile pnpmfile and userconfig ignored"
+  plan "the loopback listener is the rehearsal's own dsh-p0-listener; a --probe-port held by any other process is BLOCKED"
   plan "create a work dir under /var/tmp owned by --account ($account) with package.json (no dependencies), a throwing .pnpmfile.cjs and a hostile .npmrc"
   plan "systemd-run --wait --collect --pipe --slice=$PROBE_SLICE --uid=<account> --gid=<account> with the reconcile properties"
   plan "  (NoNewPrivileges, CapabilityBoundingSet=, ProtectSystem=strict, ProtectHome=yes, ReadWritePaths=<work>, IPAddressDeny=any, IPAddressAllow=localhost, RuntimeMaxSec=300)"
   plan "inside the unit: /proc/self/cgroup names $PROBE_SLICE; 127.0.0.1:$probe_port connects; 192.0.2.1:80 is refused"
-  plan "inside the unit: pnpm install --offline fails without the flags and passes with --ignore-pnpmfile --config.userconfig=/dev/null"
+  plan "inside the unit: pnpm install --offline fails without the flags (and the failure must show 'hostile pnpmfile executed') and passes with --ignore-pnpmfile --config.userconfig=/dev/null"
 }
 
 p04_run() {
@@ -155,7 +183,7 @@ p04_run() {
   id -u "$account" >/dev/null 2>&1 || { record $probe BLOCKED "account $account does not exist"; return; }
   local uid gid; uid=$(id -u "$account"); gid=$(id -g "$account")
   ((uid != 0)) || { record $probe BLOCKED "--account must not be root"; return; }
-  start_listener || { record $probe BLOCKED "could not start the loopback listener on $probe_port"; return; }
+  start_listener || { record $probe BLOCKED "$LISTENER_ERROR"; return; }
   work=$(mktemp -d /var/tmp/dsh-p0-XXXXXX)
   mkdir -p "$work/project" "$work/home" "$work/cache" "$work/tmp"
   printf '{"name":"dsh-p0-probe","version":"0.0.0","private":true}\n' >"$work/project/package.json"
@@ -174,7 +202,12 @@ p04_run() {
   capture $probe "loopback allowed" "${base[@]}" "$node_bin" -e "$connect_js" 127.0.0.1 "$probe_port" || failures+=("loopback connect failed: $CAPTURED")
   capture $probe "public denied" "${base[@]}" "$node_bin" -e "$connect_js" 192.0.2.1 80 && failures+=("non-loopback connect succeeded")
   [[ $CAPTURED == *EPERM* || $CAPTURED == *EACCES* ]] || failures+=("non-loopback connect was not refused by IPAddressDeny (got $CAPTURED)")
-  capture $probe "pnpm without flags (must fail)" "${base[@]}" "$pnpm_bin" install --offline && failures+=("hostile pnpmfile did not stop a plain install")
+  if capture $probe "pnpm without flags (must fail)" "${base[@]}" "$pnpm_bin" install --offline; then
+    failures+=("hostile pnpmfile did not stop a plain install")
+  elif [[ $CAPTURED != *"hostile pnpmfile executed"* ]]; then
+    # The plain install must fail because the pnpmfile ran, not for an unrelated reason (network, lockfile, toolchain).
+    failures+=("plain install failed without running the hostile pnpmfile")
+  fi
   capture $probe "pnpm with flags (must pass)" "${base[@]}" "$pnpm_bin" install --offline --ignore-pnpmfile --config.userconfig=/dev/null \
     || failures+=("install with --ignore-pnpmfile --config.userconfig=/dev/null failed")
   [[ $CAPTURED != *"hostile pnpmfile executed"* ]] || failures+=("pnpmfile ran despite --ignore-pnpmfile")
@@ -185,6 +218,7 @@ p04_run() {
 p05_dry() {
   say "P0.5 meta skuid matching (native) and, with --container, through pasta"
   plan "nft add table inet $PROBE_TABLE with an output chain counting 'oif lo meta skuid <uid> tcp dport $probe_port' for --account and for root"
+  plan "reuse only the rehearsal's own dsh-p0-listener on $probe_port; a port held by any other process is BLOCKED, never reused"
   plan "connect to 127.0.0.1:$probe_port as --account ($account) in a transient unit, then as root; each counter must move only for its own uid"
   if ((container)); then
     plan "as --account: podman run --rm --runtime=runsc --network=pasta:--map-host-loopback,$pasta_address,--no-splice $container_image node -e <connect $pasta_address:$probe_port>"
@@ -207,7 +241,7 @@ p05_run() {
   [[ -x $node_bin ]] || { record $probe BLOCKED "no node toolchain (pass --node)"; return; }
   id -u "$account" >/dev/null 2>&1 || { record $probe BLOCKED "account $account does not exist"; return; }
   local uid; uid=$(id -u "$account")
-  ss -ltnH "sport = :$probe_port" | grep -q . || start_listener || { record $probe BLOCKED "could not start the loopback listener"; return; }
+  start_listener || { record $probe BLOCKED "$LISTENER_ERROR"; return; }
   nft delete table inet "$PROBE_TABLE" >/dev/null 2>&1
   capture $probe "probe table" nft -f - <<NFT || { record $probe FAIL "could not load the probe table"; return; }
 add table inet $PROBE_TABLE
@@ -254,7 +288,13 @@ p08_dry() {
   plan "connect once as root; the matching counter names the listener cgroup"
   plan "nft list table inet $MARKET_TABLE must exist and its market_listener rule must name the measured cgroup"
   plan "systemctl restart $socket_unit, then repeat the measurement and the $MARKET_TABLE check (ExecStartPost loader reran)"
-  plan "nft delete table inet $PROBE_TABLE (the $MARKET_TABLE table is only read)"
+  plan "$socket_unit must run $market_loader <rules> as a fatal ExecStartPost (no \"-\" prefix)"
+  plan "nft table $MARK_TABLE marks new loopback flows to the market port with 'ct mark set meta skuid' (as dsh_native does)"
+  plan "as --account ($account) with no market_owner element: connecting to the market port must be denied; as root (mark 0) too"
+  plan "nft add element inet $MARKET_TABLE market_owner { <uid> . <port> } (temporary); rerun $market_loader <rules>: exit 0 and the element survives"
+  plan "as --account: the owned port connects; a second market port (not owned) is denied"
+  plan "nft delete element inet $MARKET_TABLE market_owner { <uid> . <port> }; the account is denied again"
+  plan "nft delete table inet $PROBE_TABLE and $MARK_TABLE (the $MARKET_TABLE table itself is never flushed or deleted)"
 }
 
 measure_listener() { # measure_listener <port> <probe-log>: prints init.scope|socket-unit|unknown
@@ -281,6 +321,47 @@ NFT
   else echo unknown; fi
 }
 
+# account_connect <uid> <port>: connect as that uid from a transient unit; exit 0 only when connected.
+# shellcheck disable=SC2329 # invoked through capture
+account_connect() { systemd-run --wait --collect --pipe --quiet "--uid=$1" -- "$node_bin" -e "$connect_js" 127.0.0.1 "$2"; }
+
+# p08_owner_checks <port> <second-port|""> <rules-file>: exercise the per-owner set with one temporary element.
+# Appends to the caller's failures and notes arrays.
+p08_owner_checks() {
+  local probe=P0.8 port=$1 other=$2 rules=$3 uid
+  id -u "$account" >/dev/null 2>&1 || { failures+=("account $account does not exist"); return; }
+  uid=$(id -u "$account")
+  ((uid != 0)) || { failures+=("--account must not be root"); return; }
+  capture $probe "market_owner before" nft list set inet "$MARKET_TABLE" market_owner || { failures+=("market_owner set missing"); return; }
+  if grep -Eq "\. $port([^0-9]|$)" <<<"$CAPTURED"; then notes+=("market port $port already has an owner; owner checks skipped"); return; fi
+  nft delete table inet "$MARK_TABLE" >/dev/null 2>&1
+  capture $probe "mark table" nft -f - <<NFT || { failures+=("could not load the $MARK_TABLE mark table"); return; }
+add table inet $MARK_TABLE
+add chain inet $MARK_TABLE out { type filter hook output priority filter - 3 ; policy accept ; }
+add rule inet $MARK_TABLE out oif "lo" tcp dport { $port${other:+, $other} } ct state new ct mark set meta skuid
+NFT
+  capture $probe "account without element (must be denied)" account_connect "$uid" "$port" && failures+=("account without a market_owner element reached $port")
+  capture $probe "root, unmarked (must be denied)" "$node_bin" -e "$connect_js" 127.0.0.1 "$port" && failures+=("root (ct mark 0) reached market port $port")
+  market_element="$uid . $port"
+  capture $probe "add temporary element" nft add element inet "$MARKET_TABLE" market_owner "{ $market_element }" || { failures+=("could not add a market_owner element"); return; }
+  if capture $probe "loader rerun" "$market_loader" "$rules"; then
+    capture $probe "market_owner after rerun" nft list set inet "$MARKET_TABLE" market_owner
+    grep -Eq "\. $port([^0-9]|$)" <<<"$CAPTURED" || failures+=("loader rerun dropped the market_owner element")
+  else
+    notes+=("direct loader rerun exited non-zero (see log; the probe falls back to restarting $socket_unit)")
+  fi
+  capture $probe "owner on its port (must connect)" account_connect "$uid" "$port" || failures+=("owner could not reach its own market port $port: $CAPTURED")
+  if [[ -n $other ]]; then
+    capture $probe "owner on another market port (must be denied)" account_connect "$uid" "$other" && failures+=("owner of $port reached market port $other")
+  else
+    notes+=("only one ListenStream; cross-port check skipped")
+  fi
+  capture $probe "delete temporary element" nft delete element inet "$MARKET_TABLE" market_owner "{ $market_element }" && market_element=""
+  capture $probe "account after delete (must be denied)" account_connect "$uid" "$port" && failures+=("account still reached $port after its element was deleted")
+  nft delete table inet "$MARK_TABLE" >/dev/null 2>&1
+  owner_checked=1
+}
+
 market_rule_matches() { # market_rule_matches <measured> -> 0 when dsh_market names that cgroup
   local rules; rules=$(nft list chain inet "$MARKET_TABLE" market_listener 2>/dev/null) || return 2
   case $1 in
@@ -296,12 +377,21 @@ p08_run() {
   command -v nft >/dev/null || { record $probe BLOCKED "nft not installed"; return; }
   [[ -x $node_bin ]] || { record $probe BLOCKED "no node toolchain (pass --node)"; return; }
   systemctl is-active --quiet "$socket_unit" || { record $probe BLOCKED "$socket_unit is not active; install and start it first"; return; }
-  local listen port
-  listen=$(systemctl show -p Listen --value "$socket_unit" | head -n1)
-  port=$(sed -nE 's/^[^ ]*:([0-9]+) .*/\1/p' <<<"$listen")
+  local listen port other
+  listen=$(systemctl show -p Listen --value "$socket_unit")
+  port=$(sed -nE 's/^[^ ]*:([0-9]+) .*/\1/p' <<<"$listen" | sed -n 1p)
+  other=$(sed -nE 's/^[^ ]*:([0-9]+) .*/\1/p' <<<"$listen" | sed -n 2p)
   [[ -n $port ]] || { record $probe BLOCKED "could not read a ListenStream port from $socket_unit"; return; }
+  local failures=() notes=() before after rules owner_checked=0
   capture $probe "unit" systemctl cat "$socket_unit"
-  local failures=() before after
+  rules=""
+  local line
+  while IFS= read -r line; do
+    [[ $line == "ExecStartPost=$market_loader "* ]] && rules=${line#"ExecStartPost=$market_loader "}
+  done <<<"$CAPTURED"
+  [[ $rules == /* && $rules != *[[:space:]]* ]] || rules=""
+  grep -Eq '^ExecStartPost=-' <<<"$CAPTURED" && failures+=("$socket_unit has a non-fatal ExecStartPost (\"-\" prefix)")
+  [[ -n $rules ]] || failures+=("$socket_unit does not run $market_loader <rules> as ExecStartPost")
   capture $probe "listener before restart" ss -ltnH --cgroup "sport = :$port"
   before=$(measure_listener "$port" "$(log_file $probe)"); say "        P0.8  listener cgroup before restart: $before"
   [[ $before != unknown ]] || failures+=("listener cgroup not identified before restart")
@@ -314,13 +404,17 @@ p08_run() {
   [[ $after == "$before" ]] || failures+=("listener cgroup changed across restart ($before -> $after)")
   capture $probe "$MARKET_TABLE after restart" nft list table inet "$MARKET_TABLE" || failures+=("$MARKET_TABLE missing after restart")
   market_rule_matches "$after" || failures+=("$MARKET_TABLE market_listener does not name $after after restart")
-  if ((${#failures[@]})); then record $probe FAIL "$(IFS=';'; echo "${failures[*]}")"
-  else record $probe PASS "listener cgroup $before (level $([[ $before == init.scope ]] && echo 1 || echo 2)); $MARKET_TABLE matched before and after restart"; fi
+  if [[ -n $rules ]]; then p08_owner_checks "$port" "$other" "$rules"; fi
+  local extra=""; ((${#notes[@]})) && extra="; notes: $(IFS=';'; echo "${notes[*]}")"
+  if ((${#failures[@]})); then record $probe FAIL "$(IFS=';'; echo "${failures[*]}")$extra"
+  elif ((!owner_checked)); then record $probe SKIP "listener cgroup $before matched, but the per-owner checks did not run$extra"
+  else record $probe PASS "listener cgroup $before (level $([[ $before == init.scope ]] && echo 1 || echo 2)); $MARKET_TABLE matched before and after restart; per-owner set admitted only the owner$extra"; fi
 }
 
 # ---------------------------------------------------------------- main
 if ((dry_run)); then
   say "p0-rehearsal DRY-RUN: nothing is created, started, loaded or written"
+  say "model credential variables (DSH_MODEL_*, *_API_KEY, ...) are unset before any probe runs"
   say "evidence directory (not created): $evidence_dir"
   selected P0.4 && p04_dry
   selected P0.5 && p05_dry
