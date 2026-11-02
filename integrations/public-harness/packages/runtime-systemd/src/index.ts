@@ -8,7 +8,7 @@ import { createSystemdRuntime, type SystemdRuntimeDeps } from './runtime.ts'
 import { validateNativeAssets } from './storage.ts'
 
 /** Common provisioner settings plus the native companion file, and the explicit collaborators. */
-export interface SystemdProviderOptions extends Omit<SystemdRuntimeDeps, 'config' | 'runner' | 'claimedPorts' | 'acquired' | 'active' | 'socketGid'> {
+export interface SystemdProviderOptions extends Omit<SystemdRuntimeDeps, 'config' | 'runner' | 'claimedPorts' | 'acquired' | 'active' | 'marketCandidates' | 'socketGid'> {
   readonly common: unknown
   readonly native: unknown
   readonly runner?: SystemdRuntimeDeps['runner']
@@ -18,6 +18,19 @@ export interface SystemdProviderOptions extends Omit<SystemdRuntimeDeps, 'config
 export interface SystemdInstanceRuntime extends InstanceRuntime {
   readonly config: SystemdConfig
   close(): Promise<void>
+}
+
+/** Market rebuild candidates from durable records: native, `running` (never quarantined, starting or stopping) and holding
+ * the network resource. Unreadable records are counted and skipped instead of failing the whole rebuild; their owners
+ * stay shut out of the market until they restart.
+ * @param listed Result of {@link StateStore.list}.
+ */
+export function marketRebuildCandidates(listed: Awaited<ReturnType<StateStore['list']>>): { instances: RuntimeInstance[]; skipped: number } {
+  return {
+    instances: listed.records.flatMap(state => state.runtime.kind === 'systemd' && state.lifecycle === 'running' && state.instance !== null
+      && state.acquired.includes('network') ? [state.instance] : []),
+    skipped: listed.invalid.length,
+  }
 }
 
 /** Create the adapter without registering it or touching the host; an invalid configuration rejects before side effects. */
@@ -34,6 +47,7 @@ export function createSystemdInstanceRuntime(options: SystemdProviderOptions): S
     claimedPorts: async () => (await records()).flatMap(state => !state.acquired.includes('network') ? []
       : state.instance !== null ? [state.instance.webPort] : state.pending?.webPort === undefined ? [] : [state.pending.webPort]),
     active: async () => (await records()).flatMap(state => state.instance !== null && state.acquired.includes('network') ? [state.instance] : []),
+    marketCandidates: async () => marketRebuildCandidates(await store.list()),
     acquired: async (userId, instanceId, resource, ports) => {
       const state = await store.get(userId)
       if (state === undefined || state.runtime.kind !== 'systemd'

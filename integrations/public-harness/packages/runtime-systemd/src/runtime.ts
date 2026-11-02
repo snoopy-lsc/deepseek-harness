@@ -30,6 +30,12 @@ export interface SystemdRuntimeDeps {
   readonly acquired: (userId: UserId, instanceId: InstanceId, resource: AcquiredResource, ports?: { webPort?: number; quotaPort?: number }) => Promise<void>
   /** Other instances whose network rules must stay installed. */
   readonly active: () => Promise<readonly RuntimeInstance[]>
+  /**
+   * Instances the market rebuild may re-admit after a restart, plus how many unreadable records it skipped. The adapter
+   * passes running, non-quarantined records only. Default: {@link active} with nothing skipped. Either way a candidate is
+   * re-admitted only while `systemctl show` reports its unit running.
+   */
+  readonly marketCandidates?: () => Promise<{ readonly instances: readonly RuntimeInstance[]; readonly skipped: number }>
   /** Authenticated readiness: the Web server on the instance port accepts the published grant. */
   readonly webProbe: (port: number, grant: string) => Promise<boolean>
   /** Socket group for the router-facing forwarder. */
@@ -77,8 +83,34 @@ export interface MarketFirewallSettings {
   readonly reload?: readonly (readonly [string, ...string[]])[]
   /** Security alert: the same stale element survived two consecutive probes (`repeated`), or an element not yet
    * accounted for was seen while the owners were being rebuilt after a restart (`unverified`, not deleted). */
-  readonly onAlert?: (row: MarketEndpoint, reason: 'repeated' | 'unverified') => void
+  readonly onAlert?: (row: MarketEndpoint, reason: MarketAlertReason) => void
+  /** Failed rebuild attempts in a row (each retried by one probe) after which each unverified extra is alerted as
+   * `stalled` (default 3). Probes that find the rebuild still running do not count toward this. */
+  readonly stalledAfter?: number
+  /** Probes that find the same rebuild attempt still running after which extras are alerted as `stalled` anyway
+   * (default 30, i.e. 30 minutes at the default interval), so a hung rebuild is not silent. */
+  readonly stalledPendingAfter?: number
+  /** The rebuild skipped this many unreadable state records; their owners stay shut out until they restart. */
+  readonly onRebuildSkipped?: (records: number) => void
+  /** Where the default alerts go (default: stderr, i.e. the unit's journal). Used only when the callbacks above are
+   * not set. */
+  readonly log?: (line: string) => void
 }
+
+/** Journal priority prefixes (sd-daemon(3)); systemd strips them from stderr when `SyslogLevelPrefix=` is on. */
+const JOURNAL_PRIORITY = { crit: '<2>', err: '<3>', warning: '<4>', notice: '<5>' } as const
+
+/** One structured `dsh_market` log line: `dsh_market [SECURITY ]event=<event> key=value ... msg="<text>"`. With
+ * stderr connected to the journal (JOURNAL_STREAM set) it carries the priority prefix; otherwise it is plain. */
+export function formatMarketLog(priority: keyof typeof JOURNAL_PRIORITY, security: boolean, event: string,
+  fields: Readonly<Record<string, number | string>>, message: string, journal = process.env.JOURNAL_STREAM !== undefined): string {
+  const pairs = Object.entries(fields).map(([key, value]) => `${key}=${value}`).join(' ')
+  return `${journal ? JOURNAL_PRIORITY[priority] : ''}dsh_market ${security ? 'SECURITY ' : ''}event=${event}${pairs === '' ? '' : ` ${pairs}`} msg=${JSON.stringify(message)}`
+}
+
+/** `repeated`: a stale element survived two deleting probes. `unverified`: an element seen while the owners are still
+ * being rebuilt (not deleted). `stalled`: the same, after {@link MarketFirewallSettings.stalledAfter} probes in a row. */
+export type MarketAlertReason = 'repeated' | 'unverified' | 'stalled'
 
 /** A native lifecycle failure with a stable, path-free reason. */
 export class NativeRuntimeError extends Error {
@@ -137,7 +169,8 @@ export function createSystemdRuntime(deps: SystemdRuntimeDeps) {
   // Market owner admission. One lock serializes every market_owner compare and mutate (start, stop and probe).
   const marketRange = deps.market === undefined ? undefined : config.ports.market
   const marketLock = new KeyedLock(), admitted = new Map<UserId, MarketEndpoint>()
-  // Users whose market admission changed (start or stop) while a rebuild was running; the rebuild leaves them alone.
+  // Users whose market admission changed (start or stop) since this runtime was created. The rebuild never touches
+  // them, on any attempt: a stop may already have released a user whose record is not yet marked stopped.
   const marketTouched = new Set<UserId>()
   const nft = (args: readonly string[]) => runner.run(config.tools.nft, [...args])
   const listOwners = async (): Promise<MarketEndpoint[] | undefined> => {
@@ -209,22 +242,42 @@ export function createSystemdRuntime(deps: SystemdRuntimeDeps) {
     listSet: async () => { const rows = await listOwners(); if (rows === undefined) throw new Error('market_owner unreadable'); return rows },
     addElements: async rows => { await runChecked(runner, config.tools.nft, marketOwnerArgv('add', rows)) },
     deleteElements: async rows => { await runChecked(runner, config.tools.nft, marketOwnerArgv('delete', rows)) },
-    alertExtra: (row, reason = 'repeated') => (deps.marketFirewall?.onAlert ?? ((row, reason) => {
-      process.stderr.write(reason === 'repeated'
-        ? `dsh_market: stale market_owner element uid ${row.uid} port ${row.port} survived two probes\n`
-        : `dsh_market: market_owner element uid ${row.uid} port ${row.port} not yet accounted for (owners still rebuilding; not deleted)\n`)
-    }))(row, reason),
+    alertExtra: (row, reason = 'repeated') => {
+      const stalled = marketFailedRuns >= marketStalledAfter || marketPendingRuns >= marketStalledPendingAfter
+      const escalated = reason === 'unverified' && stalled ? 'stalled' : reason
+      ;(deps.marketFirewall?.onAlert ?? ((row: MarketEndpoint, reason: MarketAlertReason) => {
+        const fields = { uid: row.uid, port: row.port }
+        marketLog(reason === 'repeated'
+          ? formatMarketLog('err', true, 'stale_owner_survived', fields, 'stale market_owner element survived two deleting probes')
+          : reason === 'stalled'
+            ? formatMarketLog('crit', true, 'owner_rebuild_stalled', { ...fields, failed_attempts: marketFailedRuns, pending_probes: marketPendingRuns },
+              'market_owner element unverified; the owner rebuild is not completing, so it is not deleted')
+            : formatMarketLog('notice', false, 'owner_unverified', fields, 'market_owner element not yet accounted for (owners still rebuilding; not deleted)'))
+      }))(row, escalated)
+    },
   }
   // After a restart `admitted` is empty while instances still run. Rebuild it from `deps.active()` (re-open each
   // endpoint, which also restores the bridge's own state, and re-admit uid . port) before the probe may delete
   // anything; until then a probe only alerts.
   let marketRebuilt = false, marketRebuilding: Promise<void> | undefined
+  // Failed rebuild attempts in a row, and probes that found the current attempt still running.
+  let marketFailedRuns = 0, marketPendingRuns = 0
+  const marketStalledAfter = deps.marketFirewall?.stalledAfter ?? 3
+  const marketStalledPendingAfter = deps.marketFirewall?.stalledPendingAfter ?? 30
+  const marketLog = deps.marketFirewall?.log ?? ((line: string) => { process.stderr.write(`${line}\n`) })
+  const candidates = deps.marketCandidates ?? (async () => ({ instances: await deps.active(), skipped: 0 }))
   async function rebuildOwners(): Promise<void> {
     if (deps.market === undefined || marketRange === undefined) return
     const bridge = deps.market, range = marketRange
-    marketTouched.clear()
-    const running = await deps.active()
-    for (const instance of running) {
+    const { instances, skipped } = await candidates()
+    if (skipped > 0) (deps.marketFirewall?.onRebuildSkipped ?? (count => {
+      marketLog(formatMarketLog('warning', true, 'owner_rebuild_skipped', { records: count },
+        'owner rebuild skipped unreadable state records; those owners stay shut out'))
+    }))(skipped)
+    for (const instance of instances) {
+      if (admitted.has(instance.userId) || marketTouched.has(instance.userId)) continue
+      // Only a unit that is running now gets its pair back; a stopped, failed or unknown unit stays out (fail closed).
+      if (await state(instance).catch(() => 'unknown' as const) !== 'running') continue
       if (admitted.has(instance.userId) || marketTouched.has(instance.userId)) continue
       let row: MarketEndpoint
       try {
@@ -244,7 +297,10 @@ export function createSystemdRuntime(deps: SystemdRuntimeDeps) {
     marketRebuilt = true
   }
   const rebuildMarket = () => {
-    marketRebuilding ??= rebuildOwners().finally(() => { marketRebuilding = undefined })
+    marketRebuilding ??= rebuildOwners().then(
+      () => { marketFailedRuns = 0 },
+      error => { marketFailedRuns += 1; throw error },
+    ).finally(() => { marketRebuilding = undefined; marketPendingRuns = 0 })
     return marketRebuilding
   }
   let marketProbe: MarketProbeState = { previousExtras: new Set() }
@@ -253,6 +309,9 @@ export function createSystemdRuntime(deps: SystemdRuntimeDeps) {
     if (marketRange === undefined) return
     // Not rebuilt and idle: (re)try the rebuild first. Still rebuilding, or it failed: alert only.
     if (!marketRebuilt && marketRebuilding === undefined) await rebuildMarket().catch(() => {})
+    // A rebuild still running (e.g. the first one, with many instances) is not a failure; only finished, failed
+    // attempts count toward `stalled`, and a pending attempt only after stalledPendingAfter probes.
+    else if (!marketRebuilt) marketPendingRuns += 1
     marketProbe = await reconcileMarketFirewall(marketProbeHost, marketProbe, { deleteExtras: marketRebuilt })
   }
   if (marketRange !== undefined) void rebuildMarket().catch(() => {})
