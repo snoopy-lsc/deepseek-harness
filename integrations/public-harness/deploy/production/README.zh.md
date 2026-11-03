@@ -73,7 +73,7 @@ Caddy 的管理 API 只监听 `unix//run/caddy/admin.sock`（权限 0600），�
 <a id="upgrade-and-roll-back"></a>
 ## 升级与回滚
 
-[release-manifest.json](release-manifest.json) 是冻结容器运行时的 schema 2 清单（`runtime.kind` 为 `podman-gvisor`）。它固定一个发布版：Harness 版本、插件接口版本、每个 bundle 以及实例镜像。其固定版本与原生主线清单 `deploy/release-manifest.json` 相同，后者见[原生部署指南](../native/README.zh.md#validate-before-admission)。接触任何用户之前，先对已安装候选版本的非生产配置运行 `preflightUpgrade`；它检查接口和 bundle 固定版本、Session 迁移，以及登录、模型调用、终端、Session 和插件加载流程，并在第一个接口不匹配时停止。随后 `rolloutUpgrade` 把 `assets/current` 链接切换到新发布目录，先重启一个金丝雀用户，再分批进行。它记录进度，使中断的发布可以继续；第一个实例失败时，它恢复先前的发布链接并停止。回滚只改变代码：从不移动或删除 `DSH_HOME`、Session 或 Git 工作区。更换实例镜像需要在修改配置后重启配置服务。
+[release-manifest.json](release-manifest.json) 是冻结容器运行时的 schema 2 清单（`runtime.kind` 为 `podman-gvisor`）。它固定一个发布版：Harness 版本、插件接口版本、每个 bundle 以及实例镜像。其固定版本与原生主线清单 `deploy/release-manifest.json` 相同，后者见[原生部署指南](../native/README.zh.md#validate-before-admission)。接触任何用户之前，先对已安装候选版本的非生产配置运行 `preflightUpgrade`；它检查接口和 bundle 固定版本、Session 迁移，以及登录、模型调用、终端、Session 和插件加载流程，并在第一个接口不匹配时停止。随后 `rolloutUpgrade` 把 `assets/current` 链接切换到新发布目录，先重启一个金丝雀用户，再分批进行。它记录进度，使中断的发布可以继续；第一个实例失败时，它恢复先前的发布链接并停止。回滚只改变代码：从不移动或删除 `DSH_HOME`、Session 或 Git 工作区。随附的清单目前没有先前版本：`previous` 为 `null`，因为 2026.10.0-rc3 从未部署，所以 `rolloutUpgrade` 会拒绝运行，首次部署按全新[安装](#install-on-a-linux-host)进行，没有自动回滚目标。由于回滚保持 `DSH_HOME` 不变，跨持久化格式变更的回滚并不保证数据安全；例如 0.2.2-alpha.2 会把 schedule 存储升级到 v2，旧二进制会拒绝打开。每次升级前先做[备份](#back-up-and-restore)，回滚到早于格式变更的发布版之前先恢复该备份。更换实例镜像需要在修改配置后重启配置服务。
 
 <a id="back-up-and-restore"></a>
 ## 备份与恢复

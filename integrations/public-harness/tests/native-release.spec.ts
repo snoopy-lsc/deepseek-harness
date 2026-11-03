@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { NATIVE_CHECKS, nativeHostId, parseAnyReleaseManifest, requireRuntime, serializeReleaseManifest, stampNativeManifest, validateNativeEvidence } from '../deploy/native-release.ts'
 import { createNativeBackup, inspectNativeBackup, restoreNativeBackup } from '../deploy/native/scripts/backup.ts'
+import { rolloutUpgrade } from '../deploy/upgrade.ts'
 
 const root = new URL('../', import.meta.url).pathname
 const digest = (c: string) => `sha256:${c.repeat(64)}`
@@ -76,7 +77,13 @@ describe('shipped schema 2 release manifests', () => {
     const pins = (m: typeof native) => ({ release: m.release, harness: m.harness, pluginApi: m.pluginApi, bundles: m.bundles })
     expect(pins(container)).toEqual(pins(native))
     expect(container.runtime.image).toMatch(new RegExp(`:${native.release.replace(/\./g, '\\.')}$`))
-    expect(container.previous?.runtime.kind).toBe('podman-gvisor')
+    // B-1: rc3 was never deployed and 0.2.2-alpha.2 writes a schedule store older binaries cannot open, so there is no rollback target.
+    expect(container.previous).toBeNull()
+    // With no rollback target, a staged rollout of the shipped container manifest refuses before touching any link or instance.
+    const touched: string[] = []
+    await expect(rolloutUpgrade({ manifest: container, assetsLink: '/nonexistent/assets/current', releasesDir: '/nonexistent/releases', statePath: '/nonexistent/state.json',
+      users: [], canaryUsers: [], batchSize: 1 }, { stop: async u => { touched.push(u) }, wake: async u => { touched.push(u); return true } })).rejects.toThrow(/previous release/)
+    expect(touched).toEqual([])
     expect(() => requireRuntime(native, 'podman-gvisor')).toThrow(/systemd release/)
     expect(requireRuntime(native, 'systemd').runtime.kind).toBe('systemd')
   })
