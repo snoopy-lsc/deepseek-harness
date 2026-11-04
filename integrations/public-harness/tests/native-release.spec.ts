@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, readdir, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, readlink, symlink, writeFile } from 'node:fs/promises'
 import { DatabaseSync } from 'node:sqlite'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 import { NATIVE_CHECKS, nativeHostId, parseAnyReleaseManifest, requireRuntime, serializeReleaseManifest, stampNativeManifest, validateNativeEvidence } from '../deploy/native-release.ts'
 import { createNativeBackup, inspectNativeBackup, restoreNativeBackup } from '../deploy/native/scripts/backup.ts'
 import { rolloutUpgrade } from '../deploy/upgrade.ts'
+import { parseUserId } from '../packages/contracts/src/index.ts'
 
 const root = new URL('../', import.meta.url).pathname
 const digest = (c: string) => `sha256:${c.repeat(64)}`
@@ -79,10 +80,22 @@ describe('shipped schema 2 release manifests', () => {
     expect(container.runtime.image).toMatch(new RegExp(`:${native.release.replace(/\./g, '\\.')}$`))
     // B-1: rc3 was never deployed and 0.2.2-alpha.2 writes a schedule store older binaries cannot open, so there is no rollback target.
     expect(container.previous).toBeNull()
-    // With no rollback target, a staged rollout of the shipped container manifest refuses before touching any link or instance.
+    // With no rollback target, a staged rollout of the shipped container manifest refuses before touching any link, state file, or instance.
+    const dir = await mkdtemp(join(tmpdir(), 'dsh-rollout-'))
+    const releasesDir = join(dir, 'releases')
+    const live = join(releasesDir, 'live')
+    await mkdir(live, { recursive: true })
+    await mkdir(join(releasesDir, container.release), { recursive: true })
+    await mkdir(join(dir, 'assets'))
+    const assetsLink = join(dir, 'assets', 'current')
+    await symlink(live, assetsLink)
+    const statePath = join(dir, 'rollout-state.json')
     const touched: string[] = []
-    await expect(rolloutUpgrade({ manifest: container, assetsLink: '/nonexistent/assets/current', releasesDir: '/nonexistent/releases', statePath: '/nonexistent/state.json',
-      users: [], canaryUsers: [], batchSize: 1 }, { stop: async u => { touched.push(u) }, wake: async u => { touched.push(u); return true } })).rejects.toThrow(/previous release/)
+    await expect(rolloutUpgrade({ manifest: container, assetsLink, releasesDir, statePath, users: ['u-canary', 'u-1', 'u-2'].map(parseUserId), canaryUsers: [parseUserId('u-canary')], batchSize: 1 },
+      { stop: async u => { touched.push(u) }, wake: async u => { touched.push(u); return true } })).rejects.toThrow(/previous release/)
+    expect(await readlink(assetsLink)).toBe(live)
+    expect(await readdir(dir)).not.toContain('rollout-state.json')
+    expect(await readdir(join(dir, 'assets'))).toEqual(['current'])
     expect(touched).toEqual([])
     expect(() => requireRuntime(native, 'podman-gvisor')).toThrow(/systemd release/)
     expect(requireRuntime(native, 'systemd').runtime.kind).toBe('systemd')
