@@ -78,7 +78,7 @@ describe('shipped schema 2 release manifests', () => {
     const pins = (m: typeof native) => ({ release: m.release, harness: m.harness, pluginApi: m.pluginApi, bundles: m.bundles })
     expect(pins(container)).toEqual(pins(native))
     expect(container.runtime.image).toMatch(new RegExp(`:${native.release.replace(/\./g, '\\.')}$`))
-    // B-1: rc3 was never deployed and 0.2.2-alpha.2 writes a schedule store older binaries cannot open, so there is no rollback target.
+    // B-1: no candidate is recorded as deployed (rc3 confirmed never deployed 2026-11-03; rc5 treated as never deployed, pending operator confirmation) and 0.2.2-alpha.2 writes a schedule store older binaries cannot open, so there is no rollback target.
     expect(container.previous).toBeNull()
     // With no rollback target, a staged rollout of the shipped container manifest refuses before touching any link, state file, or instance.
     const dir = await mkdtemp(join(tmpdir(), 'dsh-rollout-'))
