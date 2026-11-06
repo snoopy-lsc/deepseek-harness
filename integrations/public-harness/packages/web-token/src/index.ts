@@ -63,7 +63,8 @@ export function apply(ctx: Context): void {
   const settled = ctx.loader?.await()
   if (settled === undefined) throw new Error('Web token publisher requires a Loader profile')
   void settled.then(() => {
-    const message = createReadyMessage(ctx.connection, ctx.webServer.port)
+    // Harness 0.2.2 types the port as undefined until listen binds; createReadyMessage rejects it.
+    const message = createReadyMessage(ctx.connection, ctx.webServer.port ?? 0)
     if (process.send !== undefined) process.send(message)
     else writeReadyFile(readyFile!, message)
   }).catch(() => {
