@@ -57,6 +57,23 @@ describe('Web launch-token publisher', () => {
       return { path, authenticatedUrl }
     }
 
+    /** Boot over IPC only: process.send is a spy and READY_FILE_ENV is unset. */
+    async function bootIpc(port: number | undefined) {
+      delete process.env[READY_FILE_ENV]
+      const send = process.send
+      const sendSpy = vi.fn()
+      process.send = sendSpy as typeof process.send
+      const authenticatedUrl = vi.fn((base: string) => `${base}/?token=private-token`)
+      const ctx = { effect: () => {}, loader: { await: () => Promise.resolve() }, connection: { authenticatedUrl }, webServer: { port } }
+      try {
+        apply(ctx as unknown as Context)
+        await new Promise(resolve => setTimeout(resolve, 10))
+      } finally {
+        process.send = send
+      }
+      return { sendSpy, authenticatedUrl }
+    }
+
     it.skipIf(process.platform === 'win32').each([undefined, 0])('publishes no startup credential while the Web port is %s', async port => {
       const { path, authenticatedUrl } = await boot(port)
       await expect(access(path)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -66,6 +83,19 @@ describe('Web launch-token publisher', () => {
     it.skipIf(process.platform === 'win32')('publishes the credential once the Web port is bound', async () => {
       const { path } = await boot(4123)
       expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({ kind: 'public-harness/web-ready', port: 4123, token: 'private-token' })
+    })
+
+    it.each([undefined, 0])('publishes no IPC startup credential while the Web port is %s', async port => {
+      const { sendSpy, authenticatedUrl } = await bootIpc(port)
+      expect(sendSpy).not.toHaveBeenCalled()
+      expect(authenticatedUrl).not.toHaveBeenCalled()
+    })
+
+    it('publishes the credential over IPC once the Web port is bound', async () => {
+      const { sendSpy, authenticatedUrl } = await bootIpc(4123)
+      expect(sendSpy).toHaveBeenCalledOnce()
+      expect(sendSpy).toHaveBeenCalledWith({ kind: 'public-harness/web-ready', port: 4123, token: 'private-token' })
+      expect(authenticatedUrl).toHaveBeenCalledOnce()
     })
   })
 })
