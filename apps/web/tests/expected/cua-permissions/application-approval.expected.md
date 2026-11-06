@@ -1,9 +1,9 @@
 - text: Waiting for approval
 - group "Approval details":
   - strong: Fixture
-  - text: Allow agent to control this application via computer use?
+  - text: Allow computer use to launch, read, capture and control this application?
   - button "Risks"
-  - paragraph: Manage app permissions for all sessions on the plugin page.
+  - paragraph: Allowing or denying applies to every version and copy sharing the same application identity. Manage app permissions for all sessions on the plugin page.
 - button "Reject"
 - button "Allow for this session"
 - button "Always allow"
