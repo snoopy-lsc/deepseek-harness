@@ -3,7 +3,7 @@
   "release": "2026.10.0-rc6",
   "harness": {
     "package": "@deepseek-ai/dsh",
-    "version": "0.2.2-rc.1"
+    "version": "0.2.2-rc.2"
   },
   "runtime": {
     "kind": "podman-gvisor",
