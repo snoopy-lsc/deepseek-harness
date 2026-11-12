@@ -3,12 +3,12 @@ import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
-import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
   assertFixtureInventory, captureStableAria, compareOrRefreshGolden, fixtureUserPrompts,
   launchWebScaffold, seedSession, watchConsole, webSnapshotMode, type WebScaffold,
 } from './scaffold.ts'
-import { expandOwningTurnProcess, newEnglishPage, saveFailureShot, scrollIntoView } from './support.ts'
+import { expandOwningTurnProcess, newEnglishPage, scrollIntoView } from './support.ts'
 
 const SNAPSHOT_DIR = fileURLToPath(new URL('../../../snapshots/web/tool-details', import.meta.url))
 const FIXTURE = fileURLToPath(new URL('../../../snapshots/web/tool-details/session.v3.jsonl', import.meta.url))
@@ -50,7 +50,6 @@ describe.skipIf(MODE === 'record')('web e2e: compact Tool details', () => {
   })
 
   it('expands every recorded tool through its keyed renderer', async () => {
-    onTestFailed(() => saveFailureShot(page, 'web-e2e-tool-details'))
     // `[data-chat-call-id]` scopes the keyed tool cells: the Schedule client's
     // turn-tail create card carries the same `data-tool` marker without being
     // one of the keyed call views this case walks.
@@ -63,15 +62,29 @@ describe.skipIf(MODE === 'record')('web e2e: compact Tool details', () => {
       expect(await row.getByRole('button', { name: 'Inspect', exact: true }).count()).toBe(1)
     }
     const agentRow = page.locator('[data-tool="list_agents"]').getByRole('listitem').first()
-    expect(await agentRow.getByRole('button').count()).toBe(0)
-    expect(await agentRow.locator('svg').count()).toBe(0)
-    // Read both positions in one browser task so scrolling cannot move the viewport between measurements.
+    const descriptionToggle = agentRow.getByRole('button', { name: 'Expand description for agent-demo-review' })
+    expect(await descriptionToggle.getAttribute('aria-expanded')).toBe('false')
+    expect(await descriptionToggle.locator('svg').count()).toBe(1)
+    // Read both positions together so scrolling cannot move the viewport between measurements.
     const agentLayout = await agentRow.evaluate((element) => {
-      const description = element.querySelector('[class*="heading"] > span')!.getBoundingClientRect()
-      const name = element.querySelector('[class*="subtitle"]')!.getBoundingClientRect()
-      return { descriptionBottom: description.bottom, nameTop: name.top }
+      const name = element.querySelector('[class*="heading"] > span')!.getBoundingClientRect()
+      const description = element.querySelector('button[aria-expanded]')!.getBoundingClientRect()
+      return { nameBottom: name.bottom, descriptionTop: description.top }
     })
-    expect(agentLayout.descriptionBottom).toBeLessThanOrEqual(agentLayout.nameTop)
+    expect(agentLayout.nameBottom).toBeLessThanOrEqual(agentLayout.descriptionTop)
+    await descriptionToggle.click()
+    expect(await agentRow.getByRole('button', { name: 'Collapse description for agent-demo-review' }).getAttribute('aria-expanded')).toBe('true')
+    await agentRow.getByRole('button', { name: 'Collapse description for agent-demo-review' }).click()
+    expect(await descriptionToggle.getAttribute('aria-expanded')).toBe('false')
+    const structuredAgent = page.locator('[data-tool="list_agents"]').last().getByRole('listitem').filter({ hasText: 'ui-review' }).first()
+    const structuredToggle = structuredAgent.getByRole('button', { name: 'Expand description for ui-review' })
+    await structuredToggle.focus()
+    await structuredToggle.press('Enter')
+    expect(await structuredAgent.getByRole('button', { name: 'Collapse description for ui-review' }).getAttribute('aria-expanded')).toBe('true')
+    await structuredAgent.getByRole('button', { name: 'Collapse description for ui-review' }).press('Space')
+    expect(await structuredToggle.getAttribute('aria-expanded')).toBe('false')
+    expect(await structuredAgent.getByText('agent-demo-review', { exact: true }).count()).toBe(1)
+    expect(await structuredAgent.getByText('spawn', { exact: true }).count()).toBe(1)
     const changedTodos = page.locator('[data-tool="todo_write"]').nth(1)
     await changedTodos.getByText('1 added · 1 updated · 1 removed', { exact: true }).waitFor()
     for (const summary of await page.locator('[data-tool] details > summary').all()) await summary.click()

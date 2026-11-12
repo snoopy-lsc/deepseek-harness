@@ -153,17 +153,54 @@ describe('todosDetail', () => {
 })
 
 describe('DetailsRow', () => {
-  it('shows the full agent description above its name without a disclosure', () => {
-    const description = 'Verify every construction bound. '.repeat(20)
+  it.each(['Checks layout.', 'Verify every construction bound. '.repeat(20)])('puts the agent name before a toggleable description: %s', (description) => {
     const block = { ...result('list_agents', null), content: [{ type: 'text' as const, text: `reviewer/checker [running] — ${description}` }] }
     const model = detailsCardModel(block, t, 'en')!
     render(<ToolDetails model={model} t={t} />)
     const name = screen.getByText('reviewer/checker')
-    const title = screen.getByText(description.trim())
-    expect(title.compareDocumentPosition(name) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(screen.getByRole('listitem').textContent).toBe(`${description}Runningreviewer/checker`)
-    expect(screen.queryByRole('button')).toBeNull()
-    expect(screen.getByRole('listitem').querySelector('svg')).toBeNull()
+    const toggle = screen.getByRole('button', { name: 'Expand description for reviewer/checker' })
+    expect(name.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(toggle.textContent).toBe(description)
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(toggle.querySelector('svg')?.getAttribute('width')).toBe('12')
+    fireEvent.click(toggle)
+    expect(screen.getByRole('button', { name: 'Collapse description for reviewer/checker' })).toBe(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('uses an unqualified accessible name when a compact description has no title', () => {
+    render(<ToolDetails model={{ compact: true, items: [{ subtitle: 'Details', fields: [] }] }} t={t} />)
+    const toggle = screen.getByRole('button', { name: 'Expand' })
+    fireEvent.click(toggle)
+    expect(screen.getByRole('button', { name: 'Collapse' })).toBe(toggle)
+  })
+
+  it('retains JSON agent metadata and nested provider fields with the named description disclosure', () => {
+    const model = detailsCardModel(result('list_agents', [{
+      name: 'reviewer/checker', description: 'Inspect the recorded output.', status: 'running',
+      sessionId: 'synthetic-session', capabilities: { tools: ['read_file'] },
+    }]), t, 'en')!
+    expect(model.compact).toBe(true)
+    expect(model.items[0]).toMatchObject({
+      title: 'reviewer/checker', subtitle: 'Inspect the recorded output.',
+      badge: { label: 'Running' }, fields: [{ label: 'sessionId', value: 'synthetic-session' }],
+      groups: [{ label: 'capabilities' }],
+    })
+    expect(model.items[0]).not.toHaveProperty('description')
+    render(<ToolDetails model={model} t={t} />)
+    expect(screen.getByRole('button', { name: 'Expand description for reviewer/checker' }).textContent).toBe('Inspect the recorded output.')
+    expect(screen.getByText('synthetic-session')).toBeTruthy()
+    expect(screen.getByText('capabilities')).toBeTruthy()
+  })
+
+  it('keeps historical empty descriptions and JSON records without a name readable', () => {
+    const model = detailsCardModel({ ...result('list_agents', null), content: [{ type: 'text' as const, text: 'checker [running] — ' }] }, t, 'en')!
+    expect(model.items[0]).toMatchObject({ title: 'checker', badge: { label: 'Running' } })
+    expect(model.items[0]).not.toHaveProperty('subtitle')
+    const anonymous = detailsCardModel(result('list_agents', [{ description: 'Unnamed record', owner: 'synthetic' }]), t, 'en')!
+    expect(anonymous.items[0]).toMatchObject({ description: 'Unnamed record', fields: [{ label: 'owner', value: 'synthetic' }] })
   })
 
   it('expands fields with the keyboard and keeps Inspect available', () => {

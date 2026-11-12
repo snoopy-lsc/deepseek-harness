@@ -32,8 +32,8 @@ function agentList(text: string, json: unknown, t: DetailTranslate): ToolDetails
   if (Array.isArray(json)) {
     const items = inspectionItems(json, t).map((item) => {
       if (item.title === undefined || item.description === undefined) return item
-      const { title, description, ...rest } = item
-      return { ...rest, title: description, subtitle: title }
+      const { description, ...rest } = item
+      return { ...rest, subtitle: description }
     })
     return { ...detailList(items, t('detail.agents.count', { count: json.length }), t), compact: true }
   }
@@ -46,7 +46,7 @@ function agentList(text: string, json: unknown, t: DetailTranslate): ToolDetails
     const [, agent, state, title] = match
     if (agent === undefined || state === undefined) return null
     items.push({
-      title: title || agent, ...(title ? { subtitle: agent } : {}),
+      title: agent, ...(title ? { subtitle: title } : {}),
       badge: detailBadge(state, t),
       fields: [],
     })
