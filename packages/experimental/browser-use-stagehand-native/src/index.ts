@@ -34,8 +34,6 @@ export interface Config {
   mode: 'launch' | 'attach'
   /** CDP HTTP or WebSocket endpoint, required only for attach mode. */
   cdpEndpoint?: string
-  /** Optional Stagehand extension id for an existing browser. */
-  extensionId?: string
   /** Installed Chrome/Chromium executable used in launch mode. */
   executablePath?: string
   /** Hide an owned browser's window. */
@@ -57,7 +55,6 @@ export const Config: Schema<Config, ResolvedConfig> = Schema.object({
   }).required(), value => stagehandModelSchema.parse(value)).required(),
   mode: Schema.union(['launch', 'attach']).default('launch'),
   cdpEndpoint: Schema.string(),
-  extensionId: Schema.string(),
   executablePath: Schema.string(),
   headless: Schema.boolean().default(true),
   // Stagehand adds ten seconds to the action RPC timeout before arming its timer.
@@ -88,8 +85,8 @@ export function apply(ctx: Context, input: Config): void {
   if (config.mode === 'attach' && !config.cdpEndpoint?.trim()) {
     throw new Error('Stagehand attach mode requires cdpEndpoint')
   }
-  if (config.mode === 'launch' && (config.cdpEndpoint !== undefined || config.extensionId !== undefined)) {
-    throw new Error('Stagehand cdpEndpoint and extensionId require attach mode')
+  if (config.mode === 'launch' && config.cdpEndpoint !== undefined) {
+    throw new Error('Stagehand cdpEndpoint requires attach mode')
   }
   if (config.mode === 'attach' && config.executablePath !== undefined) {
     throw new Error('Stagehand executablePath requires launch mode')
@@ -118,7 +115,6 @@ export function apply(ctx: Context, input: Config): void {
           return openBrowserWorker({
             mode: 'attach', model: config.model, headless: config.headless,
             operationTimeoutMs: config.operationTimeoutMs, shutdownGraceMs: config.shutdownGraceMs,
-            ...config.extensionId === undefined ? {} : { extensionId: config.extensionId },
             ...config.cdpEndpoint === undefined ? {} : { cdpEndpoint: config.cdpEndpoint },
             ...chromium === undefined ? {} : { cdpEndpoint: chromium.endpoint },
           }, connectionSignal, (message) => { ctx.logger.warn(message) }, workerPort)

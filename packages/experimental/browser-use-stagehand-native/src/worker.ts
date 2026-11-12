@@ -14,12 +14,11 @@ const { cdpPipe, ...data } = workerData as Record<string, unknown>
 const pipeUrl = typeof data.cdpEndpoint === 'string' ? data.cdpEndpoint : PIPE_CDP_URL
 if (cdpPipe instanceof MessagePort) Object.defineProperty(globalThis, 'WebSocket', { value: pipeWebSocketClass(cdpPipe, pipeUrl), configurable: true, writable: true })
 else if (cdpPipe !== undefined) throw new Error('Stagehand cdpPipe must be a MessagePort')
-const { extensionId, cdpEndpoint, executablePath, ...config } = z.object({
+const { cdpEndpoint, executablePath, ...config } = z.object({
   model: stagehandModelSchema,
   mode: z.enum(['launch', 'attach']),
   cdpEndpoint: z.string().optional(),
   executablePath: z.string().optional(),
-  extensionId: z.string().optional(),
   headless: z.boolean(),
   operationTimeoutMs: z.number().int().positive(),
   shutdownGraceMs: z.number().int().positive(),
@@ -27,7 +26,7 @@ const { extensionId, cdpEndpoint, executablePath, ...config } = z.object({
 const methodSchema = z.enum(Object.keys(browserInputs) as [keyof typeof browserInputs, ...Array<keyof typeof browserInputs>])
 const opening = openNativeBrowser(
   {
-    ...config, ...extensionId === undefined ? {} : { extensionId },
+    ...config,
     ...cdpEndpoint === undefined ? {} : { cdpEndpoint },
     ...executablePath === undefined ? {} : { executablePath },
   },
