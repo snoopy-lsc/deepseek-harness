@@ -97,5 +97,40 @@ describe('Web launch-token publisher', () => {
       expect(sendSpy).toHaveBeenCalledWith({ kind: 'public-harness/web-ready', port: 4123, token: 'private-token' })
       expect(authenticatedUrl).toHaveBeenCalledOnce()
     })
+
+    it('publishes the credential from the Web entry URLs when Connection has no authenticatedUrl', async () => {
+      delete process.env[READY_FILE_ENV]
+      const send = process.send
+      const sendSpy = vi.fn()
+      process.send = sendSpy as typeof process.send
+      const emit = vi.fn((_this: unknown, name: string, base: string, entries: { label: string; url: string; open?: boolean }[]) => {
+        if (name === 'webserver/entry-url') entries.push({ label: 'dsh web', url: `${base}/?token=private-token`, open: true })
+      })
+      const ctx = { effect: () => {}, loader: { await: () => Promise.resolve() }, connection: {}, webServer: { port: 4123 }, emit }
+      try {
+        apply(ctx as unknown as Context)
+        await new Promise(resolve => setTimeout(resolve, 10))
+      } finally {
+        process.send = send
+      }
+      expect(emit).toHaveBeenCalledWith(ctx.webServer, 'webserver/entry-url', 'http://127.0.0.1:4123', expect.any(Array))
+      expect(sendSpy).toHaveBeenCalledOnce()
+      expect(sendSpy).toHaveBeenCalledWith({ kind: 'public-harness/web-ready', port: 4123, token: 'private-token' })
+    })
+
+    it('publishes no credential when no Web entry URL opens the app', async () => {
+      delete process.env[READY_FILE_ENV]
+      const send = process.send
+      const sendSpy = vi.fn()
+      process.send = sendSpy as typeof process.send
+      const ctx = { effect: () => {}, loader: { await: () => Promise.resolve() }, connection: {}, webServer: { port: 4123 }, emit: vi.fn() }
+      try {
+        apply(ctx as unknown as Context)
+        await new Promise(resolve => setTimeout(resolve, 10))
+      } finally {
+        process.send = send
+      }
+      expect(sendSpy).not.toHaveBeenCalled()
+    })
   })
 })

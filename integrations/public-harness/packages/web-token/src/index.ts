@@ -25,6 +25,34 @@ export function createReadyMessage(connection: AuthenticatedUrl, port: number): 
   return { kind: 'public-harness/web-ready', port, token: token[0] }
 }
 
+/** Entry URL contributed through `webserver/entry-url`; declared here because the pinned development types predate it. */
+interface WebEntryUrl { label: string; url: string; open?: boolean }
+
+/** Context methods for collecting the entry URLs that Harness 0.2.2-rc.5 and later expose instead of `connection.authenticatedUrl`. */
+interface EntryUrlEmitter {
+  emit(thisArg: unknown, name: 'webserver/entry-url', baseUrl: string, entries: WebEntryUrl[]): void
+}
+
+/**
+ * Resolve the startup URL through `connection.authenticatedUrl` when the running Harness provides it, otherwise from the
+ * entry URL its token authentication contributes to `webserver/entry-url`.
+ * @param ctx - plugin context with Connection and Web server services.
+ * @returns the source of the bounded authenticated URL that createReadyMessage validates.
+ */
+function authenticatedUrlSource(ctx: Context): AuthenticatedUrl {
+  const connection = ctx.connection as Partial<AuthenticatedUrl> | undefined
+  if (typeof connection?.authenticatedUrl === 'function') return connection as AuthenticatedUrl
+  return {
+    authenticatedUrl(baseUrl) {
+      const entries: WebEntryUrl[] = []
+      ;(ctx as unknown as EntryUrlEmitter).emit(ctx.webServer, 'webserver/entry-url', baseUrl, entries)
+      const entry = entries.find(candidate => candidate.open === true)
+      if (entry === undefined) throw new Error('no authenticated Web entry URL')
+      return entry.url
+    },
+  }
+}
+
 /** Stable Cordis plugin name. */
 export const name = 'public-harness-web-token'
 
@@ -64,7 +92,7 @@ export function apply(ctx: Context): void {
   if (settled === undefined) throw new Error('Web token publisher requires a Loader profile')
   void settled.then(() => {
     // Harness 0.2.2 types the port as undefined until listen binds; createReadyMessage rejects it.
-    const message = createReadyMessage(ctx.connection, ctx.webServer.port ?? 0)
+    const message = createReadyMessage(authenticatedUrlSource(ctx), ctx.webServer.port ?? 0)
     if (process.send !== undefined) process.send(message)
     else writeReadyFile(readyFile!, message)
   }).catch(() => {
